@@ -1,0 +1,728 @@
+/* X1Flox UI Overlay Styles */
+/* Injected into WhatsApp Web to add custom UI components */
+
+/* Bottom Shortcut Bar - Inside WhatsApp Footer */
+.x1flox-shortcut-bar {
+  position: relative;
+  left: 0;
+  right: 0;
+  width: 100%;
+  height: 38px;
+  background: #1a1a1a; /* Matches popup --bg-primary */
+  border-top: 1px solid #3a3a3a; /* Matches popup --border-color */
+  display: none !important; /* Hidden by default */
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px; /* Minimal vertical padding */
+  overflow-x: auto;
+  overflow-y: hidden;
+  z-index: 10; /* Within footer context */
+  scrollbar-width: thin;
+  scrollbar-color: #e91e63 #1a1a1a; /* Pink scrollbar like popup */
+  pointer-events: auto;
+}
+
+/* Show shortcut bar only when chat is active */
+body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
+  display: flex !important;
+}
+
+.x1flox-shortcut-bar::-webkit-scrollbar {
+  height: 6px;
+}
+
+.x1flox-shortcut-bar::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+.x1flox-shortcut-bar::-webkit-scrollbar-thumb {
+  background: #e91e63; /* Matches popup accent-pink */
+  border-radius: 3px;
+}
+
+.x1flox-shortcut-bar::-webkit-scrollbar-thumb:hover {
+  background: #f06292; /* Matches popup accent-pink-hover */
+}
+
+/* Shortcut Buttons - Matches Popup Item Design */
+.x1flox-shortcut-btn {
+  min-width: fit-content;
+  max-width: 200px;
+  height: 32px;
+  padding: 0 12px;
+  background: #2a2a2a; /* Matches popup --bg-secondary */
+  border: none;
+  border-left: 3px solid transparent;
+  border-radius: 0;
+  color: #ffffff; /* Matches popup --text-primary */
+  font-size: 13px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, sans-serif;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.x1flox-shortcut-btn:hover {
+  background: #333333; /* Matches popup --bg-tertiary */
+  border-left-color: #e91e63; /* Matches popup --accent-pink */
+  transform: translateX(4px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(233, 30, 99, 0.2);
+}
+
+.x1flox-shortcut-btn.confirming {
+  background: rgba(233, 30, 99, 0.15);
+  border-left-color: #e91e63;
+  transform: translateX(4px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(233, 30, 99, 0.2);
+}
+
+.x1flox-shortcut-btn-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: #666666; /* Matches popup --text-muted */
+  transition: color 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.x1flox-shortcut-btn:hover .x1flox-shortcut-btn-icon,
+.x1flox-shortcut-btn.confirming .x1flox-shortcut-btn-icon {
+  color: #e91e63; /* Matches popup --accent-pink */
+}
+
+.x1flox-shortcut-btn-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.x1flox-shortcut-btn-action {
+  background: none;
+  border: none;
+  color: #666666; /* Matches popup --text-muted */
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0.6;
+  transition: all 0.15s;
+  width: 20px;
+  height: 20px;
+}
+
+.x1flox-shortcut-btn:hover .x1flox-shortcut-btn-action {
+  opacity: 1;
+  color: #e91e63;
+}
+
+.x1flox-shortcut-btn.confirming .x1flox-shortcut-btn-action {
+  color: #e91e63;
+  opacity: 1;
+  animation: pulse-scale 0.6s ease-in-out infinite;
+}
+
+@keyframes pulse-scale {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.15);
+  }
+}
+
+/* Floating Action Button */
+.x1flox-fab {
+  position: fixed;
+  top: 80px;
+  right: 24px;
+  width: auto;
+  max-width: 280px;
+  height: 48px;
+  padding: 0 20px;
+  background: #00a884;
+  border-radius: 24px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, sans-serif;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  transition: all 0.3s ease;
+  z-index: 1001;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.x1flox-fab:hover {
+  background: #06cf9c;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+  transform: translateY(-2px);
+}
+
+.x1flox-fab:active {
+  transform: translateY(0);
+}
+
+.x1flox-fab-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+/* Script Popup - Redesigned */
+.x1flox-script-popup {
+  position: fixed;
+  /* Position set via JS below chat header */
+  width: 420px;
+  /* max-height controlled by JS dynamically */
+  background: rgba(0, 0, 0, 0.9);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  overflow: visible; /* No scroll on popup itself */
+  z-index: 1002;
+  animation: x1flox-slide-in 0.3s ease;
+  transition: top 0.3s ease, left 0.3s ease, max-height 0.3s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+@keyframes x1flox-slide-in {
+  from {
+    transform: translateX(400px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.x1flox-script-popup.closing {
+  animation: x1flox-slide-out 0.3s ease;
+}
+
+.x1flox-script-popup::-webkit-scrollbar {
+  width: 6px;
+}
+
+.x1flox-script-popup::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+.x1flox-script-popup::-webkit-scrollbar-thumb {
+  background: #e91e63;
+  border-radius: 3px;
+}
+
+/* Close Button - Positioned at top-right edge */
+.x1flox-script-popup-close {
+  position: fixed;
+  top: calc(var(--popup-top, 100px) - 8px);
+  right: calc(100vw - var(--popup-right, 584px) - 8px);
+  width: 32px;
+  height: 32px;
+  background: #1a1a1a;
+  border: 2px solid #2a2a2a;
+  color: #666666;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 18px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  z-index: 9999;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.x1flox-script-popup-close:hover {
+  background: #e91e63;
+  border-color: #e91e63;
+  color: #ffffff;
+  transform: scale(1.1);
+}
+
+/* Script Sections */
+.x1flox-script-section {
+  padding: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0; /* Sections don't shrink */
+}
+
+.x1flox-script-section:last-child {
+  border-bottom: none;
+}
+
+.x1flox-script-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  flex-shrink: 0; /* Header stays fixed */
+}
+
+.x1flox-script-section-body {
+  overflow-y: auto;
+  overflow-x: hidden;
+  max-height: 170px; /* Show ~4 cards */
+  scrollbar-width: thin;
+  scrollbar-color: #e91e63 rgba(0, 0, 0, 0.9);
+}
+
+.x1flox-script-section-body::-webkit-scrollbar {
+  width: 3px; /* Thinner scrollbar */
+}
+
+.x1flox-script-section-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.x1flox-script-section-body::-webkit-scrollbar-thumb {
+  background: #e91e63;
+  border-radius: 3px;
+}
+
+.x1flox-script-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #ffffff;
+  text-transform: uppercase;
+}
+
+.x1flox-script-btn-discrete {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: #888888;
+  font-size: 9px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.x1flox-script-btn-discrete:hover {
+  background: rgba(233, 30, 99, 0.12);
+  border-color: rgba(233, 30, 99, 0.25);
+  color: #e91e63;
+}
+
+/* Script Cards */
+.x1flox-script-card {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  background: #1a1a1a;
+  border-radius: 6px;
+  margin-bottom: 4px;
+  transition: all 0.2s ease;
+}
+
+/* Only animate new cards, not re-rendered ones */
+.x1flox-script-card.new-card {
+  animation: slideInCard 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.x1flox-script-card:last-child {
+  margin-bottom: 0;
+}
+
+.x1flox-script-card:hover {
+  background: #333333;
+}
+
+/* Card entrance animation - slides from left with fade */
+@keyframes slideInCard {
+  from {
+    opacity: 0;
+    transform: translateX(-30px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+/* Card exit animation (when removed) - slides to right with fade */
+.x1flox-script-card.removing {
+  animation: slideOutCard 0.3s cubic-bezier(0.7, 0, 0.84, 0) forwards;
+}
+
+@keyframes slideOutCard {
+  from {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(30px) scale(0.95);
+  }
+}
+
+.x1flox-script-card-photo,
+.x1flox-script-card-photo-placeholder {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  object-fit: cover;
+}
+
+.x1flox-script-card-photo-placeholder {
+  background: linear-gradient(135deg, #e91e63 0%, #f06292 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.x1flox-script-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.x1flox-script-card-contact {
+  font-size: 11px;
+  font-weight: 600;
+  color: #ffffff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.x1flox-script-card-name {
+  font-size: 9px;
+  color: #9e9e9e;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 1px;
+}
+
+.x1flox-script-card-progress {
+  font-size: 10px;
+  font-weight: 600;
+  color: #ffffff;
+  padding: 2px 5px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.x1flox-script-card-timer {
+  font-size: 10px;
+  font-weight: 600;
+  color: #9e9e9e;
+  padding: 2px 5px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+  flex-shrink: 0;
+  min-width: 32px;
+  text-align: center;
+}
+
+.x1flox-script-card-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #00a884;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.x1flox-script-btn-icon {
+  background: none;
+  border: 1px solid transparent;
+  color: #666666;
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: color 0.2s ease, background 0.2s ease;
+  flex-shrink: 0;
+  position: relative;
+  width: 20px;
+  height: 20px;
+}
+
+/* Icon stays still, only border spins */
+.x1flox-script-btn-icon svg {
+  position: relative;
+  z-index: 1;
+  width: 12px;
+  height: 12px;
+}
+
+/* Running state - green with spinning border */
+.x1flox-script-btn-icon.running {
+  color: #00a884;
+  border-color: #00a884;
+}
+
+.x1flox-script-btn-icon.running::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  right: -2px;
+  bottom: -2px;
+  border: 2px solid transparent;
+  border-top-color: #00a884;
+  border-right-color: #00a884;
+  border-radius: 50%;
+  animation: spin-border 2s linear infinite;
+}
+
+/* Running hover - keep green, just change opacity */
+.x1flox-script-btn-icon.running:hover {
+  background: rgba(0, 168, 132, 0.15);
+  color: #00a884;
+  opacity: 0.8;
+}
+
+/* Paused state - orange */
+.x1flox-script-btn-icon.paused {
+  color: #ff9800;
+  border-color: rgba(255, 152, 0, 0.3);
+}
+
+/* Paused hover - keep orange, just change opacity */
+.x1flox-script-btn-icon.paused:hover {
+  background: rgba(255, 152, 0, 0.15);
+  color: #ff9800;
+  opacity: 0.8;
+}
+
+/* Default hover only for icons without state class */
+.x1flox-script-btn-icon:not(.running):not(.paused):hover {
+  background: rgba(233, 30, 99, 0.1);
+  color: #e91e63;
+  border-color: rgba(233, 30, 99, 0.3);
+}
+
+@keyframes spin-border {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+/* Empty state for sections */
+.x1flox-script-section-body:empty::before {
+  content: 'Nenhum script';
+  display: block;
+  text-align: center;
+  color: #666666;
+  font-size: 12px;
+  padding: 20px;
+}
+
+@keyframes x1flox-slide-out {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(400px);
+    opacity: 0;
+  }
+}
+
+.x1flox-status-header {
+  padding: 16px 20px;
+  background: #2a3942;
+  border-bottom: 1px solid #3b4a54;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.x1flox-status-title {
+  color: #d1d7db;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.x1flox-status-close {
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: none;
+  color: #8696a0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.x1flox-status-close:hover {
+  background: #374248;
+  color: #d1d7db;
+}
+
+.x1flox-status-body {
+  padding: 16px 20px;
+  max-height: 400px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #374248 #202c33;
+}
+
+.x1flox-status-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.x1flox-status-body::-webkit-scrollbar-track {
+  background: #202c33;
+}
+
+.x1flox-status-body::-webkit-scrollbar-thumb {
+  background: #374248;
+  border-radius: 3px;
+}
+
+.x1flox-status-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid #2a3942;
+  color: #d1d7db;
+  font-size: 14px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, sans-serif;
+}
+
+.x1flox-status-item:last-child {
+  border-bottom: none;
+}
+
+.x1flox-status-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.x1flox-status-icon.sending {
+  color: #53bdeb;
+  animation: x1flox-spin 1s linear infinite;
+}
+
+.x1flox-status-icon.success {
+  color: #00a884;
+}
+
+.x1flox-status-icon.error {
+  color: #f15c6d;
+}
+
+@keyframes x1flox-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.x1flox-status-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.x1flox-status-text {
+  color: #d1d7db;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.x1flox-status-meta {
+  color: #8696a0;
+  font-size: 12px;
+}
+
+.x1flox-status-progress {
+  margin-top: 8px;
+  height: 4px;
+  background: #2a3942;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.x1flox-status-progress-bar {
+  height: 100%;
+  background: #00a884;
+  transition: width 0.3s ease;
+}
+
+/* Tooltip */
+.x1flox-tooltip {
+  position: absolute;
+  background: #1f2d35;
+  color: #d1d7db;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, sans-serif;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  z-index: 2000;
+  pointer-events: none;
+  white-space: nowrap;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.x1flox-tooltip::before {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid #1f2d35;
+}
+
+/* Hide overlay when not on chat page */
+body:not([data-x1flox-chat-active="true"]) .x1flox-shortcut-bar,
+body:not([data-x1flox-chat-active="true"]) .x1flox-fab {
+  display: none;
+}

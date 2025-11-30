@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle with WhatsApp green -->
+  <circle cx="16.0" cy="16.0" r="16.0" fill="#25D366"/>
+
+  <!-- White chat bubble icon -->
+  <g transform="translate(4.8, 4.8)">
+    <path d="M 11.2 1.6
+             C 17.6 1.6, 22.4 6.4, 22.4 11.2
+             C 22.4 16.0, 17.6 20.8, 11.2 20.8
+             L 4.8 22.4
+             L 4.8 16.0
+             C 1.6 16.0, 0 13.76, 0 11.2
+             C 0 6.4, 4.8 1.6, 11.2 1.6
+             Z"
+          fill="white"/>
+
+    <!-- Small lightning bolt for "speed/automation" -->
+    <path d="M 12.8 6.4
+             L 10.24 11.2
+             L 12.16 11.2
+             L 9.6 16.0
+             L 12.16 11.2
+             L 10.24 11.2
+             Z"
+          fill="#25D366"/>
+  </g>
+</svg>
