@@ -1,21 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { Message, Tag, MessageType } from '@/types';
 import { db } from '@/storage/db';
-import { generateId, formatDate, getAudioDuration, downloadFile } from '@/utils/helpers';
+import { generateId, getAudioDuration, downloadFile } from '@/utils/helpers';
 import AudioRecorder from '../components/AudioRecorder';
 import ImageVideoUploader from '../components/ImageVideoUploader';
 import TagManager from '../components/TagManager';
-
-const TagIcon = ({ color, size = 14 }: { color: string; size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill={color} style={{ flexShrink: 0 }}>
-    <path d="M21.41 11.58l-9-9C12.05 2.22 11.55 2 11 2H4c-1.1 0-2 .9-2 2v7c0 .55.22 1.05.59 1.42l9 9c.36.36.86.58 1.41.58s1.05-.22 1.41-.59l7-7c.37-.36.59-.86.59-1.41s-.23-1.06-.59-1.42zM5.5 7C4.67 7 4 6.33 4 5.5S4.67 4 5.5 4 7 4.67 7 5.5 6.33 7 5.5 7z"/>
-  </svg>
-);
+import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
+import { MessageSquare, Mic, Image as ImageIcon, Video, Plus, Download, Upload, Trash2, Edit, GripVertical, Clock } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 const MessagesTab: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
-  const [isCreating, setIsCreating] = useState(false);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
@@ -40,13 +45,11 @@ const MessagesTab: React.FC = () => {
       db.getAllMessages(),
       db.getAllTags(),
     ]);
-    // Sort by order (fallback to createdAt for older messages)
     setMessages(messagesData.sort((a, b) => (a.order ?? a.createdAt) - (b.order ?? b.createdAt)));
     setTags(tagsData);
   };
 
   const handleCreateNew = () => {
-    setIsCreating(true);
     setEditingMessage(null);
     setFormData({
       type: 'text',
@@ -60,10 +63,10 @@ const MessagesTab: React.FC = () => {
       showRecording: false,
       sendDelay: 0,
     });
+    setIsDialogOpen(true);
   };
 
   const handleEdit = (message: Message) => {
-    setIsCreating(true);
     setEditingMessage(message);
     setFormData({
       type: message.type,
@@ -77,23 +80,12 @@ const MessagesTab: React.FC = () => {
       showRecording: message.showRecording || false,
       sendDelay: message.sendDelay ?? 0,
     });
+    setIsDialogOpen(true);
   };
 
-  const handleCancel = () => {
-    setIsCreating(false);
+  const handleCloseDialog = () => {
+    setIsDialogOpen(false);
     setEditingMessage(null);
-    setFormData({
-      type: 'text',
-      content: '',
-      caption: '',
-      audioData: null,
-      imageData: null,
-      videoData: null,
-      tags: [],
-      showTyping: false,
-      showRecording: false,
-      sendDelay: 0,
-    });
   };
 
   const handleSave = async () => {
@@ -142,7 +134,7 @@ const MessagesTab: React.FC = () => {
 
       await db.saveMessage(message);
       await loadData();
-      handleCancel();
+      handleCloseDialog();
     } catch (error) {
       console.error('Error saving message:', error);
       alert('Erro ao salvar mensagem');
@@ -229,12 +221,10 @@ const MessagesTab: React.FC = () => {
 
     if (draggedIndex === -1 || targetIndex === -1) return;
 
-    // Reorder messages
     const newMessages = [...messages];
     const [removed] = newMessages.splice(draggedIndex, 1);
     newMessages.splice(targetIndex, 0, removed);
 
-    // Update order field for all messages
     const updatedMessages = newMessages.map((msg, index) => ({
       ...msg,
       order: index,
@@ -243,7 +233,6 @@ const MessagesTab: React.FC = () => {
     setMessages(updatedMessages);
     setDraggedId(null);
 
-    // Save new order to database
     for (const msg of updatedMessages) {
       await db.saveMessage(msg);
     }
@@ -253,341 +242,305 @@ const MessagesTab: React.FC = () => {
     setDraggedId(null);
   };
 
+  const getIconForType = (type: MessageType) => {
+    switch (type) {
+      case 'text': return <MessageSquare className="h-4 w-4" />;
+      case 'audio': return <Mic className="h-4 w-4" />;
+      case 'image': return <ImageIcon className="h-4 w-4" />;
+      case 'video': return <Video className="h-4 w-4" />;
+    }
+  };
+
   return (
-    <div className="tab-content">
-      <div className="tab-header">
+    <div className="space-y-6 animate-in fade-in duration-500">
+      <div className="flex justify-between items-center">
         <div>
-          <h2>Mensagens</h2>
-          <p className="tab-description">
-            Crie e gerencie mensagens de texto, áudio, imagem e vídeo para enviar no WhatsApp Web
+          <h2 className="text-3xl font-bold tracking-tight">Mensagens</h2>
+          <p className="text-muted-foreground mt-1">
+            Gerencie suas mensagens prontas para envio rápido.
           </p>
         </div>
-        <div className="tab-actions">
-          <button className="btn-secondary" onClick={handleExport}>
-            📥 Exportar
-          </button>
-          <label className="btn-secondary">
-            📤 Importar
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={handleExport}>
+            <Download className="mr-2 h-4 w-4" /> Exportar
+          </Button>
+          <div className="relative">
+            <Button variant="outline" size="sm" className="cursor-pointer">
+              <Upload className="mr-2 h-4 w-4" /> Importar
+            </Button>
             <input
               type="file"
               accept=".json"
               onChange={handleImport}
-              style={{ display: 'none' }}
+              className="absolute inset-0 opacity-0 cursor-pointer"
             />
-          </label>
-          {!isCreating && (
-            <button className="btn-primary" onClick={handleCreateNew}>
-              ➕ Nova Mensagem
-            </button>
-          )}
+          </div>
+          <Button onClick={handleCreateNew}>
+            <Plus className="mr-2 h-4 w-4" /> Nova Mensagem
+          </Button>
         </div>
       </div>
 
-      {isCreating && (
-        <div className="form-card">
-          <h3>{editingMessage ? 'Editar Mensagem' : 'Nova Mensagem'}</h3>
-
-          <div className="form-group">
-            <label>Tipo de Mensagem</label>
-            <div className="radio-group">
-              <label className="radio-label">
-                <input
-                  type="radio"
-                  value="text"
-                  checked={formData.type === 'text'}
-                  onChange={(e) => setFormData({ ...formData, type: e.target.value as MessageType })}
-                />
-                💬 Texto
-              </label>
-              <label className="radio-label">
-                <input
-                  type="radio"
-                  value="audio"
-                  checked={formData.type === 'audio'}
-                  onChange={(e) => setFormData({ ...formData, type: e.target.value as MessageType })}
-                />
-                🎤 Áudio
-              </label>
-              <label className="radio-label">
-                <input
-                  type="radio"
-                  value="image"
-                  checked={formData.type === 'image'}
-                  onChange={(e) => setFormData({ ...formData, type: e.target.value as MessageType })}
-                />
-                🖼️ Imagem
-              </label>
-              <label className="radio-label">
-                <input
-                  type="radio"
-                  value="video"
-                  checked={formData.type === 'video'}
-                  onChange={(e) => setFormData({ ...formData, type: e.target.value as MessageType })}
-                />
-                🎥 Vídeo
-              </label>
-            </div>
-          </div>
-
-          <div className="form-group">
-            <label>
-              {formData.type === 'text' ? 'Conteúdo da Mensagem' :
-               formData.type === 'audio' ? 'Descrição do Áudio' :
-               formData.type === 'image' ? 'Descrição da Imagem' :
-               'Descrição do Vídeo'}
-            </label>
-            <textarea
-              className="form-textarea"
-              value={formData.content}
-              onChange={(e) => setFormData({ ...formData, content: e.target.value })}
-              placeholder={
-                formData.type === 'text'
-                  ? 'Digite a mensagem...'
-                  : formData.type === 'audio'
-                  ? 'Ex: Mensagem de boas-vindas'
-                  : formData.type === 'image'
-                  ? 'Ex: Foto do produto'
-                  : 'Ex: Vídeo tutorial'
-              }
-              rows={formData.type === 'text' ? 6 : 2}
-            />
-          </div>
-
-          {formData.type === 'audio' && (
-            <div className="form-group">
-              <label>Áudio</label>
-              <AudioRecorder onAudioRecorded={handleAudioRecorded} />
-              <div className="audio-upload">
-                <label className="btn-secondary full-width">
-                  📁 Fazer Upload de Áudio
-                  <input
-                    type="file"
-                    accept="audio/*"
-                    onChange={handleAudioUpload}
-                    style={{ display: 'none' }}
-                  />
-                </label>
-                {formData.audioData && (
-                  <div className="audio-preview-box">
-                    <span>✅ Áudio carregado</span>
-                    <audio controls src={URL.createObjectURL(formData.audioData)} />
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {formData.type === 'image' && (
-            <div className="form-group">
-              <label>Imagem</label>
-              <ImageVideoUploader type="image" onFileSelected={handleImageSelected} />
-            </div>
-          )}
-
-          {formData.type === 'video' && (
-            <div className="form-group">
-              <label>Vídeo</label>
-              <ImageVideoUploader type="video" onFileSelected={handleVideoSelected} />
-            </div>
-          )}
-
-          {(formData.type === 'image' || formData.type === 'video') && (
-            <div className="form-group">
-              <label>Legenda (opcional)</label>
-              <textarea
-                className="form-textarea"
-                value={formData.caption}
-                onChange={(e) => setFormData({ ...formData, caption: e.target.value })}
-                placeholder="Legenda que será enviada junto com a mídia..."
-                rows={2}
-              />
-              <small style={{ color: '#888', marginTop: '4px', display: 'block' }}>
-                Esta legenda será enviada junto com a {formData.type === 'image' ? 'imagem' : 'vídeo'}. A descrição acima é apenas para referência interna.
-              </small>
-            </div>
-          )}
-
-          <div className="form-group">
-            <label>Tags</label>
-            <TagManager
-              availableTags={tags}
-              selectedTags={formData.tags}
-              onTagsChange={(newTags) => setFormData({ ...formData, tags: newTags })}
-              onTagsUpdate={loadData}
-            />
-          </div>
-
-          {formData.type === 'text' && (
-            <div className="form-group">
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={formData.showTyping}
-                  disabled={formData.sendDelay === 0}
-                  onChange={(e) => setFormData({ ...formData, showTyping: e.target.checked })}
-                />
-                ⌨️ Mostrar "digitando..." antes de enviar
-              </label>
-              <small style={{ color: formData.sendDelay === 0 ? '#ff9800' : '#888', marginTop: '4px', display: 'block' }}>
-                {formData.sendDelay === 0
-                  ? '⚠️ Configure um delay maior que 0 para habilitar esta opção'
-                  : 'Simula que você está digitando antes de enviar a mensagem'}
-              </small>
-            </div>
-          )}
-
-          {formData.type === 'audio' && (
-            <div className="form-group">
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={formData.showRecording}
-                  disabled={formData.sendDelay === 0}
-                  onChange={(e) => setFormData({ ...formData, showRecording: e.target.checked })}
-                />
-                🎤 Mostrar "gravando áudio..." antes de enviar
-              </label>
-              <small style={{ color: formData.sendDelay === 0 ? '#ff9800' : '#888', marginTop: '4px', display: 'block' }}>
-                {formData.sendDelay === 0
-                  ? '⚠️ Configure um delay maior que 0 para habilitar esta opção'
-                  : 'Simula que você está gravando áudio antes de enviar a mensagem'}
-              </small>
-            </div>
-          )}
-
-          <div className="form-group">
-            <label>⏱️ Delay antes de enviar (segundos)</label>
-            <input
-              type="number"
-              className="form-input"
-              value={formData.sendDelay / 1000}
-              onChange={(e) => {
-                const seconds = parseFloat(e.target.value) || 0;
-                const newDelay = Math.max(0, seconds * 1000);
-                // If delay is set to 0, also disable showTyping and showRecording
-                if (newDelay === 0) {
-                  setFormData({ ...formData, sendDelay: newDelay, showTyping: false, showRecording: false });
-                } else {
-                  setFormData({ ...formData, sendDelay: newDelay });
-                }
-              }}
-              min="0"
-              step="0.5"
-              placeholder="0"
-            />
-            <small style={{ color: '#888', marginTop: '4px', display: 'block' }}>
-              Tempo de espera antes de enviar a mensagem após o disparo
-              {(formData.type === 'image' || formData.type === 'video') && ' (padrão: 0 segundos para imagens/vídeos)'}
-            </small>
-          </div>
-
-          <div className="form-actions">
-            <button className="btn-secondary" onClick={handleCancel}>
-              Cancelar
-            </button>
-            <button className="btn-primary" onClick={handleSave}>
-              {editingMessage ? 'Atualizar' : 'Criar'} Mensagem
-            </button>
-          </div>
-        </div>
-      )}
-
-      <div className="messages-grid">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {messages.map((message) => (
-          <div
+          <Card
             key={message.id}
-            className={`message-item ${draggedId === message.id ? 'dragging' : ''}`}
+            className={cn(
+              "group relative transition-all hover:shadow-md",
+              draggedId === message.id && "opacity-50 border-dashed"
+            )}
             draggable
             onDragStart={(e) => handleDragStart(e, message.id)}
             onDragOver={handleDragOver}
             onDrop={(e) => handleDrop(e, message.id)}
             onDragEnd={handleDragEnd}
           >
-            <div className="message-item-header">
-              <span className="drag-handle" title="Arrastar para reordenar">⋮⋮</span>
-              <span className={`type-badge ${message.type}`}>
-                {message.type === 'text' ? '💬' :
-                 message.type === 'audio' ? '🎤' :
-                 message.type === 'image' ? '🖼️' : '🎥'}
-              </span>
-              <div className="message-item-actions">
-                <button
-                  className="icon-btn"
-                  onClick={() => handleEdit(message)}
-                  title="Editar"
-                >
-                  ✏️
-                </button>
-                <button
-                  className="icon-btn delete"
-                  onClick={() => handleDelete(message.id)}
-                  title="Excluir"
-                >
-                  🗑️
-                </button>
+            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing p-1 text-muted-foreground">
+              <GripVertical className="h-4 w-4" />
+            </div>
+
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <Badge variant="outline" className="flex gap-1 items-center">
+                  {getIconForType(message.type)}
+                  <span className="capitalize">{message.type === 'text' ? 'Texto' : message.type === 'audio' ? 'Áudio' : message.type === 'image' ? 'Imagem' : 'Vídeo'}</span>
+                </Badge>
+                {message.duration && (
+                  <span className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Clock className="h-3 w-3" /> {Math.floor(message.duration)}s
+                  </span>
+                )}
               </div>
+            </CardHeader>
+
+            <CardContent className="pb-2">
+              <p className="text-sm line-clamp-3 text-muted-foreground min-h-[3rem]">
+                {message.content}
+              </p>
+
+              {message.tags.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-3">
+                  {message.tags.map((tagId) => {
+                    const tag = tags.find((t) => t.id === tagId);
+                    return tag ? (
+                      <Badge
+                        key={tagId}
+                        variant="secondary"
+                        className="text-[10px] px-1 py-0 h-5"
+                        style={{ backgroundColor: `${tag.color}20`, color: tag.color, borderColor: `${tag.color}40` }}
+                      >
+                        {tag.name}
+                      </Badge>
+                    ) : null;
+                  })}
+                </div>
+              )}
+            </CardContent>
+
+            <CardFooter className="pt-2 flex justify-end gap-2 border-t bg-muted/20">
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(message)}>
+                <Edit className="h-4 w-4" />
+              </Button>
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDelete(message.id)}>
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </CardFooter>
+          </Card>
+        ))}
+
+        {messages.length === 0 && (
+          <div className="col-span-full flex flex-col items-center justify-center p-12 border-2 border-dashed rounded-lg text-muted-foreground bg-muted/10">
+            <MessageSquare className="h-12 w-12 mb-4 opacity-20" />
+            <h3 className="text-lg font-medium">Nenhuma mensagem criada</h3>
+            <p className="text-sm mb-4">Crie sua primeira mensagem para começar.</p>
+            <Button onClick={handleCreateNew}>
+              <Plus className="mr-2 h-4 w-4" /> Criar Mensagem
+            </Button>
+          </div>
+        )}
+      </div>
+
+      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <DialogContent
+          className="max-w-2xl max-h-[90vh] overflow-y-auto bg-background border border-border shadow-lg sm:rounded-xl"
+          style={{ backgroundColor: '#09090b', borderColor: '#27272a' }}
+        >
+          <DialogHeader>
+            <DialogTitle>{editingMessage ? 'Editar Mensagem' : 'Nova Mensagem'}</DialogTitle>
+            <DialogDescription>
+              Preencha os detalhes da mensagem abaixo.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6 py-4">
+            <div className="space-y-2">
+              <Label>Tipo de Mensagem</Label>
+              <Tabs
+                defaultValue={formData.type}
+                value={formData.type}
+                onValueChange={(v) => setFormData({ ...formData, type: v as MessageType })}
+                className="w-full"
+              >
+                <TabsList className="grid w-full grid-cols-4">
+                  <TabsTrigger value="text">Texto</TabsTrigger>
+                  <TabsTrigger value="audio">Áudio</TabsTrigger>
+                  <TabsTrigger value="image">Imagem</TabsTrigger>
+                  <TabsTrigger value="video">Vídeo</TabsTrigger>
+                </TabsList>
+              </Tabs>
             </div>
 
-            <div className="message-item-content">
-              <p className="message-text">{message.content}</p>
-              {message.type === 'audio' && message.audioData && (
-                <audio controls src={URL.createObjectURL(message.audioData)} />
-              )}
-              {message.type === 'image' && message.imageData && (
-                <img
-                  src={URL.createObjectURL(message.imageData)}
-                  alt={message.content}
-                  style={{ maxWidth: '100%', borderRadius: '8px', marginTop: '8px' }}
-                />
-              )}
-              {message.type === 'video' && message.videoData && (
-                <video
-                  controls
-                  src={URL.createObjectURL(message.videoData)}
-                  style={{ maxWidth: '100%', borderRadius: '8px', marginTop: '8px' }}
-                />
-              )}
+            <div className="space-y-2">
+              <Label>
+                {formData.type === 'text' ? 'Conteúdo da Mensagem' :
+                  formData.type === 'audio' ? 'Descrição do Áudio' :
+                    formData.type === 'image' ? 'Descrição da Imagem' :
+                      'Descrição do Vídeo'}
+              </Label>
+              <Textarea
+                value={formData.content}
+                onChange={(e) => setFormData({ ...formData, content: e.target.value })}
+                placeholder={
+                  formData.type === 'text' ? 'Digite a mensagem...' :
+                    formData.type === 'audio' ? 'Ex: Mensagem de boas-vindas' :
+                      formData.type === 'image' ? 'Ex: Foto do produto' :
+                        'Ex: Vídeo tutorial'
+                }
+                rows={formData.type === 'text' ? 5 : 2}
+              />
             </div>
 
-            {message.tags.length > 0 && (
-              <div className="message-item-tags">
-                {message.tags.map((tagId) => {
-                  const tag = tags.find((t) => t.id === tagId);
-                  return tag ? (
-                    <span
-                      key={tagId}
-                      className="tag"
-                    >
-                      <TagIcon color={tag.color} size={14} />
-                      {tag.name}
-                    </span>
-                  ) : null;
-                })}
+            {formData.type === 'audio' && (
+              <div className="space-y-4 p-4 border rounded-lg bg-muted/30">
+                <div className="space-y-2">
+                  <Label>Gravar Áudio</Label>
+                  <AudioRecorder onAudioRecorded={handleAudioRecorded} />
+                </div>
+
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t" />
+                  </div>
+                  <div className="relative flex justify-center text-xs uppercase">
+                    <span className="bg-background px-2 text-muted-foreground">Ou faça upload</span>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Upload de Arquivo</Label>
+                  <Input
+                    type="file"
+                    accept="audio/*"
+                    onChange={handleAudioUpload}
+                  />
+                </div>
+
+                {formData.audioData && (
+                  <div className="flex items-center gap-2 p-2 bg-green-500/10 text-green-600 rounded border border-green-500/20">
+                    <CheckCircle className="h-4 w-4" />
+                    <span className="text-sm font-medium">Áudio carregado com sucesso</span>
+                    <audio controls src={URL.createObjectURL(formData.audioData)} className="h-8 ml-auto" />
+                  </div>
+                )}
               </div>
             )}
 
-            <div className="message-item-footer">
-              <span className="date">{formatDate(message.createdAt)}</span>
-              {message.duration && (
-                <span className="duration">{Math.floor(message.duration)}s</span>
+            {(formData.type === 'image' || formData.type === 'video') && (
+              <div className="space-y-4 p-4 border rounded-lg bg-muted/30">
+                <Label>{formData.type === 'image' ? 'Imagem' : 'Vídeo'}</Label>
+                <ImageVideoUploader
+                  type={formData.type as 'image' | 'video'}
+                  onFileSelected={formData.type === 'image' ? handleImageSelected : handleVideoSelected}
+                />
+
+                <div className="space-y-2 pt-2">
+                  <Label>Legenda (Opcional)</Label>
+                  <Textarea
+                    value={formData.caption}
+                    onChange={(e) => setFormData({ ...formData, caption: e.target.value })}
+                    placeholder="Legenda que será enviada junto com a mídia..."
+                    rows={2}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label>Tags</Label>
+              <TagManager
+                availableTags={tags}
+                selectedTags={formData.tags}
+                onTagsChange={(newTags) => setFormData({ ...formData, tags: newTags })}
+                onTagsUpdate={loadData}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <Label>Delay antes de enviar (segundos)</Label>
+                <Input
+                  type="number"
+                  value={formData.sendDelay / 1000}
+                  onChange={(e) => {
+                    const seconds = parseFloat(e.target.value) || 0;
+                    const newDelay = Math.max(0, seconds * 1000);
+                    if (newDelay === 0) {
+                      setFormData({ ...formData, sendDelay: newDelay, showTyping: false, showRecording: false });
+                    } else {
+                      setFormData({ ...formData, sendDelay: newDelay });
+                    }
+                  }}
+                  min="0"
+                  step="0.5"
+                />
+              </div>
+
+              {formData.type === 'text' && (
+                <div className="flex items-center space-x-2 pt-8">
+                  <Switch
+                    id="show-typing"
+                    checked={formData.showTyping}
+                    onCheckedChange={(checked) => setFormData({ ...formData, showTyping: checked })}
+                    disabled={formData.sendDelay === 0}
+                  />
+                  <Label htmlFor="show-typing" className={formData.sendDelay === 0 ? "text-muted-foreground" : ""}>
+                    Mostrar "digitando..."
+                  </Label>
+                </div>
+              )}
+
+              {formData.type === 'audio' && (
+                <div className="flex items-center space-x-2 pt-8">
+                  <Switch
+                    id="show-recording"
+                    checked={formData.showRecording}
+                    onCheckedChange={(checked) => setFormData({ ...formData, showRecording: checked })}
+                    disabled={formData.sendDelay === 0}
+                  />
+                  <Label htmlFor="show-recording" className={formData.sendDelay === 0 ? "text-muted-foreground" : ""}>
+                    Mostrar "gravando..."
+                  </Label>
+                </div>
               )}
             </div>
           </div>
-        ))}
-      </div>
 
-      {messages.length === 0 && !isCreating && (
-        <div className="empty-state-large">
-          <div className="empty-icon">💬</div>
-          <h3>Nenhuma mensagem criada</h3>
-          <p>Crie sua primeira mensagem para começar a automatizar o WhatsApp</p>
-          <button className="btn-primary" onClick={handleCreateNew}>
-            ➕ Criar Primeira Mensagem
-          </button>
-        </div>
-      )}
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCloseDialog}>Cancelar</Button>
+            <Button onClick={handleSave}>{editingMessage ? 'Atualizar' : 'Criar'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
+
+// Helper component for success icon
+const CheckCircle = ({ className }: { className?: string }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+    <polyline points="22 4 12 14.01 9 11.01" />
+  </svg>
+);
 
 export default MessagesTab;

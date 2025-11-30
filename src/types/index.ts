@@ -57,13 +57,19 @@ export interface TriggerCondition {
 
 export interface Trigger {
   id: string;
-  name: string;
-  description?: string;
-  enabled: boolean;
-  conditions: TriggerCondition[];
-  scriptId: string; // Script to execute when triggered
+  keyword: string; // Palavra-chave para acionar o gatilho
+  matchType: 'exact' | 'contains' | 'startsWith' | 'endsWith';
+  actionType: 'script' | 'message';
+  actionId: string; // ID do script ou mensagem
+  isActive: boolean;
   createdAt: number;
   updatedAt: number;
+  // Campos legados (opcionais para compatibilidade durante migração)
+  name?: string;
+  description?: string;
+  enabled?: boolean;
+  conditions?: TriggerCondition[];
+  scriptId?: string;
 }
 
 // Storage interfaces
@@ -76,18 +82,23 @@ export interface StorageData {
 }
 
 export interface Settings {
-  storageType: 'local' | 'remote'; // Local (IndexedDB) or Remote (Supabase/S3)
+  apiKey?: string; // OpenAI / Gemini API Key
+  webhookUrl?: string; // URL para webhooks
+  autoReply: boolean; // Ativar resposta automática global
+  delayBetweenMessages: number; // Delay padrão entre mensagens (ms)
+
+  // Campos legados ou mantidos
+  storageType: 'local' | 'remote';
   remoteConfig?: {
     url: string;
     apiKey?: string;
   };
   autoBackup: boolean;
-  defaultDelay: number; // Default delay between messages in milliseconds
-  requireSendConfirmation?: boolean; // Require two clicks to send messages (default: true)
-  showShortcuts?: boolean; // Show shortcut bar in WhatsApp Web (default: true)
-  showFloatingButton?: boolean; // Show floating action button in WhatsApp Web (default: false)
-  showScriptExecutionPopup?: boolean; // Show script execution progress popup (default: true)
-  showMessageExecutionPopup?: boolean; // Show message sending progress popup for delayed messages (default: true)
+  requireSendConfirmation?: boolean;
+  showShortcuts?: boolean;
+  showFloatingButton?: boolean;
+  showScriptExecutionPopup?: boolean;
+  showMessageExecutionPopup?: boolean;
 }
 
 // Message for communication between popup/options and content script

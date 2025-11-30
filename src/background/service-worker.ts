@@ -215,7 +215,7 @@ class BackgroundService {
 
     // Check each trigger
     for (const trigger of enabledTriggers) {
-      if (this.messageMatchesTrigger(messageText, trigger.conditions)) {
+      if (trigger.conditions && this.messageMatchesTrigger(messageText, trigger.conditions)) {
         console.log('[X1Flox] Trigger matched:', trigger.name);
 
         // Send to content script to execute (fire-and-forget)

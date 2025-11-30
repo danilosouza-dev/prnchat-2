@@ -119,7 +119,8 @@ class DatabaseService {
       await this.saveSettings({
         storageType: 'local',
         autoBackup: false,
-        defaultDelay: 2000, // 2 seconds default delay
+        autoReply: false,
+        delayBetweenMessages: 2000, // 2 seconds default delay
         requireSendConfirmation: true, // Require two clicks to send messages
         showShortcuts: true, // Show shortcut bar in WhatsApp Web
         showFloatingButton: true, // Show floating action button in WhatsApp Web

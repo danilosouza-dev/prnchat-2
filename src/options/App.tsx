@@ -1,9 +1,10 @@
+
 import React, { useState } from 'react';
 import MessagesTab from './tabs/MessagesTab';
 import ScriptsTab from './tabs/ScriptsTab';
 import TriggersTab from './tabs/TriggersTab';
 import SettingsTab from './tabs/SettingsTab';
-import { MessageSquare, FileCode, Crosshair, Settings, Menu } from 'lucide-react';
+import { MessageSquare, FileCode, Crosshair, Settings, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -13,6 +14,7 @@ type Tab = 'messages' | 'scripts' | 'triggers' | 'settings';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('messages');
+  const [isCollapsed, setIsCollapsed] = useState(false);
 
   const navItems = [
     {
@@ -44,12 +46,33 @@ const App: React.FC = () => {
   return (
     <div className="flex h-screen w-full bg-background">
       {/* Sidebar */}
-      <aside className="w-64 flex-col border-r bg-zinc-950 text-white hidden md:flex">
-        <div className="p-6">
-          <div className="flex items-center gap-2 font-bold text-xl text-primary">
-            <span className="text-2xl">⚡</span> X1Flox
-          </div>
-          <p className="text-xs text-zinc-400 mt-1">Automação para WhatsApp</p>
+      <aside
+        className={cn(
+          "flex-col border-r bg-zinc-950 text-white hidden md:flex transition-all duration-300 ease-in-out",
+          isCollapsed ? "w-16" : "w-64"
+        )}
+      >
+        <div className={cn("p-4 flex items-center", isCollapsed ? "justify-center" : "justify-between")}>
+          {!isCollapsed && (
+            <div className="flex flex-col">
+              <div className="flex items-center gap-2 font-bold text-xl text-primary">
+                <span className="text-2xl">⚡</span> X1Flox
+              </div>
+              <p className="text-xs text-zinc-400 mt-1">Automação para WhatsApp</p>
+            </div>
+          )}
+          {isCollapsed && <span className="text-2xl">⚡</span>}
+        </div>
+
+        <div className="px-2 mb-2 flex justify-end">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-zinc-400 hover:text-white hover:bg-zinc-900 h-8 w-8"
+            onClick={() => setIsCollapsed(!isCollapsed)}
+          >
+            {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+          </Button>
         </div>
 
         <Separator className="bg-zinc-800" />
@@ -64,24 +87,28 @@ const App: React.FC = () => {
                   "justify-start gap-3",
                   activeTab === item.id
                     ? "bg-primary/20 text-primary hover:bg-primary/30"
-                    : "text-zinc-400 hover:text-white hover:bg-zinc-900"
+                    : "text-zinc-400 hover:text-white hover:bg-zinc-900",
+                  isCollapsed && "justify-center px-2"
                 )}
                 onClick={() => setActiveTab(item.id as Tab)}
+                title={isCollapsed ? item.label : undefined}
               >
-                <item.icon className="h-4 w-4" />
-                {item.label}
+                <item.icon className="h-4 w-4 shrink-0" />
+                {!isCollapsed && <span>{item.label}</span>}
               </Button>
             ))}
           </nav>
         </ScrollArea>
 
-        <div className="p-4 border-t border-zinc-800">
-          <div className="flex items-center gap-3 text-xs text-zinc-500">
-            <span>v1.0.0</span>
-            <span>•</span>
-            <span>X1Flox</span>
+        {!isCollapsed && (
+          <div className="p-4 border-t border-zinc-800">
+            <div className="flex items-center gap-3 text-xs text-zinc-500">
+              <span>v1.0.0</span>
+              <span>•</span>
+              <span>X1Flox</span>
+            </div>
           </div>
-        </div>
+        )}
       </aside>
 
       {/* Mobile Header (visible only on small screens) */}
@@ -91,8 +118,9 @@ const App: React.FC = () => {
       </div>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-auto md:p-0 pt-16 bg-slate-50/50 dark:bg-zinc-900/50">
-        <div className="h-full">
+      {/* Main Content */}
+      <main className="flex-1 overflow-auto bg-slate-50/50 dark:bg-zinc-900/50">
+        <div className="container mx-auto max-w-7xl p-6 md:p-10 lg:p-12 min-h-full">
           {activeTab === 'messages' && <MessagesTab />}
           {activeTab === 'scripts' && <ScriptsTab />}
           {activeTab === 'triggers' && <TriggersTab />}

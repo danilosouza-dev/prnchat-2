@@ -1,149 +1,100 @@
 import React, { useState, useEffect } from 'react';
-import { Trigger, TriggerCondition, TriggerConditionType, Script } from '@/types';
+import { Trigger, Script, Message } from '@/types';
 import { db } from '@/storage/db';
 import { generateId } from '@/utils/helpers';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
+import { Plus, Trash2, Edit, Zap, FileText, MessageSquare, Search } from 'lucide-react';
 
 const TriggersTab: React.FC = () => {
   const [triggers, setTriggers] = useState<Trigger[]>([]);
   const [scripts, setScripts] = useState<Script[]>([]);
-  const [isCreating, setIsCreating] = useState(false);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingTrigger, setEditingTrigger] = useState<Trigger | null>(null);
-  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
-    name: '',
-    description: '',
-    enabled: true,
-    scriptId: '',
-    conditions: [] as TriggerCondition[],
+    keyword: '',
+    matchType: 'exact' as 'exact' | 'contains' | 'startsWith' | 'endsWith',
+    actionType: 'script' as 'script' | 'message',
+    actionId: '',
+    isActive: true,
   });
 
   useEffect(() => {
     loadData();
   }, []);
 
-  // Close menu when clicking outside
-  useEffect(() => {
-    const handleClickOutside = () => {
-      if (menuOpenId) {
-        setMenuOpenId(null);
-      }
-    };
-
-    if (menuOpenId) {
-      document.addEventListener('click', handleClickOutside);
-      return () => {
-        document.removeEventListener('click', handleClickOutside);
-      };
-    }
-  }, [menuOpenId]);
-
   const loadData = async () => {
-    const [triggersData, scriptsData] = await Promise.all([
+    const [triggersData, scriptsData, messagesData] = await Promise.all([
       db.getAllTriggers(),
       db.getAllScripts(),
+      db.getAllMessages(),
     ]);
     setTriggers(triggersData.sort((a, b) => b.createdAt - a.createdAt));
     setScripts(scriptsData);
+    setMessages(messagesData);
   };
 
   const handleCreateNew = () => {
-    if (scripts.length === 0) {
-      alert('Crie pelo menos um script primeiro!');
-      return;
-    }
-    setIsCreating(true);
     setEditingTrigger(null);
     setFormData({
-      name: '',
-      description: '',
-      enabled: true,
-      scriptId: scripts[0].id,
-      conditions: [],
+      keyword: '',
+      matchType: 'exact',
+      actionType: 'script',
+      actionId: scripts.length > 0 ? scripts[0].id : '', // Default to first script if available
+      isActive: true,
     });
+    setIsDialogOpen(true);
   };
 
   const handleEdit = (trigger: Trigger) => {
-    setIsCreating(true);
     setEditingTrigger(trigger);
     setFormData({
-      name: trigger.name,
-      description: trigger.description || '',
-      enabled: trigger.enabled,
-      scriptId: trigger.scriptId,
-      conditions: trigger.conditions,
+      keyword: trigger.keyword,
+      matchType: trigger.matchType,
+      actionType: trigger.actionType,
+      actionId: trigger.actionId,
+      isActive: trigger.isActive,
     });
+    setIsDialogOpen(true);
   };
 
-  const handleCancel = () => {
-    setIsCreating(false);
+  const handleCloseDialog = () => {
+    setIsDialogOpen(false);
     setEditingTrigger(null);
-    setFormData({
-      name: '',
-      description: '',
-      enabled: true,
-      scriptId: scripts[0]?.id || '',
-      conditions: [],
-    });
-  };
-
-  const handleAddCondition = () => {
-    setFormData({
-      ...formData,
-      conditions: [
-        ...formData.conditions,
-        { type: 'contains', value: '', caseSensitive: false },
-      ],
-    });
-  };
-
-  const handleUpdateCondition = (
-    index: number,
-    field: keyof TriggerCondition,
-    value: any
-  ) => {
-    const newConditions = [...formData.conditions];
-    newConditions[index] = { ...newConditions[index], [field]: value };
-    setFormData({ ...formData, conditions: newConditions });
-  };
-
-  const handleRemoveCondition = (index: number) => {
-    setFormData({
-      ...formData,
-      conditions: formData.conditions.filter((_, i) => i !== index),
-    });
   };
 
   const handleSave = async () => {
-    if (!formData.name.trim()) {
-      alert('Por favor, preencha o nome do gatilho');
+    if (!formData.keyword.trim()) {
+      alert('Por favor, preencha a palavra-chave');
       return;
     }
 
-    if (formData.conditions.length === 0) {
-      alert('Adicione pelo menos uma condição');
-      return;
-    }
-
-    if (!formData.scriptId) {
-      alert('Selecione um script');
+    if (!formData.actionId) {
+      alert('Por favor, selecione uma ação (script ou mensagem)');
       return;
     }
 
     try {
       const trigger: Trigger = {
         id: editingTrigger?.id || generateId(),
-        name: formData.name,
-        description: formData.description,
-        enabled: formData.enabled,
-        scriptId: formData.scriptId,
-        conditions: formData.conditions,
+        keyword: formData.keyword.toLowerCase(),
+        matchType: formData.matchType,
+        actionType: formData.actionType,
+        actionId: formData.actionId,
+        isActive: formData.isActive,
         createdAt: editingTrigger?.createdAt || Date.now(),
         updatedAt: Date.now(),
       };
 
       await db.saveTrigger(trigger);
       await loadData();
-      handleCancel();
+      handleCloseDialog();
     } catch (error) {
       console.error('Error saving trigger:', error);
       alert('Erro ao salvar gatilho');
@@ -162,262 +113,235 @@ const TriggersTab: React.FC = () => {
     }
   };
 
-
-  const handleToggleEnabled = async (e: React.MouseEvent, trigger: Trigger) => {
-    e.stopPropagation();
+  const handleToggleActive = async (trigger: Trigger) => {
     try {
-      await db.saveTrigger({ ...trigger, enabled: !trigger.enabled, updatedAt: Date.now() });
+      await db.saveTrigger({
+        ...trigger,
+        isActive: !trigger.isActive,
+        updatedAt: Date.now(),
+      });
       await loadData();
-      setMenuOpenId(null);
     } catch (error) {
       console.error('Error toggling trigger:', error);
-      alert('Erro ao atualizar gatilho');
     }
   };
 
-  const handleDeleteClick = async (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    await handleDelete(id);
-    setMenuOpenId(null);
+  const getActionName = (type: 'script' | 'message', id: string): string => {
+    if (type === 'script') {
+      const script = scripts.find((s) => s.id === id);
+      return script ? `Script: ${script.name}` : 'Script não encontrado';
+    } else {
+      const message = messages.find((m) => m.id === id);
+      return message
+        ? `Mensagem: ${message.content.substring(0, 30)}${message.content.length > 30 ? '...' : ''
+        }`
+        : 'Mensagem não encontrada';
+    }
   };
 
-  const handleEditClick = (e: React.MouseEvent, trigger: Trigger) => {
-    e.stopPropagation();
-    handleEdit(trigger);
-    setMenuOpenId(null);
-  };
-
-  const toggleMenu = (e: React.MouseEvent, triggerId: string) => {
-    e.stopPropagation();
-    setMenuOpenId(menuOpenId === triggerId ? null : triggerId);
-  };
-
-  const getScriptName = (scriptId: string): string => {
-    const script = scripts.find((s) => s.id === scriptId);
-    return script?.name || 'Script não encontrado';
+  const getMatchTypeLabel = (type: string) => {
+    switch (type) {
+      case 'exact': return 'Exata';
+      case 'contains': return 'Contém';
+      case 'startsWith': return 'Começa com';
+      case 'endsWith': return 'Termina com';
+      default: return type;
+    }
   };
 
   return (
-    <div className="tab-content">
-      <div className="tab-header">
+    <div className="space-y-6 animate-in fade-in duration-500">
+      <div className="flex justify-between items-center">
         <div>
-          <h2>Gatilhos (Beta)</h2>
-          <p className="tab-description">
-            Configure gatilhos que disparam scripts automaticamente baseado em condições
+          <h2 className="text-3xl font-bold tracking-tight">Gatilhos</h2>
+          <p className="text-muted-foreground mt-1">
+            Configure respostas automáticas baseadas em palavras-chave.
           </p>
         </div>
-        <div className="tab-actions">
-          {!isCreating && (
-            <button className="btn-primary" onClick={handleCreateNew}>
-              ➕ Novo Gatilho
-            </button>
-          )}
-        </div>
+        <Button onClick={handleCreateNew}>
+          <Plus className="mr-2 h-4 w-4" /> Novo Gatilho
+        </Button>
       </div>
 
-      {isCreating && (
-        <div className="form-card">
-          <h3>{editingTrigger ? 'Editar Gatilho' : 'Novo Gatilho'}</h3>
-
-          <div className="form-group">
-            <label>Nome do Gatilho *</label>
-            <input
-              type="text"
-              className="form-input"
-              value={formData.name}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              placeholder="Ex: Responder pergunta sobre preço"
-            />
-          </div>
-
-          <div className="form-group">
-            <label>Descrição (opcional)</label>
-            <textarea
-              className="form-textarea"
-              value={formData.description}
-              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              placeholder="Descreva quando este gatilho deve ser ativado..."
-              rows={2}
-            />
-          </div>
-
-          <div className="form-group">
-            <label>Script a Executar *</label>
-            <select
-              className="form-select"
-              value={formData.scriptId}
-              onChange={(e) => setFormData({ ...formData, scriptId: e.target.value })}
-            >
-              {scripts.map((script) => (
-                <option key={script.id} value={script.id}>
-                  {script.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="form-group">
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={formData.enabled}
-                onChange={(e) => setFormData({ ...formData, enabled: e.target.checked })}
-              />
-              Gatilho ativado
-            </label>
-          </div>
-
-          <div className="form-group">
-            <div className="conditions-header">
-              <label>Condições *</label>
-              <button className="btn-secondary-sm" onClick={handleAddCondition}>
-                ➕ Adicionar Condição
-              </button>
-            </div>
-
-            <div className="trigger-conditions">
-              {formData.conditions.map((condition, index) => (
-                <div key={index} className="trigger-condition">
-                  <div className="condition-row">
-                    <select
-                      className="form-select"
-                      value={condition.type}
-                      onChange={(e) =>
-                        handleUpdateCondition(
-                          index,
-                          'type',
-                          e.target.value as TriggerConditionType
-                        )
-                      }
-                    >
-                      <option value="contains">Contém</option>
-                      <option value="equals">É igual a</option>
-                      <option value="starts_with">Começa com</option>
-                      <option value="ends_with">Termina com</option>
-                      <option value="regex">Expressão regular</option>
-                    </select>
-
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={condition.value}
-                      onChange={(e) =>
-                        handleUpdateCondition(index, 'value', e.target.value)
-                      }
-                      placeholder="Valor a verificar..."
-                    />
-
-                    <button
-                      className="icon-btn delete"
-                      onClick={() => handleRemoveCondition(index)}
-                      title="Remover condição"
-                    >
-                      🗑️
-                    </button>
-                  </div>
-
-                  <label className="checkbox-label-sm">
-                    <input
-                      type="checkbox"
-                      checked={condition.caseSensitive}
-                      onChange={(e) =>
-                        handleUpdateCondition(index, 'caseSensitive', e.target.checked)
-                      }
-                    />
-                    Case sensitive
-                  </label>
-                </div>
-              ))}
-
-              {formData.conditions.length === 0 && (
-                <div className="empty-state-small">
-                  Nenhuma condição adicionada ainda
-                </div>
-              )}
-            </div>
-
-            {formData.conditions.length > 1 && (
-              <div className="info-box">
-                ℹ️ Todas as condições devem ser verdadeiras (AND) para o gatilho ser ativado
-              </div>
-            )}
-          </div>
-
-          <div className="form-actions">
-            <button className="btn-secondary" onClick={handleCancel}>
-              Cancelar
-            </button>
-            <button className="btn-primary" onClick={handleSave}>
-              {editingTrigger ? 'Atualizar' : 'Criar'} Gatilho
-            </button>
-          </div>
-        </div>
-      )}
-
-      <div className="triggers-list">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {triggers.map((trigger) => (
-          <div
-            key={trigger.id}
-            className={`trigger-item ${!trigger.enabled ? 'disabled' : ''}`}
-          >
-            <div className="trigger-icon">
-              {trigger.enabled ? '🎯' : '⏸️'}
-            </div>
-            <div className="trigger-content">
-              <div className="trigger-name">{trigger.name}</div>
-              <div className="trigger-subtitle">
-                {getScriptName(trigger.scriptId)} · {trigger.conditions.length} condição{trigger.conditions.length !== 1 ? 'ões' : ''}
-                {trigger.description && ` · ${trigger.description}`}
-              </div>
-            </div>
-            <div className="trigger-actions">
-              <div className="trigger-status-badge">
-                {trigger.enabled ? '✅ Ativo' : '⏸️ Inativo'}
-              </div>
-              <div className="trigger-menu-wrapper">
-                <button
-                  className="trigger-menu-btn"
-                  onClick={(e) => toggleMenu(e, trigger.id)}
-                  title="Mais opções"
-                >
-                  ⋮
-                </button>
-                {menuOpenId === trigger.id && (
-                  <div className="trigger-dropdown-menu">
-                    <button onClick={(e) => handleEditClick(e, trigger)}>
-                      ✏️ Editar
-                    </button>
-                    <button onClick={(e) => handleToggleEnabled(e, trigger)}>
-                      {trigger.enabled ? '⏸️ Desativar' : '▶️ Ativar'}
-                    </button>
-                    <button onClick={(e) => handleDeleteClick(e, trigger.id)} className="danger">
-                      🗑️ Excluir
-                    </button>
+          <Card key={trigger.id} className={`hover:shadow-md transition-shadow ${!trigger.isActive ? 'opacity-70' : ''}`}>
+            <CardHeader className="pb-3">
+              <div className="flex justify-between items-start">
+                <div className="flex items-center gap-2">
+                  <div className={`p-2 rounded-full ${trigger.isActive ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>
+                    <Zap className="h-4 w-4" />
                   </div>
-                )}
+                  <div>
+                    <CardTitle className="text-lg font-medium">{trigger.keyword}</CardTitle>
+                    <CardDescription className="text-xs mt-1">
+                      Correspondência: {getMatchTypeLabel(trigger.matchType)}
+                    </CardDescription>
+                  </div>
+                </div>
+                <Switch
+                  checked={trigger.isActive}
+                  onCheckedChange={() => handleToggleActive(trigger)}
+                />
               </div>
+            </CardHeader>
+            <CardContent className="pb-3">
+              <div className="bg-muted/30 rounded-lg p-3 text-sm">
+                <div className="text-muted-foreground text-xs mb-1 uppercase tracking-wider font-semibold">Responde com</div>
+                <div className="flex items-center gap-2">
+                  {trigger.actionType === 'script' ? (
+                    <FileText className="h-4 w-4 text-blue-500" />
+                  ) : (
+                    <MessageSquare className="h-4 w-4 text-green-500" />
+                  )}
+                  <span className="font-medium truncate">
+                    {getActionName(trigger.actionType, trigger.actionId)}
+                  </span>
+                </div>
+              </div>
+            </CardContent>
+            <div className="px-6 pb-4 pt-0 flex justify-end gap-2">
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(trigger)}>
+                <Edit className="h-4 w-4" />
+              </Button>
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDelete(trigger.id)}>
+                <Trash2 className="h-4 w-4" />
+              </Button>
             </div>
-          </div>
+          </Card>
         ))}
+
+        {triggers.length === 0 && (
+          <div className="col-span-full flex flex-col items-center justify-center p-12 border-2 border-dashed rounded-lg text-muted-foreground bg-muted/10">
+            <Zap className="h-12 w-12 mb-4 opacity-20" />
+            <h3 className="text-lg font-medium">Nenhum gatilho criado</h3>
+            <p className="text-sm mb-4">Crie gatilhos para responder automaticamente a mensagens.</p>
+            <Button onClick={handleCreateNew}>
+              <Plus className="mr-2 h-4 w-4" /> Criar Gatilho
+            </Button>
+          </div>
+        )}
       </div>
 
-      {triggers.length === 0 && !isCreating && (
-        <div className="empty-state-large">
-          <div className="empty-icon">🎯</div>
-          <h3>Nenhum gatilho criado</h3>
-          <p>
-            Crie gatilhos para executar scripts automaticamente quando mensagens
-            recebidas atendem certas condições
-          </p>
-          <button
-            className="btn-primary"
-            onClick={handleCreateNew}
-            disabled={scripts.length === 0}
-          >
-            {scripts.length === 0 ? '⚠️ Crie um script primeiro' : '➕ Criar Primeiro Gatilho'}
-          </button>
-        </div>
-      )}
+      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <DialogContent
+          className="max-w-md bg-background border border-border shadow-lg sm:rounded-xl"
+          style={{ backgroundColor: '#09090b', borderColor: '#27272a' }}
+        >
+          <DialogHeader>
+            <DialogTitle>{editingTrigger ? 'Editar Gatilho' : 'Novo Gatilho'}</DialogTitle>
+            <DialogDescription>
+              Defina a palavra-chave e a ação correspondente.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Palavra-chave</Label>
+              <div className="relative">
+                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  value={formData.keyword}
+                  onChange={(e) => setFormData({ ...formData, keyword: e.target.value })}
+                  placeholder="Ex: preço, olá, suporte"
+                  className="pl-8"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Tipo de Correspondência</Label>
+              <Select
+                value={formData.matchType}
+                onValueChange={(v: any) => setFormData({ ...formData, matchType: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="exact">Exata (igual a)</SelectItem>
+                  <SelectItem value="contains">Contém (parte do texto)</SelectItem>
+                  <SelectItem value="startsWith">Começa com</SelectItem>
+                  <SelectItem value="endsWith">Termina com</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Tipo de Ação</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant={formData.actionType === 'script' ? 'default' : 'outline'}
+                  onClick={() => setFormData({ ...formData, actionType: 'script', actionId: scripts.length > 0 ? scripts[0].id : '' })}
+                  className="justify-start"
+                >
+                  <FileText className="mr-2 h-4 w-4" />
+                  Executar Script
+                </Button>
+                <Button
+                  type="button"
+                  variant={formData.actionType === 'message' ? 'default' : 'outline'}
+                  onClick={() => setFormData({ ...formData, actionType: 'message', actionId: messages.length > 0 ? messages[0].id : '' })}
+                  className="justify-start"
+                >
+                  <MessageSquare className="mr-2 h-4 w-4" />
+                  Enviar Mensagem
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>{formData.actionType === 'script' ? 'Selecionar Script' : 'Selecionar Mensagem'}</Label>
+              <Select
+                value={formData.actionId}
+                onValueChange={(v) => setFormData({ ...formData, actionId: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={formData.actionType === 'script' ? "Escolha um script..." : "Escolha uma mensagem..."} />
+                </SelectTrigger>
+                <SelectContent>
+                  {formData.actionType === 'script' ? (
+                    scripts.length > 0 ? (
+                      scripts.map((script) => (
+                        <SelectItem key={script.id} value={script.id}>
+                          {script.name}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <div className="p-2 text-sm text-muted-foreground text-center">Nenhum script disponível</div>
+                    )
+                  ) : (
+                    messages.length > 0 ? (
+                      messages.map((message) => (
+                        <SelectItem key={message.id} value={message.id}>
+                          {message.content.substring(0, 50)}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <div className="p-2 text-sm text-muted-foreground text-center">Nenhuma mensagem disponível</div>
+                    )
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-center space-x-2 pt-2">
+              <Switch
+                id="is-active"
+                checked={formData.isActive}
+                onCheckedChange={(checked) => setFormData({ ...formData, isActive: checked })}
+              />
+              <Label htmlFor="is-active">Gatilho Ativo</Label>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCloseDialog}>Cancelar</Button>
+            <Button onClick={handleSave}>{editingTrigger ? 'Atualizar' : 'Criar'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
