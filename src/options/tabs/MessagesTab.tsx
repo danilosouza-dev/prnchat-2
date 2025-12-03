@@ -583,6 +583,56 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
               </div>
             )}
 
+            {message.type === 'file' && (
+              <div>
+                <p className="text-[var(--text-secondary)] mb-1.5 text-xs">
+                  {message.content}
+                </p>
+                <div className="p-3 border border-[var(--border-color)] rounded-lg bg-[var(--bg-secondary)] flex items-center gap-3 mt-1.5">
+                  <div className="p-2 rounded bg-[var(--bg-tertiary)] text-[var(--text-primary)]">
+                    <FileText size={24} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-[var(--text-primary)] truncate">
+                      {message.fileName || 'Arquivo sem nome'}
+                    </p>
+                    {message.fileData && (
+                      <p className="text-xs text-[var(--text-secondary)]">
+                        {(message.fileData.size / 1024).toFixed(1)} KB
+                      </p>
+                    )}
+                  </div>
+                  {message.fileData && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (message.fileData) {
+                          const url = URL.createObjectURL(message.fileData);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = message.fileName || 'download';
+                          document.body.appendChild(a);
+                          a.click();
+                          document.body.removeChild(a);
+                          URL.revokeObjectURL(url);
+                        }
+                      }}
+                      title="Baixar arquivo"
+                    >
+                      <Download size={18} />
+                    </Button>
+                  )}
+                </div>
+                {message.caption && (
+                  <p className="text-[var(--text-primary)] mt-1.5 text-xs italic">
+                    Legenda: {message.caption}
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Informações adicionais */}
             <div className="mt-2 pt-2 border-t border-[var(--border-color)] flex gap-3 text-[10px] text-[var(--text-secondary)]">
               <span>Criado em: {formatDate(message.createdAt)}</span>
@@ -636,7 +686,7 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
 
   return (
     <div className="tab-content">
-        {/* Modal de criação/edição */}
+      {/* Modal de criação/edição */}
       <NewMessageModal
         open={isCreating}
         onOpenChange={setIsCreating}
@@ -651,148 +701,148 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
 
       {/* NOVA INTERFACE - Lista de Mensagens */}
       <div className="messages-list-container" style={{ marginTop: '4rem' }}>
-          {/* Filtros - Tabs por tipo */}
-          <div style={{ marginBottom: '1rem', paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
-            <Tabs value={typeFilter} onValueChange={(value) => setTypeFilter(value as MessageType | 'all' | 'folders')}>
-              <TabsList className="w-full grid grid-cols-7">
-                <TabsTrigger value="all">
-                  <Grid size={18} className="mr-1" />
-                  Todos
-                </TabsTrigger>
-                <TabsTrigger value="folders">
-                  <FolderIcon size={18} className="mr-1" />
-                  Pastas
-                </TabsTrigger>
-                <TabsTrigger value="text">
-                  <MessageCircle size={18} className="mr-1" />
-                  Texto
-                </TabsTrigger>
-                <TabsTrigger value="audio">
-                  <Mic size={18} className="mr-1" />
-                  Áudio
-                </TabsTrigger>
-                <TabsTrigger value="image">
-                  <Camera size={18} className="mr-1" />
-                  Imagem
-                </TabsTrigger>
-                <TabsTrigger value="video">
-                  <Video size={18} className="mr-1" />
-                  Vídeo
-                </TabsTrigger>
-                <TabsTrigger value="file">
-                  <FileText size={18} className="mr-1" />
-                  Arquivo
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
-          </div>
+        {/* Filtros - Tabs por tipo */}
+        <div style={{ marginBottom: '1rem', paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
+          <Tabs value={typeFilter} onValueChange={(value) => setTypeFilter(value as MessageType | 'all' | 'folders')}>
+            <TabsList className="w-full grid grid-cols-7">
+              <TabsTrigger value="all">
+                <Grid size={18} className="mr-1" />
+                Todos
+              </TabsTrigger>
+              <TabsTrigger value="folders">
+                <FolderIcon size={18} className="mr-1" />
+                Pastas
+              </TabsTrigger>
+              <TabsTrigger value="text">
+                <MessageCircle size={18} className="mr-1" />
+                Texto
+              </TabsTrigger>
+              <TabsTrigger value="audio">
+                <Mic size={18} className="mr-1" />
+                Áudio
+              </TabsTrigger>
+              <TabsTrigger value="image">
+                <Camera size={18} className="mr-1" />
+                Imagem
+              </TabsTrigger>
+              <TabsTrigger value="video">
+                <Video size={18} className="mr-1" />
+                Vídeo
+              </TabsTrigger>
+              <TabsTrigger value="file">
+                <FileText size={18} className="mr-1" />
+                Arquivo
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
 
-          {/* Pesquisa de Mensagens */}
-          <div style={{ marginBottom: '1.5rem', paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
-            <div className="filter-bar-dark">
-              <div className="filter-input-wrapper">
-                <input
-                  type="text"
-                  className="filter-input"
-                  placeholder="Pesquisar mensagens..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-                <Search size={11} strokeWidth={2.5} />
-              </div>
-              <span className="filter-label">
-                <Search size={11} strokeWidth={2.5} />
-                Pesquisar
-              </span>
+        {/* Pesquisa de Mensagens */}
+        <div style={{ marginBottom: '1.5rem', paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
+          <div className="filter-bar-dark">
+            <div className="filter-input-wrapper">
+              <input
+                type="text"
+                className="filter-input"
+                placeholder="Pesquisar mensagens..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              <Search size={11} strokeWidth={2.5} />
             </div>
-          </div>
-
-          {/* Pastas */}
-          <div className="flex flex-col gap-1.5" style={{ paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
-            {folders.map((folder) => {
-              const folderMessages = messagesByFolder.get(folder.id) || [];
-              // Show empty folders only when filtering by "folders" or "all" (without search)
-              if (folderMessages.length === 0 && typeFilter !== 'folders' && (typeFilter !== 'all' || searchQuery)) return null;
-
-              // Auto-expand folders when filtering by type or searching
-              const shouldAutoExpand = (typeFilter !== 'all' && typeFilter !== 'folders' && folderMessages.length > 0) || (searchQuery && folderMessages.length > 0);
-              const isFolderExpanded = shouldAutoExpand || expandedFolders.has(folder.id);
-
-              return (
-                <div key={folder.id} className="mb-4">
-                  {/* Folder Header - Enhanced Design */}
-                  <div
-                    className="flex items-center gap-3 px-4 py-3.5 cursor-pointer rounded-lg transition-all"
-                    style={{
-                      backgroundColor: 'rgba(255, 255, 255, 0.03)',
-                    }}
-                    onClick={() => toggleFolderExpansion(folder.id)}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.03)';
-                    }}
-                  >
-                    <FolderIcon size={22} color={folder.color} className="flex-shrink-0" />
-                    <span className="text-sm font-semibold flex-1 tracking-wide">
-                      {folder.name}
-                    </span>
-                    <span
-                      className="text-xs font-medium px-2.5 py-1 rounded-full"
-                      style={{
-                        backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                        color: 'var(--text-muted)'
-                      }}
-                    >
-                      {folderMessages.length}
-                    </span>
-                    {isFolderExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-                  </div>
-
-                  {/* Messages inside folder - Indented */}
-                  {isFolderExpanded && folderMessages.length > 0 && (
-                    <div className="flex flex-col gap-1.5 mt-2 ml-4">
-                      {folderMessages.map((message, index) => renderMessageCard(message, index, folder.color))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-
-            {/* Mensagens sem pasta - Hide when filtering by folders only */}
-            {messagesWithoutFolder.length > 0 && typeFilter !== 'folders' && (
-              <div className="mb-3">
-                <h3 className="text-sm font-medium text-[var(--text-secondary)] mb-2 px-2 flex items-center gap-2">
-                  <FolderIcon size={16} className="text-gray-400" />
-                  Mensagens sem pasta
-                </h3>
-                <div className="flex flex-col gap-1.5">
-                  {messagesWithoutFolder.map((message, index) => renderMessageCard(message, index))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Empty State */}
-          <div className="flex flex-col gap-1.5" style={{ paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
-            {folders.length === 0 && messagesWithoutFolder.length === 0 && (
-              <div className="empty-state">
-                <div className="empty-icon">
-                  <MessageCircle size={48} />
-                </div>
-                <h3>
-                  {messages.length === 0 ? 'Nenhuma mensagem criada' : 'Nenhuma mensagem encontrada'}
-                </h3>
-                <p>
-                  {messages.length === 0
-                    ? 'Crie sua primeira mensagem para começar a automatizar o WhatsApp'
-                    : 'Tente ajustar os filtros para encontrar mensagens'}
-                </p>
-              </div>
-            )}
+            <span className="filter-label">
+              <Search size={11} strokeWidth={2.5} />
+              Pesquisar
+            </span>
           </div>
         </div>
+
+        {/* Pastas */}
+        <div className="flex flex-col gap-1.5" style={{ paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
+          {folders.map((folder) => {
+            const folderMessages = messagesByFolder.get(folder.id) || [];
+            // Show empty folders only when filtering by "folders" or "all" (without search)
+            if (folderMessages.length === 0 && typeFilter !== 'folders' && (typeFilter !== 'all' || searchQuery)) return null;
+
+            // Auto-expand folders when filtering by type or searching
+            const shouldAutoExpand = (typeFilter !== 'all' && typeFilter !== 'folders' && folderMessages.length > 0) || (searchQuery && folderMessages.length > 0);
+            const isFolderExpanded = shouldAutoExpand || expandedFolders.has(folder.id);
+
+            return (
+              <div key={folder.id} className="mb-4">
+                {/* Folder Header - Enhanced Design */}
+                <div
+                  className="flex items-center gap-3 px-4 py-3.5 cursor-pointer rounded-lg transition-all"
+                  style={{
+                    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                  }}
+                  onClick={() => toggleFolderExpansion(folder.id)}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.03)';
+                  }}
+                >
+                  <FolderIcon size={22} color={folder.color} className="flex-shrink-0" />
+                  <span className="text-sm font-semibold flex-1 tracking-wide">
+                    {folder.name}
+                  </span>
+                  <span
+                    className="text-xs font-medium px-2.5 py-1 rounded-full"
+                    style={{
+                      backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                      color: 'var(--text-muted)'
+                    }}
+                  >
+                    {folderMessages.length}
+                  </span>
+                  {isFolderExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                </div>
+
+                {/* Messages inside folder - Indented */}
+                {isFolderExpanded && folderMessages.length > 0 && (
+                  <div className="flex flex-col gap-1.5 mt-2 ml-4">
+                    {folderMessages.map((message, index) => renderMessageCard(message, index, folder.color))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Mensagens sem pasta - Hide when filtering by folders only */}
+          {messagesWithoutFolder.length > 0 && typeFilter !== 'folders' && (
+            <div className="mb-3">
+              <h3 className="text-sm font-medium text-[var(--text-secondary)] mb-2 px-2 flex items-center gap-2">
+                <FolderIcon size={16} className="text-gray-400" />
+                Mensagens sem pasta
+              </h3>
+              <div className="flex flex-col gap-1.5">
+                {messagesWithoutFolder.map((message, index) => renderMessageCard(message, index))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Empty State */}
+        <div className="flex flex-col gap-1.5" style={{ paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
+          {folders.length === 0 && messagesWithoutFolder.length === 0 && (
+            <div className="empty-state">
+              <div className="empty-icon">
+                <MessageCircle size={48} />
+              </div>
+              <h3>
+                {messages.length === 0 ? 'Nenhuma mensagem criada' : 'Nenhuma mensagem encontrada'}
+              </h3>
+              <p>
+                {messages.length === 0
+                  ? 'Crie sua primeira mensagem para começar a automatizar o WhatsApp'
+                  : 'Tente ajustar os filtros para encontrar mensagens'}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Alert Dialog para confirmação de exclusão */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

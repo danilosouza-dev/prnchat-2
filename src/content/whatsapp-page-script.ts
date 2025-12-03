@@ -4,7 +4,7 @@
  * Uses window.Store (WhatsApp's internal API) to send messages invisibly
  */
 
-(function() {
+(function () {
   'use strict';
 
   // Configuration
@@ -388,7 +388,7 @@
 
             // Replace the buggy getter with a safe one
             Object.defineProperty(chatProto, 'isGroup', {
-              get: function() {
+              get: function () {
                 // Safe implementation: check if id contains '@g.us' (group) or '@c.us' (individual)
                 try {
                   const idStr = this.id?._serialized || this.id?.toString() || '';
@@ -519,6 +519,35 @@
           throw new Error(`Invalid image data format: ${typeof imageData}`);
         }
 
+        // CRITICAL FIX: Monkey-patch the isGroup getter on the chat prototype
+        try {
+          console.log('[X1Flox Page] Chat found, applying isGroup fix...');
+          const chatProto = Object.getPrototypeOf(targetChat);
+          const isGroupDescriptor = Object.getOwnPropertyDescriptor(chatProto, 'isGroup');
+
+          if (isGroupDescriptor && isGroupDescriptor.get) {
+            Object.defineProperty(chatProto, 'isGroup', {
+              get: function () {
+                try {
+                  const idStr = this.id?._serialized || this.id?.toString() || '';
+                  return idStr.includes('@g.us');
+                } catch { return false; }
+              },
+              configurable: true, enumerable: true
+            });
+          }
+
+          try {
+            const idStr = targetChat.id?._serialized || targetChat.id?.toString() || '';
+            Object.defineProperty(targetChat, 'isGroup', {
+              value: idStr.includes('@g.us'),
+              writable: true, configurable: true, enumerable: true
+            });
+          } catch (e) { console.log('[X1Flox Page] Could not set isGroup on instance'); }
+        } catch (patchError: any) {
+          console.log('[X1Flox Page] Warning: Could not patch isGroup:', patchError.message);
+        }
+
         // Determine file extension
         let fileExtension = '.jpg';
         if (detectedMimeType.includes('png')) fileExtension = '.png';
@@ -605,6 +634,35 @@
           detectedMimeType = videoBlob.type || detectedMimeType;
         } else {
           throw new Error(`Invalid video data format: ${typeof videoData}`);
+        }
+
+        // CRITICAL FIX: Monkey-patch the isGroup getter on the chat prototype
+        try {
+          console.log('[X1Flox Page] Chat found, applying isGroup fix...');
+          const chatProto = Object.getPrototypeOf(targetChat);
+          const isGroupDescriptor = Object.getOwnPropertyDescriptor(chatProto, 'isGroup');
+
+          if (isGroupDescriptor && isGroupDescriptor.get) {
+            Object.defineProperty(chatProto, 'isGroup', {
+              get: function () {
+                try {
+                  const idStr = this.id?._serialized || this.id?.toString() || '';
+                  return idStr.includes('@g.us');
+                } catch { return false; }
+              },
+              configurable: true, enumerable: true
+            });
+          }
+
+          try {
+            const idStr = targetChat.id?._serialized || targetChat.id?.toString() || '';
+            Object.defineProperty(targetChat, 'isGroup', {
+              value: idStr.includes('@g.us'),
+              writable: true, configurable: true, enumerable: true
+            });
+          } catch (e) { console.log('[X1Flox Page] Could not set isGroup on instance'); }
+        } catch (patchError: any) {
+          console.log('[X1Flox Page] Warning: Could not patch isGroup:', patchError.message);
         }
 
         // Determine file extension
@@ -709,6 +767,35 @@
           throw new Error(`Invalid file data format: ${typeof fileData}`);
         }
 
+        // CRITICAL FIX: Monkey-patch the isGroup getter on the chat prototype
+        try {
+          console.log('[X1Flox Page] Chat found, applying isGroup fix...');
+          const chatProto = Object.getPrototypeOf(targetChat);
+          const isGroupDescriptor = Object.getOwnPropertyDescriptor(chatProto, 'isGroup');
+
+          if (isGroupDescriptor && isGroupDescriptor.get) {
+            Object.defineProperty(chatProto, 'isGroup', {
+              get: function () {
+                try {
+                  const idStr = this.id?._serialized || this.id?.toString() || '';
+                  return idStr.includes('@g.us');
+                } catch { return false; }
+              },
+              configurable: true, enumerable: true
+            });
+          }
+
+          try {
+            const idStr = targetChat.id?._serialized || targetChat.id?.toString() || '';
+            Object.defineProperty(targetChat, 'isGroup', {
+              value: idStr.includes('@g.us'),
+              writable: true, configurable: true, enumerable: true
+            });
+          } catch (e) { console.log('[X1Flox Page] Could not set isGroup on instance'); }
+        } catch (patchError: any) {
+          console.log('[X1Flox Page] Warning: Could not patch isGroup:', patchError.message);
+        }
+
         const file = new File([fileBlob], fileName || `file-${Date.now()}`, {
           type: detectedMimeType,
           lastModified: Date.now()
@@ -768,8 +855,8 @@
         // Get contact name from chat
         const contact = activeChat.contact;
         const chatName = contact?.pushname || contact?.name || contact?.formattedName ||
-                         activeChat.formattedTitle || activeChat.name ||
-                         activeChat.id?.user || 'Unknown';
+          activeChat.formattedTitle || activeChat.name ||
+          activeChat.id?.user || 'Unknown';
 
         // Get chatId for targeting
         const chatId = activeChat.id?._serialized || activeChat.id?.toString() || '';
@@ -889,8 +976,8 @@
         // Get contact name from chat
         const contact = chat.contact;
         const chatName = contact?.pushname || contact?.name || contact?.formattedName ||
-                         chat.formattedTitle || chat.name ||
-                         chat.id?.user || 'Unknown';
+          chat.formattedTitle || chat.name ||
+          chat.id?.user || 'Unknown';
 
         console.log('[X1Flox Page] Chat name:', chatName);
 

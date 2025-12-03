@@ -12,10 +12,10 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelected, currentFile
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Accept common document formats
-  const acceptedFormats = '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar,.csv';
+  // Accept all formats since WhatsApp supports generic documents
+  const acceptedFormats = '*';
 
-  const maxSize = 16 * 1024 * 1024; // 16MB max for files
+  const maxSize = 100 * 1024 * 1024; // 100MB max for files (WhatsApp limit)
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     setError(null);
