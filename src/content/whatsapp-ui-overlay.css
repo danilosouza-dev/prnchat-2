@@ -1,60 +1,70 @@
-/* X1Flox UI Overlay Styles */
+/* PrinChat UI Overlay Styles */
 /* Injected into WhatsApp Web to add custom UI components */
 
 /* Bottom Shortcut Bar - Inside WhatsApp Footer */
-.x1flox-shortcut-bar {
+.princhat-shortcut-bar {
   position: relative;
   left: 0;
   right: 0;
   width: 100%;
   height: 38px;
-  background: #1a1a1a; /* Matches popup --bg-primary */
-  border-top: 1px solid #3a3a3a; /* Matches popup --border-color */
-  display: none !important; /* Hidden by default */
+  background: #1a1a1a;
+  /* Matches popup --bg-primary */
+  border-top: 1px solid #3a3a3a;
+  /* Matches popup --border-color */
+  display: none !important;
+  /* Hidden by default */
   align-items: center;
   gap: 6px;
-  padding: 3px 12px; /* Minimal vertical padding */
+  padding: 3px 12px;
+  /* Minimal vertical padding */
   overflow-x: auto;
   overflow-y: hidden;
-  z-index: 10; /* Within footer context */
+  z-index: 10;
+  /* Within footer context */
   scrollbar-width: thin;
-  scrollbar-color: #e91e63 #1a1a1a; /* Pink scrollbar like popup */
+  scrollbar-color: #e91e63 #1a1a1a;
+  /* Pink scrollbar like popup */
   pointer-events: auto;
 }
 
 /* Show shortcut bar only when chat is active */
-body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
+body[data-princhat-chat-active="true"] .princhat-shortcut-bar {
   display: flex !important;
 }
 
-.x1flox-shortcut-bar::-webkit-scrollbar {
+.princhat-shortcut-bar::-webkit-scrollbar {
   height: 6px;
 }
 
-.x1flox-shortcut-bar::-webkit-scrollbar-track {
+.princhat-shortcut-bar::-webkit-scrollbar-track {
   background: #1a1a1a;
 }
 
-.x1flox-shortcut-bar::-webkit-scrollbar-thumb {
-  background: #e91e63; /* Matches popup accent-pink */
+.princhat-shortcut-bar::-webkit-scrollbar-thumb {
+  background: #e91e63;
+  /* Matches popup accent-pink */
   border-radius: 3px;
 }
 
-.x1flox-shortcut-bar::-webkit-scrollbar-thumb:hover {
-  background: #f06292; /* Matches popup accent-pink-hover */
+.princhat-shortcut-bar::-webkit-scrollbar-thumb:hover {
+  background: #f06292;
+  /* Matches popup accent-pink-hover */
 }
 
 /* Shortcut Buttons - Matches Popup Item Design */
-.x1flox-shortcut-btn {
+.princhat-shortcut-btn {
   min-width: fit-content;
   max-width: 200px;
   height: 32px;
   padding: 0 12px;
-  background: #2a2a2a; /* Matches popup --bg-secondary */
+  background: #2a2a2a;
+  /* Matches popup --bg-secondary */
   border: none;
   border-left: 3px solid transparent;
   border-radius: 0;
-  color: #ffffff; /* Matches popup --text-primary */
+  color: #ffffff;
+  /* Matches popup --text-primary */
   font-size: 13px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, sans-serif;
   cursor: pointer;
@@ -65,37 +75,41 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   flex-shrink: 0;
 }
 
-.x1flox-shortcut-btn:hover {
-  background: #333333; /* Matches popup --bg-tertiary */
-  border-left-color: #e91e63; /* Matches popup --accent-pink */
+.princhat-shortcut-btn:hover {
+  background: #333333;
+  /* Matches popup --bg-tertiary */
+  border-left-color: #e91e63;
+  /* Matches popup --accent-pink */
   transform: translateX(4px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(233, 30, 99, 0.2);
 }
 
-.x1flox-shortcut-btn.confirming {
+.princhat-shortcut-btn.confirming {
   background: rgba(233, 30, 99, 0.15);
   border-left-color: #e91e63;
   transform: translateX(4px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(233, 30, 99, 0.2);
 }
 
-.x1flox-shortcut-btn-icon {
+.princhat-shortcut-btn-icon {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
-  color: #666666; /* Matches popup --text-muted */
+  color: #666666;
+  /* Matches popup --text-muted */
   transition: color 0.15s;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.x1flox-shortcut-btn:hover .x1flox-shortcut-btn-icon,
-.x1flox-shortcut-btn.confirming .x1flox-shortcut-btn-icon {
-  color: #e91e63; /* Matches popup --accent-pink */
+.princhat-shortcut-btn:hover .princhat-shortcut-btn-icon,
+.princhat-shortcut-btn.confirming .princhat-shortcut-btn-icon {
+  color: #e91e63;
+  /* Matches popup --accent-pink */
 }
 
-.x1flox-shortcut-btn-text {
+.princhat-shortcut-btn-text {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -104,10 +118,11 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   line-height: 1.3;
 }
 
-.x1flox-shortcut-btn-action {
+.princhat-shortcut-btn-action {
   background: none;
   border: none;
-  color: #666666; /* Matches popup --text-muted */
+  color: #666666;
+  /* Matches popup --text-muted */
   cursor: pointer;
   padding: 2px;
   display: flex;
@@ -120,28 +135,31 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   height: 20px;
 }
 
-.x1flox-shortcut-btn:hover .x1flox-shortcut-btn-action {
+.princhat-shortcut-btn:hover .princhat-shortcut-btn-action {
   opacity: 1;
   color: #e91e63;
 }
 
-.x1flox-shortcut-btn.confirming .x1flox-shortcut-btn-action {
+.princhat-shortcut-btn.confirming .princhat-shortcut-btn-action {
   color: #e91e63;
   opacity: 1;
   animation: pulse-scale 0.6s ease-in-out infinite;
 }
 
 @keyframes pulse-scale {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: scale(1);
   }
+
   50% {
     transform: scale(1.15);
   }
 }
 
 /* Floating Action Button */
-.x1flox-fab {
+.princhat-fab {
   position: fixed;
   top: 80px;
   right: 24px;
@@ -167,24 +185,24 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   text-overflow: ellipsis;
 }
 
-.x1flox-fab:hover {
+.princhat-fab:hover {
   background: #06cf9c;
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
   transform: translateY(-2px);
 }
 
-.x1flox-fab:active {
+.princhat-fab:active {
   transform: translateY(0);
 }
 
-.x1flox-fab-icon {
+.princhat-fab-icon {
   width: 20px;
   height: 20px;
   flex-shrink: 0;
 }
 
 /* Script Popup - Redesigned */
-.x1flox-script-popup {
+.princhat-script-popup {
   position: fixed;
   /* Position set via JS below chat header */
   width: 420px;
@@ -192,44 +210,46 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   background: rgba(0, 0, 0, 0.9);
   border-radius: 12px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-  overflow: visible; /* No scroll on popup itself */
+  overflow: visible;
+  /* No scroll on popup itself */
   z-index: 1002;
-  animation: x1flox-slide-in 0.3s ease;
+  animation: princhat-slide-in 0.3s ease;
   transition: top 0.3s ease, left 0.3s ease, max-height 0.3s ease;
   display: flex;
   flex-direction: column;
 }
 
-@keyframes x1flox-slide-in {
+@keyframes princhat-slide-in {
   from {
     transform: translateX(400px);
     opacity: 0;
   }
+
   to {
     transform: translateX(0);
     opacity: 1;
   }
 }
 
-.x1flox-script-popup.closing {
-  animation: x1flox-slide-out 0.3s ease;
+.princhat-script-popup.closing {
+  animation: princhat-slide-out 0.3s ease;
 }
 
-.x1flox-script-popup::-webkit-scrollbar {
+.princhat-script-popup::-webkit-scrollbar {
   width: 6px;
 }
 
-.x1flox-script-popup::-webkit-scrollbar-track {
+.princhat-script-popup::-webkit-scrollbar-track {
   background: #1a1a1a;
 }
 
-.x1flox-script-popup::-webkit-scrollbar-thumb {
+.princhat-script-popup::-webkit-scrollbar-thumb {
   background: #e91e63;
   border-radius: 3px;
 }
 
 /* Close Button - Positioned at top-right edge */
-.x1flox-script-popup-close {
+.princhat-script-popup-close {
   position: fixed;
   top: calc(var(--popup-top, 100px) - 8px);
   right: calc(100vw - var(--popup-right, 584px) - 8px);
@@ -250,7 +270,7 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
-.x1flox-script-popup-close:hover {
+.princhat-script-popup-close:hover {
   background: #e91e63;
   border-color: #e91e63;
   color: #ffffff;
@@ -258,48 +278,52 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
 }
 
 /* Script Sections */
-.x1flox-script-section {
+.princhat-script-section {
   padding: 10px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   display: flex;
   flex-direction: column;
-  flex-shrink: 0; /* Sections don't shrink */
+  flex-shrink: 0;
+  /* Sections don't shrink */
 }
 
-.x1flox-script-section:last-child {
+.princhat-script-section:last-child {
   border-bottom: none;
 }
 
-.x1flox-script-section-header {
+.princhat-script-section-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 8px;
-  flex-shrink: 0; /* Header stays fixed */
+  flex-shrink: 0;
+  /* Header stays fixed */
 }
 
-.x1flox-script-section-body {
+.princhat-script-section-body {
   overflow-y: auto;
   overflow-x: hidden;
-  max-height: 170px; /* Show ~4 cards */
+  max-height: 170px;
+  /* Show ~4 cards */
   scrollbar-width: thin;
   scrollbar-color: #e91e63 rgba(0, 0, 0, 0.9);
 }
 
-.x1flox-script-section-body::-webkit-scrollbar {
-  width: 3px; /* Thinner scrollbar */
+.princhat-script-section-body::-webkit-scrollbar {
+  width: 3px;
+  /* Thinner scrollbar */
 }
 
-.x1flox-script-section-body::-webkit-scrollbar-track {
+.princhat-script-section-body::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.x1flox-script-section-body::-webkit-scrollbar-thumb {
+.princhat-script-section-body::-webkit-scrollbar-thumb {
   background: #e91e63;
   border-radius: 3px;
 }
 
-.x1flox-script-section-title {
+.princhat-script-section-title {
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.5px;
@@ -307,7 +331,7 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   text-transform: uppercase;
 }
 
-.x1flox-script-btn-discrete {
+.princhat-script-btn-discrete {
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid rgba(255, 255, 255, 0.06);
   color: #888888;
@@ -321,14 +345,14 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   letter-spacing: 0.3px;
 }
 
-.x1flox-script-btn-discrete:hover {
+.princhat-script-btn-discrete:hover {
   background: rgba(233, 30, 99, 0.12);
   border-color: rgba(233, 30, 99, 0.25);
   color: #e91e63;
 }
 
 /* Script Cards */
-.x1flox-script-card {
+.princhat-script-card {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -340,15 +364,15 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
 }
 
 /* Only animate new cards, not re-rendered ones */
-.x1flox-script-card.new-card {
+.princhat-script-card.new-card {
   animation: slideInCard 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.x1flox-script-card:last-child {
+.princhat-script-card:last-child {
   margin-bottom: 0;
 }
 
-.x1flox-script-card:hover {
+.princhat-script-card:hover {
   background: #333333;
 }
 
@@ -358,6 +382,7 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
     opacity: 0;
     transform: translateX(-30px) scale(0.95);
   }
+
   to {
     opacity: 1;
     transform: translateX(0) scale(1);
@@ -365,7 +390,7 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
 }
 
 /* Card exit animation (when removed) - slides to right with fade */
-.x1flox-script-card.removing {
+.princhat-script-card.removing {
   animation: slideOutCard 0.3s cubic-bezier(0.7, 0, 0.84, 0) forwards;
 }
 
@@ -374,14 +399,15 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
     opacity: 1;
     transform: translateX(0) scale(1);
   }
+
   to {
     opacity: 0;
     transform: translateX(30px) scale(0.95);
   }
 }
 
-.x1flox-script-card-photo,
-.x1flox-script-card-photo-placeholder {
+.princhat-script-card-photo,
+.princhat-script-card-photo-placeholder {
   width: 28px;
   height: 28px;
   border-radius: 50%;
@@ -389,7 +415,7 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   object-fit: cover;
 }
 
-.x1flox-script-card-photo-placeholder {
+.princhat-script-card-photo-placeholder {
   background: linear-gradient(135deg, #e91e63 0%, #f06292 100%);
   display: flex;
   align-items: center;
@@ -399,12 +425,12 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   color: #ffffff;
 }
 
-.x1flox-script-card-info {
+.princhat-script-card-info {
   flex: 1;
   min-width: 0;
 }
 
-.x1flox-script-card-contact {
+.princhat-script-card-contact {
   font-size: 11px;
   font-weight: 600;
   color: #ffffff;
@@ -413,7 +439,7 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   white-space: nowrap;
 }
 
-.x1flox-script-card-name {
+.princhat-script-card-name {
   font-size: 9px;
   color: #9e9e9e;
   overflow: hidden;
@@ -422,7 +448,7 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   margin-top: 1px;
 }
 
-.x1flox-script-card-progress {
+.princhat-script-card-progress {
   font-size: 10px;
   font-weight: 600;
   color: #ffffff;
@@ -432,7 +458,7 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   flex-shrink: 0;
 }
 
-.x1flox-script-card-timer {
+.princhat-script-card-timer {
   font-size: 10px;
   font-weight: 600;
   color: #9e9e9e;
@@ -444,7 +470,7 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   text-align: center;
 }
 
-.x1flox-script-card-status {
+.princhat-script-card-status {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -454,7 +480,7 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   flex-shrink: 0;
 }
 
-.x1flox-script-btn-icon {
+.princhat-script-btn-icon {
   background: none;
   border: 1px solid transparent;
   color: #666666;
@@ -472,7 +498,7 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
 }
 
 /* Icon stays still, only border spins */
-.x1flox-script-btn-icon svg {
+.princhat-script-btn-icon svg {
   position: relative;
   z-index: 1;
   width: 12px;
@@ -480,12 +506,12 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
 }
 
 /* Running state - green with spinning border */
-.x1flox-script-btn-icon.running {
+.princhat-script-btn-icon.running {
   color: #00a884;
   border-color: #00a884;
 }
 
-.x1flox-script-btn-icon.running::before {
+.princhat-script-btn-icon.running::before {
   content: '';
   position: absolute;
   top: -2px;
@@ -500,27 +526,27 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
 }
 
 /* Running hover - keep green, just change opacity */
-.x1flox-script-btn-icon.running:hover {
+.princhat-script-btn-icon.running:hover {
   background: rgba(0, 168, 132, 0.15);
   color: #00a884;
   opacity: 0.8;
 }
 
 /* Paused state - orange */
-.x1flox-script-btn-icon.paused {
+.princhat-script-btn-icon.paused {
   color: #ff9800;
   border-color: rgba(255, 152, 0, 0.3);
 }
 
 /* Paused hover - keep orange, just change opacity */
-.x1flox-script-btn-icon.paused:hover {
+.princhat-script-btn-icon.paused:hover {
   background: rgba(255, 152, 0, 0.15);
   color: #ff9800;
   opacity: 0.8;
 }
 
 /* Default hover only for icons without state class */
-.x1flox-script-btn-icon:not(.running):not(.paused):hover {
+.princhat-script-btn-icon:not(.running):not(.paused):hover {
   background: rgba(233, 30, 99, 0.1);
   color: #e91e63;
   border-color: rgba(233, 30, 99, 0.3);
@@ -530,13 +556,14 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   0% {
     transform: rotate(0deg);
   }
+
   100% {
     transform: rotate(360deg);
   }
 }
 
 /* Empty state for sections */
-.x1flox-script-section-body:empty::before {
+.princhat-script-section-body:empty::before {
   content: 'Nenhum script';
   display: block;
   text-align: center;
@@ -545,18 +572,19 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   padding: 20px;
 }
 
-@keyframes x1flox-slide-out {
+@keyframes princhat-slide-out {
   from {
     transform: translateX(0);
     opacity: 1;
   }
+
   to {
     transform: translateX(400px);
     opacity: 0;
   }
 }
 
-.x1flox-status-header {
+.princhat-status-header {
   padding: 16px 20px;
   background: #2a3942;
   border-bottom: 1px solid #3b4a54;
@@ -565,7 +593,7 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   align-items: center;
 }
 
-.x1flox-status-title {
+.princhat-status-title {
   color: #d1d7db;
   font-size: 15px;
   font-weight: 600;
@@ -574,7 +602,7 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   letter-spacing: 0.5px;
 }
 
-.x1flox-status-close {
+.princhat-status-close {
   width: 24px;
   height: 24px;
   background: transparent;
@@ -588,12 +616,12 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   transition: all 0.2s ease;
 }
 
-.x1flox-status-close:hover {
+.princhat-status-close:hover {
   background: #374248;
   color: #d1d7db;
 }
 
-.x1flox-status-body {
+.princhat-status-body {
   padding: 16px 20px;
   max-height: 400px;
   overflow-y: auto;
@@ -601,20 +629,20 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   scrollbar-color: #374248 #202c33;
 }
 
-.x1flox-status-body::-webkit-scrollbar {
+.princhat-status-body::-webkit-scrollbar {
   width: 6px;
 }
 
-.x1flox-status-body::-webkit-scrollbar-track {
+.princhat-status-body::-webkit-scrollbar-track {
   background: #202c33;
 }
 
-.x1flox-status-body::-webkit-scrollbar-thumb {
+.princhat-status-body::-webkit-scrollbar-thumb {
   background: #374248;
   border-radius: 3px;
 }
 
-.x1flox-status-item {
+.princhat-status-item {
   display: flex;
   align-items: flex-start;
   gap: 12px;
@@ -625,58 +653,59 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, sans-serif;
 }
 
-.x1flox-status-item:last-child {
+.princhat-status-item:last-child {
   border-bottom: none;
 }
 
-.x1flox-status-icon {
+.princhat-status-icon {
   width: 20px;
   height: 20px;
   flex-shrink: 0;
   margin-top: 2px;
 }
 
-.x1flox-status-icon.sending {
+.princhat-status-icon.sending {
   color: #53bdeb;
-  animation: x1flox-spin 1s linear infinite;
+  animation: princhat-spin 1s linear infinite;
 }
 
-.x1flox-status-icon.success {
+.princhat-status-icon.success {
   color: #00a884;
 }
 
-.x1flox-status-icon.error {
+.princhat-status-icon.error {
   color: #f15c6d;
 }
 
-@keyframes x1flox-spin {
+@keyframes princhat-spin {
   from {
     transform: rotate(0deg);
   }
+
   to {
     transform: rotate(360deg);
   }
 }
 
-.x1flox-status-content {
+.princhat-status-content {
   flex: 1;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.x1flox-status-text {
+.princhat-status-text {
   color: #d1d7db;
   font-size: 14px;
   line-height: 1.4;
 }
 
-.x1flox-status-meta {
+.princhat-status-meta {
   color: #8696a0;
   font-size: 12px;
 }
 
-.x1flox-status-progress {
+.princhat-status-progress {
   margin-top: 8px;
   height: 4px;
   background: #2a3942;
@@ -684,14 +713,14 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   overflow: hidden;
 }
 
-.x1flox-status-progress-bar {
+.princhat-status-progress-bar {
   height: 100%;
   background: #00a884;
   transition: width 0.3s ease;
 }
 
 /* Tooltip */
-.x1flox-tooltip {
+.princhat-tooltip {
   position: absolute;
   background: #1f2d35;
   color: #d1d7db;
@@ -708,7 +737,7 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
   text-overflow: ellipsis;
 }
 
-.x1flox-tooltip::before {
+.princhat-tooltip::before {
   content: '';
   position: absolute;
   bottom: -6px;
@@ -722,7 +751,7 @@ body[data-x1flox-chat-active="true"] .x1flox-shortcut-bar {
 }
 
 /* Hide overlay when not on chat page */
-body:not([data-x1flox-chat-active="true"]) .x1flox-shortcut-bar,
-body:not([data-x1flox-chat-active="true"]) .x1flox-fab {
+body:not([data-princhat-chat-active="true"]) .princhat-shortcut-bar,
+body:not([data-princhat-chat-active="true"]) .princhat-fab {
   display: none;
 }

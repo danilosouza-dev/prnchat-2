@@ -1,4 +1,4 @@
-# X1Flox - Notas de Desenvolvimento
+# PrinChat - Notas de Desenvolvimento
 
 ## ✅ Status do Projeto
 
@@ -169,7 +169,7 @@ WhatsApp pode detectar automação. Recomendações:
 3. **Content Script**:
    - Abra web.whatsapp.com
    - F12 → Console
-   - Procure por `[X1Flox]` nos logs
+   - Procure por `[PrinChat]` nos logs
 
 4. **Service Worker**:
    - chrome://extensions
@@ -179,11 +179,11 @@ WhatsApp pode detectar automação. Recomendações:
 
 ```javascript
 // No content script
-console.log('[X1Flox] WhatsApp Web injector ready');
+console.log('[PrinChat] WhatsApp Web injector ready');
 
 // No background
-console.log('[X1Flox] Background service worker initialized');
-console.log('[X1Flox] Sample data created');
+console.log('[PrinChat] Background service worker initialized');
+console.log('[PrinChat] Sample data created');
 ```
 
 ## 📊 Estrutura de Arquivos Gerados

@@ -238,7 +238,7 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
   const handleExport = async () => {
     try {
       const data = await db.exportData();
-      downloadFile(data, `x1flox-backup-${Date.now()}.json`, 'application/json');
+      downloadFile(data, `princhat-backup-${Date.now()}.json`, 'application/json');
     } catch (error) {
       console.error('Error exporting data:', error);
       alert('Erro ao exportar dados');

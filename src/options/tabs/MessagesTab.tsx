@@ -268,7 +268,7 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
   const handleExport = async () => {
     try {
       const data = await db.exportData();
-      downloadFile(data, `x1flox-backup-${Date.now()}.json`, 'application/json');
+      downloadFile(data, `princhat-backup-${Date.now()}.json`, 'application/json');
     } catch (error) {
       console.error('Error exporting data:', error);
       alert('Erro ao exportar dados');
@@ -417,6 +417,8 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
         return <Camera size={16} className="text-[var(--text-secondary)]" />;
       case 'video':
         return <Video size={16} className="text-[var(--text-secondary)]" />;
+      case 'file':
+        return <FileText size={16} className="text-[var(--text-secondary)]" />;
       default:
         return <MessageCircle size={16} className="text-[var(--text-secondary)]" />;
     }
@@ -759,88 +761,195 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
 
         {/* Pastas */}
         <div className="flex flex-col gap-1.5" style={{ paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
-          {folders.map((folder) => {
-            const folderMessages = messagesByFolder.get(folder.id) || [];
-            // Show empty folders only when filtering by "folders" or "all" (without search)
-            if (folderMessages.length === 0 && typeFilter !== 'folders' && (typeFilter !== 'all' || searchQuery)) return null;
+          {(() => {
+            // Calculate visible folders based on current filter and search
+            const visibleFolders = folders.filter(folder => {
+              const folderMessages = messagesByFolder.get(folder.id) || [];
+              // Show empty folders only when filtering by "folders" or "all" (without search)
+              if (folderMessages.length === 0 && typeFilter !== 'folders' && (typeFilter !== 'all' || searchQuery)) return false;
+              return true;
+            });
 
-            // Auto-expand folders when filtering by type or searching
-            const shouldAutoExpand = (typeFilter !== 'all' && typeFilter !== 'folders' && folderMessages.length > 0) || (searchQuery && folderMessages.length > 0);
-            const isFolderExpanded = shouldAutoExpand || expandedFolders.has(folder.id);
+            const hasVisibleContent = (typeFilter === 'folders' ? false : messagesWithoutFolder.length > 0) || visibleFolders.length > 0;
 
             return (
-              <div key={folder.id} className="mb-4">
-                {/* Folder Header - Enhanced Design */}
-                <div
-                  className="flex items-center gap-3 px-4 py-3.5 cursor-pointer rounded-lg transition-all"
-                  style={{
-                    backgroundColor: 'rgba(255, 255, 255, 0.03)',
-                  }}
-                  onClick={() => toggleFolderExpansion(folder.id)}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.03)';
-                  }}
-                >
-                  <FolderIcon size={22} color={folder.color} className="flex-shrink-0" />
-                  <span className="text-sm font-semibold flex-1 tracking-wide">
-                    {folder.name}
-                  </span>
-                  <span
-                    className="text-xs font-medium px-2.5 py-1 rounded-full"
-                    style={{
-                      backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                      color: 'var(--text-muted)'
-                    }}
-                  >
-                    {folderMessages.length}
-                  </span>
-                  {isFolderExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-                </div>
+              <>
+                {visibleFolders.map((folder) => {
+                  const folderMessages = messagesByFolder.get(folder.id) || [];
 
-                {/* Messages inside folder - Indented */}
-                {isFolderExpanded && folderMessages.length > 0 && (
-                  <div className="flex flex-col gap-1.5 mt-2 ml-4">
-                    {folderMessages.map((message, index) => renderMessageCard(message, index, folder.color))}
+                  // Auto-expand folders when filtering by type or searching
+                  const shouldAutoExpand = (typeFilter !== 'all' && typeFilter !== 'folders' && folderMessages.length > 0) || (searchQuery && folderMessages.length > 0);
+                  const isFolderExpanded = shouldAutoExpand || expandedFolders.has(folder.id);
+
+                  return (
+                    <div key={folder.id} className="mb-4">
+                      {/* Folder Header - Enhanced Design */}
+                      <div
+                        className="flex items-center gap-3 px-4 py-3.5 cursor-pointer rounded-lg transition-all"
+                        style={{
+                          backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                        }}
+                        onClick={() => toggleFolderExpansion(folder.id)}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.03)';
+                        }}
+                      >
+                        <FolderIcon size={22} color={folder.color} className="flex-shrink-0" />
+                        <span className="text-sm font-semibold flex-1 tracking-wide">
+                          {folder.name}
+                        </span>
+                        <span
+                          className="text-xs font-medium px-2.5 py-1 rounded-full"
+                          style={{
+                            backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                            color: 'var(--text-muted)'
+                          }}
+                        >
+                          {folderMessages.length}
+                        </span>
+                        {isFolderExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                      </div>
+
+                      {/* Messages inside folder - Indented */}
+                      {isFolderExpanded && folderMessages.length > 0 && (
+                        <div className="flex flex-col gap-1.5 mt-2 ml-4">
+                          {folderMessages.map((message, index) => renderMessageCard(message, index, folder.color))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {/* Mensagens sem pasta - Hide when filtering by folders only */}
+                {messagesWithoutFolder.length > 0 && typeFilter !== 'folders' && (
+                  <div className="mb-3">
+                    <h3 className="text-sm font-medium text-[var(--text-secondary)] mb-2 px-2 flex items-center gap-2">
+                      <FolderIcon size={16} className="text-gray-400" />
+                      Mensagens sem pasta
+                    </h3>
+                    <div className="flex flex-col gap-1.5">
+                      {messagesWithoutFolder.map((message, index) => renderMessageCard(message, index))}
+                    </div>
                   </div>
                 )}
-              </div>
+
+                {/* Empty State */}
+                {!hasVisibleContent && (
+                  <div className="flex flex-col gap-1.5">
+                    {(() => {
+                      const getEmptyStateContent = () => {
+                        // 1. Search State
+                        if (searchQuery.trim()) {
+                          return {
+                            icon: <Search size={48} />,
+                            title: 'Nenhuma mensagem encontrada',
+                            description: `Não encontramos nada para "${searchQuery}"`
+                          };
+                        }
+
+                        // 2. Filter States
+                        switch (typeFilter) {
+                          case 'audio':
+                            return {
+                              icon: <Mic size={48} />,
+                              title: 'Nenhum áudio criado',
+                              description: 'Grave ou faça upload do seu primeiro áudio para automação'
+                            };
+                          case 'text':
+                            return {
+                              icon: <MessageCircle size={48} />,
+                              title: 'Nenhuma mensagem de texto',
+                              description: 'Crie modelos de texto para respostas rápidas'
+                            };
+                          case 'image':
+                            return {
+                              icon: <Camera size={48} />,
+                              title: 'Nenhuma imagem adicionada',
+                              description: 'Adicione imagens para enviar produtos ou demonstrativos'
+                            };
+                          case 'video':
+                            return {
+                              icon: <Video size={48} />,
+                              title: 'Nenhum vídeo adicionado',
+                              description: 'Vídeos são ótimos para tutoriais e apresentações'
+                            };
+                          case 'file':
+                            return {
+                              icon: <FileText size={48} />,
+                              title: 'Nenhum arquivo adicionado',
+                              description: 'Envie PDFs, documentos e outros arquivos automaticamente'
+                            };
+                          case 'folders':
+                            return {
+                              icon: <FolderIcon size={48} />,
+                              title: 'Nenhuma pasta criada',
+                              description: 'Organize suas mensagens em pastas para facilitar o acesso'
+                            };
+                          default:
+                            // 'all' filter
+                            return {
+                              icon: <MessageCircle size={48} />,
+                              title: 'Nenhuma mensagem criada',
+                              description: 'Crie sua primeira mensagem para começar a automatizar o WhatsApp'
+                            };
+                        }
+                      };
+
+                      const content = getEmptyStateContent();
+
+                      return (
+                        <div className="empty-state">
+                          <div className="empty-icon">
+                            {content.icon}
+                          </div>
+                          <h3>{content.title}</h3>
+                          <p>{content.description}</p>
+
+                          {/* Show CTA button if not searching */}
+                          {!searchQuery.trim() && typeFilter !== 'folders' && (
+                            <Button
+                              variant="accent"
+                              onClick={() => {
+                                handleCreateNew();
+                                // Pre-select the type based on filter if applicable
+                                if (typeFilter !== 'all' && (typeFilter as string) !== 'folders') {
+                                  setFormData(prev => ({ ...prev, type: typeFilter }));
+                                }
+                              }}
+                              className="mt-4"
+                            >
+                              <Plus size={16} className="mr-2" />
+                              Criar {typeFilter === 'all' ? 'Mensagem' :
+                                typeFilter === 'audio' ? 'Áudio' :
+                                  typeFilter === 'text' ? 'Texto' :
+                                    typeFilter === 'image' ? 'Imagem' :
+                                      typeFilter === 'video' ? 'Vídeo' :
+                                        typeFilter === 'file' ? 'Arquivo' : 'Mensagem'}
+                            </Button>
+                          )}
+
+                          {/* Show Create Folder button if filtering by folders */}
+                          {!searchQuery.trim() && typeFilter === 'folders' && (
+                            <Button
+                              variant="accent"
+                              onClick={() => setShowFolderManager(true)}
+                              className="mt-4"
+                            >
+                              <FolderIcon size={16} className="mr-2" />
+                              Criar Pasta
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </>
             );
-          })}
-
-          {/* Mensagens sem pasta - Hide when filtering by folders only */}
-          {messagesWithoutFolder.length > 0 && typeFilter !== 'folders' && (
-            <div className="mb-3">
-              <h3 className="text-sm font-medium text-[var(--text-secondary)] mb-2 px-2 flex items-center gap-2">
-                <FolderIcon size={16} className="text-gray-400" />
-                Mensagens sem pasta
-              </h3>
-              <div className="flex flex-col gap-1.5">
-                {messagesWithoutFolder.map((message, index) => renderMessageCard(message, index))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Empty State */}
-        <div className="flex flex-col gap-1.5" style={{ paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
-          {folders.length === 0 && messagesWithoutFolder.length === 0 && (
-            <div className="empty-state">
-              <div className="empty-icon">
-                <MessageCircle size={48} />
-              </div>
-              <h3>
-                {messages.length === 0 ? 'Nenhuma mensagem criada' : 'Nenhuma mensagem encontrada'}
-              </h3>
-              <p>
-                {messages.length === 0
-                  ? 'Crie sua primeira mensagem para começar a automatizar o WhatsApp'
-                  : 'Tente ajustar os filtros para encontrar mensagens'}
-              </p>
-            </div>
-          )}
+          })()}
         </div>
       </div>
 

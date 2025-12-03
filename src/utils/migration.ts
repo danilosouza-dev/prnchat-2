@@ -7,15 +7,15 @@ import { db } from '@/storage/db';
 import { Folder } from '@/types';
 
 export async function migrateTagsToFolders(): Promise<void> {
-  console.log('[X1Flox Migration] Starting tags to folders migration...');
+  console.log('[PrinChat Migration] Starting tags to folders migration...');
 
   try {
     // 1. Get all existing tags
     const tags = await db.getAllTags();
-    console.log(`[X1Flox Migration] Found ${tags.length} tags to migrate`);
+    console.log(`[PrinChat Migration] Found ${tags.length} tags to migrate`);
 
     if (tags.length === 0) {
-      console.log('[X1Flox Migration] No tags to migrate');
+      console.log('[PrinChat Migration] No tags to migrate');
       return;
     }
 
@@ -32,11 +32,11 @@ export async function migrateTagsToFolders(): Promise<void> {
     for (const folder of folders) {
       await db.saveFolder(folder);
     }
-    console.log(`[X1Flox Migration] Created ${folders.length} folders`);
+    console.log(`[PrinChat Migration] Created ${folders.length} folders`);
 
     // 4. Get all messages and update them
     const messages = await db.getAllMessages();
-    console.log(`[X1Flox Migration] Updating ${messages.length} messages...`);
+    console.log(`[PrinChat Migration] Updating ${messages.length} messages...`);
 
     let updated = 0;
     for (const message of messages) {
@@ -60,14 +60,14 @@ export async function migrateTagsToFolders(): Promise<void> {
       }
     }
 
-    console.log(`[X1Flox Migration] Updated ${updated} messages with folders`);
-    console.log('[X1Flox Migration] Migration completed successfully!');
+    console.log(`[PrinChat Migration] Updated ${updated} messages with folders`);
+    console.log('[PrinChat Migration] Migration completed successfully!');
 
     // Note: We keep tags in database for now in case user wants to rollback
     // They can be manually deleted later
 
   } catch (error) {
-    console.error('[X1Flox Migration] Migration failed:', error);
+    console.error('[PrinChat Migration] Migration failed:', error);
     throw error;
   }
 }
@@ -86,7 +86,7 @@ export async function needsMigration(): Promise<boolean> {
     // Migration is needed if there are tags but no folders
     return tags.length > 0 && folders.length === 0;
   } catch (error) {
-    console.error('[X1Flox Migration] Error checking migration status:', error);
+    console.error('[PrinChat Migration] Error checking migration status:', error);
     return false;
   }
 }

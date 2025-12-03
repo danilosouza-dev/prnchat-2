@@ -1,24 +1,24 @@
 /**
- * X1Flox - WhatsApp Web Content Script (Isolated World)
+ * PrinChat - WhatsApp Web Content Script (Isolated World)
  * Runs in isolated world, communicates with popup and page script
  * The page script (whatsapp-page-script.ts) runs in page context and accesses WhatsApp API
  */
 
-(function() {
+(function () {
   'use strict';
 
-  console.log('[X1Flox] Content script loaded');
+  console.log('[PrinChat] Content script loaded');
 
   // Create marker in DOM - will be used to pass config to page scripts
   // Ensure it's added even if body is not ready yet
   function ensureMarker() {
-    let marker = document.getElementById('X1FloxInjected');
+    let marker = document.getElementById('PrinChatInjected');
     if (!marker) {
       marker = document.createElement('div');
-      marker.id = 'X1FloxInjected';
+      marker.id = 'PrinChatInjected';
       marker.style.display = 'none';
       (document.body || document.documentElement).appendChild(marker);
-      console.log('[X1Flox] Marker created and appended to:', document.body ? 'body' : 'documentElement');
+      console.log('[PrinChat] Marker created and appended to:', document.body ? 'body' : 'documentElement');
     }
     return marker;
   }
@@ -50,21 +50,21 @@
       let executionId: string = '';
 
       try {
-        console.log('[X1Flox] Starting script execution via ScriptExecutor:', scriptId);
-        console.log('[X1Flox] Provided chatId:', providedChatId || 'none (will use active chat)');
-        console.log('[X1Flox] Fetching script from service worker (NOT IndexedDB)...');
+        console.log('[PrinChat] Starting script execution via ScriptExecutor:', scriptId);
+        console.log('[PrinChat] Provided chatId:', providedChatId || 'none (will use active chat)');
+        console.log('[PrinChat] Fetching script from service worker (NOT IndexedDB)...');
 
         // IMPORTANT: Content script can't access extension's IndexedDB directly!
         // We must fetch the script via the service worker
         const scriptData = await this.getScriptFromServiceWorker(scriptId);
 
         if (!scriptData || !scriptData.success) {
-          console.error('[X1Flox] Failed to fetch script from service worker:', scriptData?.error);
+          console.error('[PrinChat] Failed to fetch script from service worker:', scriptData?.error);
           return { success: false, error: scriptData?.error || 'Failed to fetch script' };
         }
 
         const script = scriptData.data;
-        console.log('[X1Flox] Script loaded successfully:', script.name, 'with', script.steps.length, 'steps');
+        console.log('[PrinChat] Script loaded successfully:', script.name, 'with', script.steps.length, 'steps');
 
         // Determine target chat
         let targetChatId: string;
@@ -76,13 +76,13 @@
           targetChatId = providedChatId;
 
           // Fetch real chat data (name and photo) from WhatsApp API
-          console.log('[X1Flox] Fetching chat info for trigger:', targetChatId);
+          console.log('[PrinChat] Fetching chat info for trigger:', targetChatId);
           const chatInfoResult = await this.injector?.getChatInfo(targetChatId);
 
           if (chatInfoResult?.success && chatInfoResult.data) {
             targetChatName = chatInfoResult.data.chatName;
             targetChatPhoto = chatInfoResult.data.chatPhoto;
-            console.log('[X1Flox] Got real chat data:', targetChatName, 'Photo:', !!targetChatPhoto);
+            console.log('[PrinChat] Got real chat data:', targetChatName, 'Photo:', !!targetChatPhoto);
           } else {
             // Fallback: Extract a readable name from chatId (usually format: phone@c.us or phone@g.us)
             const match = providedChatId.match(/^(\d+)@/);
@@ -93,21 +93,21 @@
               : phoneNumber;
             targetChatName = formatted;
             targetChatPhoto = undefined;
-            console.log('[X1Flox] Failed to get chat info, using fallback:', targetChatName);
+            console.log('[PrinChat] Failed to get chat info, using fallback:', targetChatName);
           }
         } else {
           // Get the active chat (for popup/manual execution)
           // This ensures messages are sent to the correct chat even if user navigates away
           const activeChatResult = await this.injector?.getActiveChat();
           if (!activeChatResult?.success || !activeChatResult.data?.chatId) {
-            console.error('[X1Flox] Failed to get active chat:', activeChatResult?.error);
+            console.error('[PrinChat] Failed to get active chat:', activeChatResult?.error);
             return { success: false, error: 'No active chat found. Please open a chat first.' };
           }
 
           targetChatId = activeChatResult.data.chatId;
           targetChatName = activeChatResult.data.chatName;
           targetChatPhoto = activeChatResult.data.chatPhoto;
-          console.log('[X1Flox] Script will execute for active chat:', targetChatName, 'ID:', targetChatId);
+          console.log('[PrinChat] Script will execute for active chat:', targetChatName, 'ID:', targetChatId);
         }
 
         // Generate unique execution ID (not just script.id from database)
@@ -135,8 +135,8 @@
 
         this.executions.set(executionId, execution);
 
-        // Dispatch X1FloxScriptStart event for UI overlay to create popup
-        document.dispatchEvent(new CustomEvent('X1FloxScriptStart', {
+        // Dispatch PrinChatScriptStart event for UI overlay to create popup
+        document.dispatchEvent(new CustomEvent('PrinChatScriptStart', {
           detail: {
             scriptId: executionId,  // Use unique execution ID
             scriptName: script.name,
@@ -154,7 +154,7 @@
         for (let i = 0; i < script.steps.length; i++) {
           // Check if cancelled
           if (execution.isCancelled) {
-            console.log('[X1Flox] Script execution cancelled:', executionId);
+            console.log('[PrinChat] Script execution cancelled:', executionId);
             break;
           }
 
@@ -171,12 +171,12 @@
           const step = script.steps[i];
           execution.state.currentStepIndex = i;
 
-          console.log('[X1Flox] Executing step', i + 1, 'of', script.steps.length);
+          console.log('[PrinChat] Executing step', i + 1, 'of', script.steps.length);
 
           // Service worker provides steps with message data already embedded
           const message = step.message;
           if (!message) {
-            console.error('[X1Flox] Message data missing in step:', i);
+            console.error('[PrinChat] Message data missing in step:', i);
             continue;
           }
 
@@ -188,7 +188,7 @@
           let result;
 
           if (!this.injector) {
-            console.error('[X1Flox] Injector not initialized!');
+            console.error('[PrinChat] Injector not initialized!');
             result = { success: false, error: 'Injector not initialized' };
           } else {
             switch (message.type) {
@@ -268,10 +268,10 @@
 
           if (result?.success) {
             execution.state.sentMessages++;
-            console.log('[X1Flox] Message sent successfully:', i + 1);
+            console.log('[PrinChat] Message sent successfully:', i + 1);
 
             // Dispatch progress event for UI overlay
-            document.dispatchEvent(new CustomEvent('X1FloxScriptProgress', {
+            document.dispatchEvent(new CustomEvent('PrinChatScriptProgress', {
               detail: {
                 scriptId: executionId,
                 step: i + 1,
@@ -282,18 +282,18 @@
             // CRITICAL: Wait after sending message to ensure WhatsApp completes the send
             // before starting the next animation (prevents next animation from being cut)
             if (i < script.steps.length - 1) {
-              console.log('[X1Flox] Waiting 800ms for message to fully send before next animation...');
+              console.log('[PrinChat] Waiting 800ms for message to fully send before next animation...');
               await new Promise(resolve => setTimeout(resolve, 800));
             }
           } else {
-            console.error('[X1Flox] Failed to send message:', result?.error);
+            console.error('[PrinChat] Failed to send message:', result?.error);
             // Continue to next message even if one fails
           }
         }
 
         // Execution complete
         execution.state.isRunning = false;
-        console.log('[X1Flox] Script execution completed');
+        console.log('[PrinChat] Script execution completed');
 
         // Clean up execution from Map
         this.executions.delete(executionId);
@@ -301,9 +301,9 @@
         // Dispatch completion event for UI overlay
         if (execution.isCancelled) {
           // Script was cancelled - don't dispatch complete event
-          console.log('[X1Flox] Script was cancelled, not dispatching complete event');
+          console.log('[PrinChat] Script was cancelled, not dispatching complete event');
         } else {
-          document.dispatchEvent(new CustomEvent('X1FloxScriptComplete', {
+          document.dispatchEvent(new CustomEvent('PrinChatScriptComplete', {
             detail: {
               scriptId: executionId,
               success: true
@@ -315,14 +315,14 @@
 
       } catch (error: any) {
         const errorMessage = error?.message || String(error);
-        console.error('[X1Flox] Error executing script:', errorMessage, error);
+        console.error('[PrinChat] Error executing script:', errorMessage, error);
         const execution = this.executions.get(executionId);
         if (execution) {
           execution.state.isRunning = false;
           this.executions.delete(executionId);
 
           // Dispatch error event for UI overlay
-          document.dispatchEvent(new CustomEvent('X1FloxScriptError', {
+          document.dispatchEvent(new CustomEvent('PrinChatScriptError', {
             detail: {
               scriptId: executionId,
               error: errorMessage
@@ -338,10 +338,10 @@
       if (execution && execution.state.isRunning) {
         execution.isPaused = true;
         execution.state.isPaused = true;
-        console.log('[X1Flox] Script execution paused:', scriptId);
+        console.log('[PrinChat] Script execution paused:', scriptId);
         return { success: true };
       }
-      console.warn('[X1Flox] No running script found for pause:', scriptId);
+      console.warn('[PrinChat] No running script found for pause:', scriptId);
       return { success: false, error: 'No script running with this ID' };
     }
 
@@ -350,10 +350,10 @@
       if (execution && execution.state.isRunning && execution.isPaused) {
         execution.isPaused = false;
         execution.state.isPaused = false;
-        console.log('[X1Flox] Script execution resumed:', scriptId);
+        console.log('[PrinChat] Script execution resumed:', scriptId);
         return { success: true };
       }
-      console.warn('[X1Flox] No paused script found for resume:', scriptId);
+      console.warn('[PrinChat] No paused script found for resume:', scriptId);
       return { success: false, error: 'No paused script with this ID' };
     }
 
@@ -366,10 +366,10 @@
         }
         execution.state.isRunning = false;
         this.executions.delete(scriptId);
-        console.log('[X1Flox] Script execution cancelled:', scriptId);
+        console.log('[PrinChat] Script execution cancelled:', scriptId);
         return { success: true };
       }
-      console.warn('[X1Flox] No running script found for cancel:', scriptId);
+      console.warn('[PrinChat] No running script found for cancel:', scriptId);
       return { success: false, error: 'No script running with this ID' };
     }
 
@@ -399,15 +399,15 @@
      */
     private async getScriptFromServiceWorker(scriptId: string): Promise<any> {
       try {
-        console.log('[X1Flox] Requesting script from service worker:', scriptId);
+        console.log('[PrinChat] Requesting script from service worker:', scriptId);
         const response = await chrome.runtime.sendMessage({
           type: 'GET_SCRIPT',
           payload: { scriptId }
         });
-        console.log('[X1Flox] Service worker response:', response);
+        console.log('[PrinChat] Service worker response:', response);
         return response;
       } catch (error: any) {
-        console.error('[X1Flox] Error fetching script from service worker:', error);
+        console.error('[PrinChat] Error fetching script from service worker:', error);
         return { success: false, error: error.message };
       }
     }
@@ -415,7 +415,7 @@
 
   class WhatsAppInjector {
     private isReady = false;
-    private pendingRequests = new Map<string, {resolve: Function, reject: Function}>();
+    private pendingRequests = new Map<string, { resolve: Function, reject: Function }>();
     private scriptExecutor: ScriptExecutor;
 
     // Map to track multiple direct script executions (from footer shortcuts)
@@ -432,7 +432,7 @@
     }
 
     private async init() {
-      console.log('[X1Flox] Initializing injector...');
+      console.log('[PrinChat] Initializing injector...');
 
       // Wait for WhatsApp Web to load
       await this.waitForWhatsAppReady();
@@ -444,81 +444,81 @@
       await this.injectUIOverlay();
 
       // Listen for responses from page script
-      document.addEventListener('X1FloxMessageSent', (event: any) => {
-        console.log('[X1Flox] 📨 X1FloxMessageSent event received!', event.detail);
+      document.addEventListener('PrinChatMessageSent', (event: any) => {
+        console.log('[PrinChat] 📨 PrinChatMessageSent event received!', event.detail);
 
         const { success, error, requestId } = event.detail;
-        console.log('[X1Flox] Event details:', { success, error, requestId });
-        console.log('[X1Flox] Pending requests:', Array.from(this.pendingRequests.keys()));
+        console.log('[PrinChat] Event details:', { success, error, requestId });
+        console.log('[PrinChat] Pending requests:', Array.from(this.pendingRequests.keys()));
 
         const pending = this.pendingRequests.get(requestId);
-        console.log('[X1Flox] Found pending request?', !!pending);
+        console.log('[PrinChat] Found pending request?', !!pending);
 
         if (pending) {
           if (success) {
-            console.log('[X1Flox] ✅ Resolving promise with success');
+            console.log('[PrinChat] ✅ Resolving promise with success');
             pending.resolve({ success: true });
           } else {
-            console.log('[X1Flox] ❌ Rejecting promise with error:', error);
+            console.log('[PrinChat] ❌ Rejecting promise with error:', error);
             pending.reject(new Error(error || 'Unknown error'));
           }
           this.pendingRequests.delete(requestId);
         } else {
-          console.warn('[X1Flox] ⚠️ No pending request found for requestId:', requestId);
+          console.warn('[PrinChat] ⚠️ No pending request found for requestId:', requestId);
         }
       });
 
       // Listen for pause/resume/cancel events from UI overlay
-      document.addEventListener('X1FloxPauseScript', (event: any) => {
+      document.addEventListener('PrinChatPauseScript', (event: any) => {
         const { scriptId } = event.detail;
-        console.log('[X1Flox] Pause script event received:', scriptId);
+        console.log('[PrinChat] Pause script event received:', scriptId);
 
         // Check if it's a direct execution (from footer) or ScriptExecutor execution
         const directExec = this.directExecutions.get(scriptId);
         if (directExec) {
           directExec.isPaused = true;
-          console.log('[X1Flox] Paused direct script execution:', scriptId);
+          console.log('[PrinChat] Paused direct script execution:', scriptId);
         } else {
           this.scriptExecutor.pause(scriptId);
         }
       });
 
-      document.addEventListener('X1FloxResumeScript', (event: any) => {
+      document.addEventListener('PrinChatResumeScript', (event: any) => {
         const { scriptId } = event.detail;
-        console.log('[X1Flox] Resume script event received:', scriptId);
+        console.log('[PrinChat] Resume script event received:', scriptId);
 
         const directExec = this.directExecutions.get(scriptId);
         if (directExec) {
           directExec.isPaused = false;
-          console.log('[X1Flox] Resumed direct script execution:', scriptId);
+          console.log('[PrinChat] Resumed direct script execution:', scriptId);
         } else {
           this.scriptExecutor.resume(scriptId);
         }
       });
 
-      document.addEventListener('X1FloxCancelScript', (event: any) => {
+      document.addEventListener('PrinChatCancelScript', (event: any) => {
         const { scriptId } = event.detail;
-        console.log('[X1Flox] Cancel script event received:', scriptId);
+        console.log('[PrinChat] Cancel script event received:', scriptId);
 
         const directExec = this.directExecutions.get(scriptId);
         if (directExec) {
           directExec.isCancelled = true;
-          console.log('[X1Flox] Cancelled direct script execution:', scriptId);
+          console.log('[PrinChat] Cancelled direct script execution:', scriptId);
         } else {
           this.scriptExecutor.cancel(scriptId);
         }
       });
 
       // Listen for incoming messages from page script (for triggers)
-      document.addEventListener('X1FloxIncomingMessage', async (event: any) => {
+      document.addEventListener('PrinChatIncomingMessage', async (event: any) => {
         const { messageText, chatId, timestamp } = event.detail;
-        console.log('[X1Flox] Incoming message detected:', messageText);
+        console.log('[PrinChat] Incoming message detected:', messageText);
 
         // Send to service worker to check triggers
         try {
           // Check if extension context is still valid
           if (!chrome.runtime?.id) {
-            console.warn('[X1Flox] Extension context invalidated, skipping trigger check');
+            console.warn('[PrinChat] Extension context invalidated, skipping trigger check');
             return;
           }
 
@@ -533,32 +533,32 @@
         } catch (error: any) {
           // Ignore "Extension context invalidated" errors and message channel errors
           if (error.message?.includes('Extension context invalidated')) {
-            console.warn('[X1Flox] Extension context invalidated, trigger check skipped');
+            console.warn('[PrinChat] Extension context invalidated, trigger check skipped');
           } else if (error.message?.includes('message channel closed') ||
-                     error.message?.includes('The message port closed')) {
+            error.message?.includes('The message port closed')) {
             // This can happen if the service worker is restarting or the script execution takes too long
             // It's not a critical error - the trigger check was received, just the response was lost
-            console.warn('[X1Flox] Message channel closed during trigger check (non-critical)');
+            console.warn('[PrinChat] Message channel closed during trigger check (non-critical)');
           } else {
-            console.error('[X1Flox] Error checking triggers:', error);
+            console.error('[PrinChat] Error checking triggers:', error);
           }
         }
       });
 
       this.isReady = true;
-      console.log('[X1Flox] WhatsApp Web injector ready');
+      console.log('[PrinChat] WhatsApp Web injector ready');
 
       // Listen for messages from popup
       try {
         chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-          console.log('[X1Flox] Message received from popup:', message.type);
+          console.log('[PrinChat] Message received from popup:', message.type);
           this.handleAction(message)
             .then(response => {
-              console.log('[X1Flox] Sending response:', response);
+              console.log('[PrinChat] Sending response:', response);
               sendResponse(response);
             })
             .catch(error => {
-              console.error('[X1Flox] Error handling action:', error);
+              console.error('[PrinChat] Error handling action:', error);
               sendResponse({
                 success: false,
                 error: error.message || 'Unknown error'
@@ -566,22 +566,22 @@
             });
           return true; // Keep channel open for async
         });
-        console.log('[X1Flox] Message listener registered successfully');
+        console.log('[PrinChat] Message listener registered successfully');
       } catch (error) {
-        console.error('[X1Flox] Failed to register message listener:', error);
+        console.error('[PrinChat] Failed to register message listener:', error);
       }
 
       // Listen for requests from UI overlay
-      console.log('[X1Flox] Setting up UI request listener...');
-      document.addEventListener('X1FloxUIRequest', async (event: any) => {
+      console.log('[PrinChat] Setting up UI request listener...');
+      document.addEventListener('PrinChatUIRequest', async (event: any) => {
         const { requestId, message } = event.detail;
-        console.log('[X1Flox] 🎯 UI request received:', message.type, 'ID:', requestId);
+        console.log('[PrinChat] 🎯 UI request received:', message.type, 'ID:', requestId);
 
         try {
           let response;
 
           if (message.type === 'GET_SCRIPTS_AND_MESSAGES' || message.type === 'GET_SETTINGS' || message.type === 'TOGGLE_SIDE_PANEL') {
-            console.log('[X1Flox] Forwarding to background service worker...');
+            console.log('[PrinChat] Forwarding to background service worker...');
 
             // Check if extension context is still valid
             if (!chrome.runtime?.id) {
@@ -590,14 +590,14 @@
 
             // Forward to background service worker
             response = await chrome.runtime.sendMessage(message);
-            console.log('[X1Flox] Got response from background:', response);
+            console.log('[PrinChat] Got response from background:', response);
 
             // Restore large media data from temp storage (for GET_SCRIPTS_AND_MESSAGES)
             if (message.type === 'GET_SCRIPTS_AND_MESSAGES' && response.success) {
-              console.log('[X1Flox Injector] 🔍 DEBUG - Before restoration, checking messages...');
+              console.log('[PrinChat Injector] 🔍 DEBUG - Before restoration, checking messages...');
               const fileMessages = response.data.messages?.filter((m: any) => m.type === 'file') || [];
               fileMessages.forEach((msg: any) => {
-                console.log('[X1Flox Injector] 🔍 File message BEFORE restoration:', {
+                console.log('[PrinChat Injector] 🔍 File message BEFORE restoration:', {
                   id: msg.id,
                   fileData: msg.fileData,
                   fileDataType: typeof msg.fileData,
@@ -608,10 +608,10 @@
 
               response.data.messages = await this.restoreTempMediaData(response.data.messages);
 
-              console.log('[X1Flox Injector] 🔍 DEBUG - After restoration, checking messages...');
+              console.log('[PrinChat Injector] 🔍 DEBUG - After restoration, checking messages...');
               const fileMessagesAfter = response.data.messages?.filter((m: any) => m.type === 'file') || [];
               fileMessagesAfter.forEach((msg: any) => {
-                console.log('[X1Flox Injector] 🔍 File message AFTER restoration:', {
+                console.log('[PrinChat Injector] 🔍 File message AFTER restoration:', {
                   id: msg.id,
                   hasFileData: !!msg.fileData,
                   fileDataType: typeof msg.fileData,
@@ -620,18 +620,18 @@
               });
             }
           } else {
-            console.log('[X1Flox] Handling as action:', message.type);
+            console.log('[PrinChat] Handling as action:', message.type);
             // Handle as action (EXECUTE_SCRIPT, SEND_MESSAGE, etc)
             response = await this.handleAction(message);
           }
 
-          console.log('[X1Flox] Sending response back to UI overlay:', response);
-          document.dispatchEvent(new CustomEvent('X1FloxUIResponse', {
+          console.log('[PrinChat] Sending response back to UI overlay:', response);
+          document.dispatchEvent(new CustomEvent('PrinChatUIResponse', {
             detail: { requestId, response }
           }));
-          console.log('[X1Flox] ✅ Response sent to UI overlay');
+          console.log('[PrinChat] ✅ Response sent to UI overlay');
         } catch (error: any) {
-          console.error('[X1Flox] ❌ Error handling UI request:', error);
+          console.error('[PrinChat] ❌ Error handling UI request:', error);
 
           // Provide better error message for context invalidation
           let errorMessage = error.message || 'Unknown error';
@@ -639,7 +639,7 @@
             errorMessage = 'A extensão foi atualizada. Por favor, recarregue a página.';
           }
 
-          document.dispatchEvent(new CustomEvent('X1FloxUIResponse', {
+          document.dispatchEvent(new CustomEvent('PrinChatUIResponse', {
             detail: {
               requestId,
               response: { success: false, error: errorMessage }
@@ -647,54 +647,54 @@
           }));
         }
       });
-      console.log('[X1Flox] ✅ UI request listener registered');
+      console.log('[PrinChat] ✅ UI request listener registered');
 
       // Listen for storage changes and forward to UI overlay
-      console.log('[X1Flox] Setting up storage change listener...');
+      console.log('[PrinChat] Setting up storage change listener...');
       chrome.storage.onChanged.addListener((changes, areaName) => {
-        console.log('[X1Flox] 🔔 Storage changed!', 'Area:', areaName, 'Changes:', Object.keys(changes));
+        console.log('[PrinChat] 🔔 Storage changed!', 'Area:', areaName, 'Changes:', Object.keys(changes));
 
         if (areaName === 'local') {
           // Handle settings changes
           if (changes.settings) {
-            console.log('[X1Flox] ⚙️ Settings changed in storage!');
-            console.log('[X1Flox] Old value:', changes.settings.oldValue);
-            console.log('[X1Flox] New value:', changes.settings.newValue);
+            console.log('[PrinChat] ⚙️ Settings changed in storage!');
+            console.log('[PrinChat] Old value:', changes.settings.oldValue);
+            console.log('[PrinChat] New value:', changes.settings.newValue);
 
             // Update marker attribute for FAB (page context can read this)
             if (changes.settings.newValue) {
               const marker = ensureMarker(); // Ensure marker exists
               const showFloatingButton = changes.settings.newValue.showFloatingButton ?? false;
               marker.setAttribute('data-show-fab', String(showFloatingButton));
-              console.log('[X1Flox] Updated marker data-show-fab:', showFloatingButton);
+              console.log('[PrinChat] Updated marker data-show-fab:', showFloatingButton);
             }
 
             // Forward to UI overlay
-            console.log('[X1Flox] Dispatching X1FloxSettingsChanged event...');
-            document.dispatchEvent(new CustomEvent('X1FloxSettingsChanged', {
+            console.log('[PrinChat] Dispatching PrinChatSettingsChanged event...');
+            document.dispatchEvent(new CustomEvent('PrinChatSettingsChanged', {
               detail: {
                 settings: changes.settings.newValue
               }
             }));
-            console.log('[X1Flox] ✅ Settings change forwarded to UI overlay');
+            console.log('[PrinChat] ✅ Settings change forwarded to UI overlay');
           }
 
           // Handle messages, scripts, or tags changes - trigger data refresh
           if (changes.messages || changes.scripts || changes.tags) {
-            console.log('[X1Flox] 📊 Data changed in storage (messages/scripts/tags)!');
-            console.log('[X1Flox] Dispatching X1FloxDataChanged event...');
-            document.dispatchEvent(new CustomEvent('X1FloxDataChanged', {
+            console.log('[PrinChat] 📊 Data changed in storage (messages/scripts/tags)!');
+            console.log('[PrinChat] Dispatching PrinChatDataChanged event...');
+            document.dispatchEvent(new CustomEvent('PrinChatDataChanged', {
               detail: {
                 messagesChanged: !!changes.messages,
                 scriptsChanged: !!changes.scripts,
                 tagsChanged: !!changes.tags
               }
             }));
-            console.log('[X1Flox] ✅ Data change event dispatched to UI overlay');
+            console.log('[PrinChat] ✅ Data change event dispatched to UI overlay');
           }
         }
       });
-      console.log('[X1Flox] ✅ Storage change listener registered');
+      console.log('[PrinChat] ✅ Storage change listener registered');
     }
 
     /**
@@ -702,7 +702,7 @@
      * Service worker stores large Base64 strings separately to avoid message size limits
      */
     private async restoreTempMediaData(messages: any[]): Promise<any[]> {
-      console.log('[X1Flox Injector] 🔍 restoreTempMediaData called with', messages.length, 'messages');
+      console.log('[PrinChat Injector] 🔍 restoreTempMediaData called with', messages.length, 'messages');
       const keysToRestore: string[] = [];
       const messageReferences: { message: any; field: string; key: string }[] = [];
 
@@ -710,79 +710,79 @@
       for (const msg of messages) {
         if (msg.type === 'file' && typeof msg.fileData === 'string' && msg.fileData.startsWith('__TEMP_STORAGE__:')) {
           const key = msg.fileData.replace('__TEMP_STORAGE__:', '');
-          console.log('[X1Flox Injector] 🔍 Found file with temp storage key:', key);
+          console.log('[PrinChat Injector] 🔍 Found file with temp storage key:', key);
           keysToRestore.push(key);
           messageReferences.push({ message: msg, field: 'fileData', key });
         }
         if (msg.type === 'image' && typeof msg.imageData === 'string' && msg.imageData.startsWith('__TEMP_STORAGE__:')) {
           const key = msg.imageData.replace('__TEMP_STORAGE__:', '');
-          console.log('[X1Flox Injector] 🔍 Found image with temp storage key:', key);
+          console.log('[PrinChat Injector] 🔍 Found image with temp storage key:', key);
           keysToRestore.push(key);
           messageReferences.push({ message: msg, field: 'imageData', key });
         }
         if (msg.type === 'video' && typeof msg.videoData === 'string' && msg.videoData.startsWith('__TEMP_STORAGE__:')) {
           const key = msg.videoData.replace('__TEMP_STORAGE__:', '');
-          console.log('[X1Flox Injector] 🔍 Found video with temp storage key:', key);
+          console.log('[PrinChat Injector] 🔍 Found video with temp storage key:', key);
           keysToRestore.push(key);
           messageReferences.push({ message: msg, field: 'videoData', key });
         }
         if (msg.type === 'audio' && typeof msg.audioData === 'string' && msg.audioData.startsWith('__TEMP_STORAGE__:')) {
           const key = msg.audioData.replace('__TEMP_STORAGE__:', '');
-          console.log('[X1Flox Injector] 🔍 Found audio with temp storage key:', key);
+          console.log('[PrinChat Injector] 🔍 Found audio with temp storage key:', key);
           keysToRestore.push(key);
           messageReferences.push({ message: msg, field: 'audioData', key });
         }
       }
 
       if (keysToRestore.length > 0) {
-        console.log('[X1Flox Injector] 🔍 Restoring', keysToRestore.length, 'items from chrome.storage.local');
-        console.log('[X1Flox Injector] 🔍 Keys:', keysToRestore);
+        console.log('[PrinChat Injector] 🔍 Restoring', keysToRestore.length, 'items from chrome.storage.local');
+        console.log('[PrinChat Injector] 🔍 Keys:', keysToRestore);
         const result = await chrome.storage.local.get(keysToRestore);
-        console.log('[X1Flox Injector] 🔍 Retrieved from storage:', Object.keys(result));
+        console.log('[PrinChat Injector] 🔍 Retrieved from storage:', Object.keys(result));
 
         // Restore the data
         for (const ref of messageReferences) {
           const data = result[ref.key];
           if (data) {
             ref.message[ref.field] = data;
-            console.log('[X1Flox Injector] 🔍 Restored', ref.field, 'for', ref.message.id, '- length:', data.length);
+            console.log('[PrinChat Injector] 🔍 Restored', ref.field, 'for', ref.message.id, '- length:', data.length);
           } else {
-            console.warn('[X1Flox Injector] ⚠️ No data found for key:', ref.key);
+            console.warn('[PrinChat Injector] ⚠️ No data found for key:', ref.key);
           }
         }
 
         // Clean up temp storage
         await chrome.storage.local.remove(keysToRestore);
-        console.log('[X1Flox Injector] 🔍 Cleaned up temp storage');
+        console.log('[PrinChat Injector] 🔍 Cleaned up temp storage');
       } else {
-        console.log('[X1Flox Injector] 🔍 No temp storage keys found to restore');
+        console.log('[PrinChat Injector] 🔍 No temp storage keys found to restore');
       }
 
       return messages;
     }
 
     private async injectScripts() {
-      console.log('[X1Flox] Preparing to inject scripts...');
+      console.log('[PrinChat] Preparing to inject scripts...');
 
       try {
         // Check if extension context is still valid
         if (!chrome.runtime?.id) {
-          console.warn('[X1Flox] Extension context invalidated, cannot inject scripts');
+          console.warn('[PrinChat] Extension context invalidated, cannot inject scripts');
           return;
         }
 
         // STEP 1: Create marker in DOM with extension ID
         // The loader script will use this to construct chrome-extension:// URLs
         const extensionId = chrome.runtime.id;
-        console.log('[X1Flox] Extension ID:', extensionId);
+        console.log('[PrinChat] Extension ID:', extensionId);
 
         const marker = document.createElement('div');
-        marker.id = 'x1flox-marker';
+        marker.id = 'princhat-marker';
         marker.setAttribute('data-extension-id', extensionId);
         marker.style.display = 'none';
         document.documentElement.appendChild(marker);
 
-        console.log('[X1Flox] Marker created with extension ID');
+        console.log('[PrinChat] Marker created with extension ID');
 
         // STEP 2: Ask service worker to inject the loader script
         // The loader is small and will then load WPPConnect + page script via DOM
@@ -791,66 +791,66 @@
         });
 
         if (response?.success) {
-          console.log('[X1Flox] ✅ Loader injection requested successfully');
+          console.log('[PrinChat] ✅ Loader injection requested successfully');
         } else {
-          console.error('[X1Flox] ❌ Failed to request injection:', response?.error);
+          console.error('[PrinChat] ❌ Failed to request injection:', response?.error);
         }
 
       } catch (error: any) {
         if (error.message?.includes('Extension context invalidated')) {
-          console.warn('[X1Flox] Extension context invalidated during script injection');
+          console.warn('[PrinChat] Extension context invalidated during script injection');
         } else {
-          console.error('[X1Flox] ❌ Error communicating with service worker:', error);
+          console.error('[PrinChat] ❌ Error communicating with service worker:', error);
         }
       }
     }
 
     private async injectUIOverlay() {
-      console.log('[X1Flox] Injecting UI overlay...');
+      console.log('[PrinChat] Injecting UI overlay...');
 
       // First, inject CSS (content script has access to chrome.runtime.getURL)
-      console.log('[X1Flox] Injecting UI overlay CSS...');
+      console.log('[PrinChat] Injecting UI overlay CSS...');
       const link = document.createElement('link');
       link.rel = 'stylesheet';
       link.href = chrome.runtime.getURL('content/whatsapp-ui-overlay.css');
       link.onload = () => {
-        console.log('[X1Flox] ✅ UI overlay CSS loaded');
+        console.log('[PrinChat] ✅ UI overlay CSS loaded');
       };
       link.onerror = (error) => {
-        console.error('[X1Flox] ❌ Error loading UI overlay CSS:', error);
+        console.error('[PrinChat] ❌ Error loading UI overlay CSS:', error);
       };
       document.head.appendChild(link);
 
       // Then, inject JavaScript (as a page script - no chrome.runtime access)
-      console.log('[X1Flox] Injecting UI overlay JavaScript...');
+      console.log('[PrinChat] Injecting UI overlay JavaScript...');
       const script = document.createElement('script');
       script.src = chrome.runtime.getURL('content/whatsapp-ui-overlay.js');
       script.onload = () => {
-        console.log('[X1Flox] ✅ UI overlay JavaScript loaded');
+        console.log('[PrinChat] ✅ UI overlay JavaScript loaded');
       };
       script.onerror = (error) => {
-        console.error('[X1Flox] ❌ Error loading UI overlay JavaScript:', error);
+        console.error('[PrinChat] ❌ Error loading UI overlay JavaScript:', error);
       };
       document.head.appendChild(script);
 
       // Always inject FAB (will show/hide based on settings)
       // This allows instant toggle when settings change
-      console.log('[X1Flox] Injecting FAB (will check settings for visibility)...');
+      console.log('[PrinChat] Injecting FAB (will check settings for visibility)...');
       await this.injectFAB();
     }
 
     private async injectFAB() {
-      console.log('[X1Flox] Injecting FAB...');
+      console.log('[PrinChat] Injecting FAB...');
 
       // Inject FAB CSS
       const fabCSS = document.createElement('link');
       fabCSS.rel = 'stylesheet';
       fabCSS.href = chrome.runtime.getURL('content/whatsapp-fab.css');
       fabCSS.onload = () => {
-        console.log('[X1Flox] ✅ FAB CSS loaded');
+        console.log('[PrinChat] ✅ FAB CSS loaded');
       };
       fabCSS.onerror = (error) => {
-        console.error('[X1Flox] ❌ Error loading FAB CSS:', error);
+        console.error('[PrinChat] ❌ Error loading FAB CSS:', error);
       };
       document.head.appendChild(fabCSS);
 
@@ -859,9 +859,9 @@
       try {
         const response = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
         showFloatingButton = response?.data?.showFloatingButton ?? false;
-        console.log('[X1Flox] Initial showFloatingButton:', showFloatingButton);
+        console.log('[PrinChat] Initial showFloatingButton:', showFloatingButton);
       } catch (error) {
-        console.error('[X1Flox] Error loading settings for FAB:', error);
+        console.error('[PrinChat] Error loading settings for FAB:', error);
       }
 
       // Pass config to FAB via data attributes (avoiding inline scripts for CSP)
@@ -870,19 +870,21 @@
       const marker = ensureMarker(); // Ensure marker exists
       marker.setAttribute('data-popup-url', chrome.runtime.getURL('src/fab-popup/index.html'));
       marker.setAttribute('data-show-fab', String(showFloatingButton));
-      console.log('[X1Flox] FAB config set via data attributes:', {
+      marker.setAttribute('data-fab-icon-url', chrome.runtime.getURL('fab-icon.png'));
+      console.log('[PrinChat] FAB config set via data attributes:', {
         popupUrl: chrome.runtime.getURL('src/fab-popup/index.html'),
-        showFAB: String(showFloatingButton)
+        showFAB: String(showFloatingButton),
+        iconUrl: chrome.runtime.getURL('fab-icon.png')
       });
 
       // NOW inject FAB JavaScript - data attributes are already set
       const fabScript = document.createElement('script');
       fabScript.src = chrome.runtime.getURL('content/whatsapp-fab.js');
       fabScript.onload = () => {
-        console.log('[X1Flox] ✅ FAB JavaScript loaded and initialized');
+        console.log('[PrinChat] ✅ FAB JavaScript loaded and initialized');
       };
       fabScript.onerror = (error) => {
-        console.error('[X1Flox] ❌ Error loading FAB JavaScript:', error);
+        console.error('[PrinChat] ❌ Error loading FAB JavaScript:', error);
       };
       document.head.appendChild(fabScript);
     }
@@ -892,7 +894,7 @@
         const check = () => {
           const chatContainer = document.querySelector(SELECTORS.chatContainer);
           if (chatContainer) {
-            console.log('[X1Flox] WhatsApp container found');
+            console.log('[PrinChat] WhatsApp container found');
             resolve();
           } else {
             setTimeout(check, 500);
@@ -904,19 +906,19 @@
 
     private async handleAction(action: any): Promise<any> {
       if (!this.isReady && action.type !== 'CHECK_WHATSAPP_READY') {
-        console.error('[X1Flox] WhatsApp Web is not ready! Action:', action.type);
+        console.error('[PrinChat] WhatsApp Web is not ready! Action:', action.type);
         return { success: false, error: 'WhatsApp Web is not ready' };
       }
 
-      console.log('[X1Flox] Handling action:', action.type, 'Payload:', action.payload);
+      console.log('[PrinChat] Handling action:', action.type, 'Payload:', action.payload);
 
       switch (action.type) {
         case 'SEND_SINGLE_MESSAGE':
           // Route popup/FAB messages through overlay's sendSingleMessage()
           // This ensures they show the execution popup like footer shortcuts do
           // Payload now contains only messageId to avoid chrome.tabs.sendMessage size limits
-          console.log('[X1Flox] Routing popup message through overlay:', action.payload);
-          document.dispatchEvent(new CustomEvent('X1FloxSendSingleMessageFromPopup', {
+          console.log('[PrinChat] Routing popup message through overlay:', action.payload);
+          document.dispatchEvent(new CustomEvent('PrinChatSendSingleMessageFromPopup', {
             detail: {
               messageId: action.payload.messageId
             }
@@ -970,7 +972,7 @@
             // Execute in background without waiting (to avoid message channel timeout)
             this.executeScriptWithSteps(action.payload).catch((error: any) => {
               const errorMessage = error?.message || String(error);
-              console.error('[X1Flox] Background script execution failed:', errorMessage);
+              console.error('[PrinChat] Background script execution failed:', errorMessage);
             });
             // Return immediately - UI will track progress via events
             return { success: true, message: 'Script execution started' };
@@ -982,7 +984,7 @@
               action.payload.chatId  // Optional: undefined for popup, specific for trigger
             ).catch((error: any) => {
               const errorMessage = error?.message || String(error);
-              console.error('[X1Flox] Background script execution failed:', errorMessage);
+              console.error('[PrinChat] Background script execution failed:', errorMessage);
             });
             // Return immediately - UI will track progress via events
             return { success: true, message: 'Script execution started' };
@@ -1001,7 +1003,7 @@
           const pauseDirectExec = this.directExecutions.get(pauseScriptId);
           if (pauseDirectExec) {
             pauseDirectExec.isPaused = true;
-            console.log('[X1Flox] Paused direct script execution:', pauseScriptId);
+            console.log('[PrinChat] Paused direct script execution:', pauseScriptId);
             return { success: true };
           } else {
             return this.scriptExecutor.pause(pauseScriptId);
@@ -1016,7 +1018,7 @@
           const resumeDirectExec = this.directExecutions.get(resumeScriptId);
           if (resumeDirectExec) {
             resumeDirectExec.isPaused = false;
-            console.log('[X1Flox] Resumed direct script execution:', resumeScriptId);
+            console.log('[PrinChat] Resumed direct script execution:', resumeScriptId);
             return { success: true };
           } else {
             return this.scriptExecutor.resume(resumeScriptId);
@@ -1031,7 +1033,7 @@
           const cancelDirectExec = this.directExecutions.get(cancelScriptId);
           if (cancelDirectExec) {
             cancelDirectExec.isCancelled = true;
-            console.log('[X1Flox] Cancelled direct script execution:', cancelScriptId);
+            console.log('[PrinChat] Cancelled direct script execution:', cancelScriptId);
             return { success: true };
           } else {
             return this.scriptExecutor.cancel(cancelScriptId);
@@ -1041,7 +1043,7 @@
           // Cancel all direct executions
           this.directExecutions.forEach((exec, scriptId) => {
             exec.isCancelled = true;
-            console.log('[X1Flox] Cancelled direct execution:', scriptId);
+            console.log('[PrinChat] Cancelled direct execution:', scriptId);
           });
 
           // Cancel all ScriptExecutor executions
@@ -1067,14 +1069,14 @@
 
     async sendTextMessage(text: string, chatId?: string, showTyping?: boolean, sendDelay?: number): Promise<any> {
       try {
-        console.log('[X1Flox] Sending message via page script:', text.substring(0, 50) + '...', chatId ? `to chat: ${chatId}` : '');
+        console.log('[PrinChat] Sending message via page script:', text.substring(0, 50) + '...', chatId ? `to chat: ${chatId}` : '');
 
         const hasAnimation = showTyping && (sendDelay || 0) > 0;
         const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
         // NEW ARCHITECTURE: If animation exists, start it BEFORE delay (like overlay does)
         if (hasAnimation && chatId) {
-          document.dispatchEvent(new CustomEvent('X1FloxStartAnimation', {
+          document.dispatchEvent(new CustomEvent('PrinChatStartAnimation', {
             detail: {
               messageId,
               chatId,
@@ -1090,7 +1092,7 @@
 
         // Process delay HERE in injector (like overlay does for full control)
         if (sendDelay && sendDelay > 0) {
-          console.log('[X1Flox] Processing delay in injector:', sendDelay, 'ms');
+          console.log('[PrinChat] Processing delay in injector:', sendDelay, 'ms');
           await new Promise(resolve => setTimeout(resolve, sendDelay));
         }
 
@@ -1098,13 +1100,13 @@
         // When a message is sent, WhatsApp automatically stops all animations
         // So we need to stop it manually first to prevent it from cutting the NEXT animation
         if (hasAnimation && chatId) {
-          console.log('[X1Flox] Stopping animation before sending message:', messageId);
-          document.dispatchEvent(new CustomEvent('X1FloxStopAnimation', {
+          console.log('[PrinChat] Stopping animation before sending message:', messageId);
+          document.dispatchEvent(new CustomEvent('PrinChatStopAnimation', {
             detail: { messageId, chatId }
           }));
           // Wait for animation to stop completely before sending
           await new Promise(resolve => setTimeout(resolve, 200));
-          console.log('[X1Flox] Animation stopped, now sending message');
+          console.log('[PrinChat] Animation stopped, now sending message');
         }
 
         // Generate unique request ID
@@ -1116,18 +1118,18 @@
 
           // Timeout: 60s buffer (delay already processed above)
           const timeout = 60000;
-          console.log('[X1Flox] Text message timeout set to', timeout, 'ms');
+          console.log('[PrinChat] Text message timeout set to', timeout, 'ms');
           setTimeout(() => {
             if (this.pendingRequests.has(requestId)) {
               this.pendingRequests.delete(requestId);
-              console.error('[X1Flox] ❌ TIMEOUT: Text message took too long');
+              console.error('[PrinChat] ❌ TIMEOUT: Text message took too long');
               reject(new Error('Timeout: Message send took too long'));
             }
           }, timeout);
         });
 
         // Dispatch event to page script (ALWAYS with sendDelay=0 - delay already processed)
-        document.dispatchEvent(new CustomEvent('X1FloxSendMessage', {
+        document.dispatchEvent(new CustomEvent('PrinChatSendMessage', {
           detail: {
             text,
             requestId,
@@ -1142,7 +1144,7 @@
 
       } catch (error: any) {
         const errorMessage = error?.message || String(error);
-        console.error('[X1Flox] Error sending message:', errorMessage, error);
+        console.error('[PrinChat] Error sending message:', errorMessage, error);
         return { success: false, error: error.message };
       }
     }
@@ -1150,24 +1152,24 @@
     async sendAudio(payload: any): Promise<any> {
       try {
         // Check if page script is loaded
-        const isPageScriptLoaded = document.getElementById('x1flox-marker');
-        console.log('[X1Flox] Page script marker exists?', !!isPageScriptLoaded);
+        const isPageScriptLoaded = document.getElementById('princhat-marker');
+        console.log('[PrinChat] Page script marker exists?', !!isPageScriptLoaded);
 
         if (!isPageScriptLoaded) {
-          console.error('[X1Flox] ❌ Page script NOT LOADED! Re-injecting...');
+          console.error('[PrinChat] ❌ Page script NOT LOADED! Re-injecting...');
           await this.injectScripts();
           // Wait a bit for injection
           await new Promise(resolve => setTimeout(resolve, 3000));
         }
 
-        console.log('[X1Flox] Sending audio via page script...');
+        console.log('[PrinChat] Sending audio via page script...');
 
         const hasAnimation = payload.showRecording && (payload.sendDelay || 0) > 0;
         const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
         // NEW ARCHITECTURE: If animation exists, start it BEFORE delay (like overlay does)
         if (hasAnimation && payload.chatId) {
-          document.dispatchEvent(new CustomEvent('X1FloxStartAnimation', {
+          document.dispatchEvent(new CustomEvent('PrinChatStartAnimation', {
             detail: {
               messageId,
               chatId: payload.chatId,
@@ -1189,13 +1191,13 @@
         // When a message is sent, WhatsApp automatically stops all animations
         // So we need to stop it manually first to prevent it from cutting the NEXT animation
         if (hasAnimation && payload.chatId) {
-          console.log('[X1Flox] Stopping animation before sending audio:', messageId);
-          document.dispatchEvent(new CustomEvent('X1FloxStopAnimation', {
+          console.log('[PrinChat] Stopping animation before sending audio:', messageId);
+          document.dispatchEvent(new CustomEvent('PrinChatStopAnimation', {
             detail: { messageId, chatId: payload.chatId }
           }));
           // Wait for animation to stop completely before sending
           await new Promise(resolve => setTimeout(resolve, 200));
-          console.log('[X1Flox] Animation stopped, now sending audio');
+          console.log('[PrinChat] Animation stopped, now sending audio');
         }
 
         // Generate unique request ID
@@ -1210,14 +1212,14 @@
           setTimeout(() => {
             if (this.pendingRequests.has(requestId)) {
               this.pendingRequests.delete(requestId);
-              console.error('[X1Flox] ❌ TIMEOUT: Audio send took too long');
+              console.error('[PrinChat] ❌ TIMEOUT: Audio send took too long');
               reject(new Error('Timeout: Audio send took too long'));
             }
           }, timeout);
         });
 
         // Dispatch event to page script (ALWAYS with sendDelay=0 - delay already processed)
-        document.dispatchEvent(new CustomEvent('X1FloxSendAudio', {
+        document.dispatchEvent(new CustomEvent('PrinChatSendAudio', {
           detail: {
             audioData: payload.audioData,
             duration: payload.duration,
@@ -1233,21 +1235,21 @@
 
       } catch (error: any) {
         const errorMessage = error?.message || String(error);
-        console.error('[X1Flox] Error sending audio:', errorMessage, error);
+        console.error('[PrinChat] Error sending audio:', errorMessage, error);
         return { success: false, error: error.message };
       }
     }
 
     async sendImage(payload: any): Promise<any> {
       try {
-        const isPageScriptLoaded = document.getElementById('x1flox-marker');
+        const isPageScriptLoaded = document.getElementById('princhat-marker');
         if (!isPageScriptLoaded) {
-          console.error('[X1Flox] ❌ Page script NOT LOADED! Re-injecting...');
+          console.error('[PrinChat] ❌ Page script NOT LOADED! Re-injecting...');
           await this.injectScripts();
           await new Promise(resolve => setTimeout(resolve, 3000));
         }
 
-        console.log('[X1Flox] Sending image via page script...');
+        console.log('[PrinChat] Sending image via page script...');
 
         const requestId = `req_image_${Date.now()}_${Math.random()}`;
 
@@ -1257,7 +1259,7 @@
           // Dynamic timeout: sendDelay + 60s buffer for upload/processing
           // Images have no animation, but may have sendDelay configured in scripts
           const timeout = (payload.sendDelay || 0) + 60000;
-          console.log('[X1Flox] Image message timeout set to', timeout, 'ms (sendDelay:', payload.sendDelay, 'ms + 60s buffer)');
+          console.log('[PrinChat] Image message timeout set to', timeout, 'ms (sendDelay:', payload.sendDelay, 'ms + 60s buffer)');
           setTimeout(() => {
             if (this.pendingRequests.has(requestId)) {
               this.pendingRequests.delete(requestId);
@@ -1266,7 +1268,7 @@
           }, timeout);
         });
 
-        document.dispatchEvent(new CustomEvent('X1FloxSendImage', {
+        document.dispatchEvent(new CustomEvent('PrinChatSendImage', {
           detail: {
             imageData: payload.imageData,
             caption: payload.caption || '',
@@ -1275,27 +1277,27 @@
           }
         }));
 
-        console.log('[X1Flox] ✅ Image event dispatched!');
+        console.log('[PrinChat] ✅ Image event dispatched!');
 
         return await promise;
 
       } catch (error: any) {
         const errorMessage = error?.message || String(error);
-        console.error('[X1Flox] Error sending image:', errorMessage, error);
+        console.error('[PrinChat] Error sending image:', errorMessage, error);
         return { success: false, error: error.message };
       }
     }
 
     async sendVideo(payload: any): Promise<any> {
       try {
-        const isPageScriptLoaded = document.getElementById('x1flox-marker');
+        const isPageScriptLoaded = document.getElementById('princhat-marker');
         if (!isPageScriptLoaded) {
-          console.error('[X1Flox] ❌ Page script NOT LOADED! Re-injecting...');
+          console.error('[PrinChat] ❌ Page script NOT LOADED! Re-injecting...');
           await this.injectScripts();
           await new Promise(resolve => setTimeout(resolve, 3000));
         }
 
-        console.log('[X1Flox] Sending video via page script...');
+        console.log('[PrinChat] Sending video via page script...');
 
         const requestId = `req_video_${Date.now()}_${Math.random()}`;
 
@@ -1306,7 +1308,7 @@
           // Videos have no animation, but may have sendDelay configured in scripts
           // Larger buffer (120s) because video files can be very large
           const timeout = (payload.sendDelay || 0) + 120000;
-          console.log('[X1Flox] Video message timeout set to', timeout, 'ms (sendDelay:', payload.sendDelay, 'ms + 120s buffer)');
+          console.log('[PrinChat] Video message timeout set to', timeout, 'ms (sendDelay:', payload.sendDelay, 'ms + 120s buffer)');
           setTimeout(() => {
             if (this.pendingRequests.has(requestId)) {
               this.pendingRequests.delete(requestId);
@@ -1315,7 +1317,7 @@
           }, timeout);
         });
 
-        document.dispatchEvent(new CustomEvent('X1FloxSendVideo', {
+        document.dispatchEvent(new CustomEvent('PrinChatSendVideo', {
           detail: {
             videoData: payload.videoData,
             caption: payload.caption || '',
@@ -1324,27 +1326,27 @@
           }
         }));
 
-        console.log('[X1Flox] ✅ Video event dispatched!');
+        console.log('[PrinChat] ✅ Video event dispatched!');
 
         return await promise;
 
       } catch (error: any) {
         const errorMessage = error?.message || String(error);
-        console.error('[X1Flox] Error sending video:', errorMessage, error);
+        console.error('[PrinChat] Error sending video:', errorMessage, error);
         return { success: false, error: error.message };
       }
     }
 
     async sendFile(payload: any): Promise<any> {
       try {
-        const isPageScriptLoaded = document.getElementById('x1flox-marker');
+        const isPageScriptLoaded = document.getElementById('princhat-marker');
         if (!isPageScriptLoaded) {
-          console.error('[X1Flox] ❌ Page script NOT LOADED! Re-injecting...');
+          console.error('[PrinChat] ❌ Page script NOT LOADED! Re-injecting...');
           await this.injectScripts();
           await new Promise(resolve => setTimeout(resolve, 3000));
         }
 
-        console.log('[X1Flox] Sending file via page script...');
+        console.log('[PrinChat] Sending file via page script...');
 
         const requestId = `req_file_${Date.now()}_${Math.random()}`;
 
@@ -1355,7 +1357,7 @@
           // Files have no animation, but may have sendDelay configured in scripts
           // Larger buffer (120s) because files can be very large
           const timeout = (payload.sendDelay || 0) + 120000;
-          console.log('[X1Flox] File message timeout set to', timeout, 'ms (sendDelay:', payload.sendDelay, 'ms + 120s buffer)');
+          console.log('[PrinChat] File message timeout set to', timeout, 'ms (sendDelay:', payload.sendDelay, 'ms + 120s buffer)');
           setTimeout(() => {
             if (this.pendingRequests.has(requestId)) {
               this.pendingRequests.delete(requestId);
@@ -1364,7 +1366,7 @@
           }, timeout);
         });
 
-        document.dispatchEvent(new CustomEvent('X1FloxSendFile', {
+        document.dispatchEvent(new CustomEvent('PrinChatSendFile', {
           detail: {
             fileData: payload.fileData,
             caption: payload.caption || '',
@@ -1374,13 +1376,13 @@
           }
         }));
 
-        console.log('[X1Flox] ✅ File event dispatched!');
+        console.log('[PrinChat] ✅ File event dispatched!');
 
         return await promise;
 
       } catch (error: any) {
         const errorMessage = error?.message || String(error);
-        console.error('[X1Flox] Error sending file:', errorMessage, error);
+        console.error('[PrinChat] Error sending file:', errorMessage, error);
         return { success: false, error: error.message };
       }
     }
@@ -1390,7 +1392,7 @@
       const scriptId = payload.scriptId || `script-${Date.now()}`;
 
       try {
-        console.log('[X1Flox] Executing script with steps:', payload.scriptName);
+        console.log('[PrinChat] Executing script with steps:', payload.scriptName);
         const { steps, chatId, scriptName } = payload;
 
         if (!steps || !Array.isArray(steps) || steps.length === 0) {
@@ -1403,10 +1405,10 @@
           isCancelled: false
         });
 
-        console.log('[X1Flox] Started direct script execution:', scriptId);
+        console.log('[PrinChat] Started direct script execution:', scriptId);
 
         // Emit script start event for UI overlay to show progress popup
-        document.dispatchEvent(new CustomEvent('X1FloxScriptStart', {
+        document.dispatchEvent(new CustomEvent('PrinChatScriptStart', {
           detail: {
             scriptId,
             scriptName: scriptName || 'Script',
@@ -1418,25 +1420,25 @@
         for (let i = 0; i < steps.length; i++) {
           const execution = this.directExecutions.get(scriptId);
           if (!execution) {
-            console.log('[X1Flox] Execution state lost for:', scriptId);
+            console.log('[PrinChat] Execution state lost for:', scriptId);
             break;
           }
 
           // Check if cancelled
           if (execution.isCancelled) {
-            console.log('[X1Flox] Direct script execution cancelled:', scriptId);
+            console.log('[PrinChat] Direct script execution cancelled:', scriptId);
             break;
           }
 
           // Wait if paused
           while (execution.isPaused && !execution.isCancelled) {
-            console.log('[X1Flox] Script paused, waiting...', scriptId);
+            console.log('[PrinChat] Script paused, waiting...', scriptId);
             await new Promise(resolve => setTimeout(resolve, 100));
           }
 
           // Check again after pause
           if (execution.isCancelled) {
-            console.log('[X1Flox] Direct script execution cancelled after pause:', scriptId);
+            console.log('[PrinChat] Direct script execution cancelled after pause:', scriptId);
             break;
           }
 
@@ -1444,10 +1446,10 @@
           const message = step.message;
           const delayAfter = step.delayAfter || 0;
 
-          console.log('[X1Flox] Executing step', i + 1, 'of', steps.length, '- type:', message.type);
+          console.log('[PrinChat] Executing step', i + 1, 'of', steps.length, '- type:', message.type);
 
           // Dispatch progress event for UI overlay
-          document.dispatchEvent(new CustomEvent('X1FloxScriptProgress', {
+          document.dispatchEvent(new CustomEvent('PrinChatScriptProgress', {
             detail: {
               scriptId: scriptId,
               step: i + 1,
@@ -1491,14 +1493,14 @@
               });
               break;
             default:
-              console.error('[X1Flox] Unknown message type:', message.type);
+              console.error('[PrinChat] Unknown message type:', message.type);
               result = { success: false, error: `Unknown message type: ${message.type}` };
           }
 
           if (result && result.success) {
-            console.log('[X1Flox] Step', i + 1, 'sent successfully');
+            console.log('[PrinChat] Step', i + 1, 'sent successfully');
             // Dispatch success event
-            document.dispatchEvent(new CustomEvent('X1FloxScriptProgress', {
+            document.dispatchEvent(new CustomEvent('PrinChatScriptProgress', {
               detail: {
                 scriptId: scriptId,
                 step: i + 1,
@@ -1506,9 +1508,9 @@
               }
             }));
           } else {
-            console.error('[X1Flox] Step', i + 1, 'failed:', result?.error);
+            console.error('[PrinChat] Step', i + 1, 'failed:', result?.error);
             // Dispatch error event
-            document.dispatchEvent(new CustomEvent('X1FloxScriptProgress', {
+            document.dispatchEvent(new CustomEvent('PrinChatScriptProgress', {
               detail: {
                 scriptId: scriptId,
                 step: i + 1,
@@ -1520,7 +1522,7 @@
 
           // Delay before next message (if not last step)
           if (i < steps.length - 1 && delayAfter > 0) {
-            console.log('[X1Flox] Waiting', delayAfter, 'ms before next message');
+            console.log('[PrinChat] Waiting', delayAfter, 'ms before next message');
 
             // Break delay into smaller chunks to allow pause/cancellation during delay
             const chunks = Math.ceil(delayAfter / 100);
@@ -1533,7 +1535,7 @@
 
               // Wait if paused during delay
               while (delayExecution.isPaused && !delayExecution.isCancelled) {
-                console.log('[X1Flox] Script paused during delay, waiting...', scriptId);
+                console.log('[PrinChat] Script paused during delay, waiting...', scriptId);
                 await new Promise(resolve => setTimeout(resolve, 100));
               }
 
@@ -1553,9 +1555,9 @@
         this.directExecutions.delete(scriptId);
 
         if (wasCancelled) {
-          console.log('[X1Flox] Script execution cancelled by user:', scriptId);
+          console.log('[PrinChat] Script execution cancelled by user:', scriptId);
           // Emit cancellation event
-          document.dispatchEvent(new CustomEvent('X1FloxScriptComplete', {
+          document.dispatchEvent(new CustomEvent('PrinChatScriptComplete', {
             detail: {
               scriptId,
               success: false,
@@ -1565,10 +1567,10 @@
           return { success: false, error: 'Script cancelled by user' };
         }
 
-        console.log('[X1Flox] Script execution completed:', scriptName);
+        console.log('[PrinChat] Script execution completed:', scriptName);
 
         // Emit completion event for UI overlay
-        document.dispatchEvent(new CustomEvent('X1FloxScriptComplete', {
+        document.dispatchEvent(new CustomEvent('PrinChatScriptComplete', {
           detail: {
             scriptId,
             success: true
@@ -1579,12 +1581,12 @@
 
       } catch (error: any) {
         const errorMessage = error?.message || String(error);
-        console.error('[X1Flox] Error executing script with steps:', errorMessage, error);
+        console.error('[PrinChat] Error executing script with steps:', errorMessage, error);
         // Clean up on error
         this.directExecutions.delete(scriptId);
 
         // Emit error event for UI overlay
-        document.dispatchEvent(new CustomEvent('X1FloxScriptError', {
+        document.dispatchEvent(new CustomEvent('PrinChatScriptError', {
           detail: {
             scriptId,
             error: errorMessage
@@ -1605,7 +1607,7 @@
         const handler = (event: any) => {
           if (event.detail?.requestId === requestId) {
             clearTimeout(timeout);
-            document.removeEventListener('X1FloxActiveChatResult', handler);
+            document.removeEventListener('PrinChatActiveChatResult', handler);
             if (event.detail.success) {
               // Use fallback getChatPhoto() if API didn't return photo
               const chatPhoto = event.detail.chatPhoto || this.getChatPhoto();
@@ -1619,8 +1621,8 @@
           }
         };
 
-        document.addEventListener('X1FloxActiveChatResult', handler);
-        document.dispatchEvent(new CustomEvent('X1FloxGetActiveChat', {
+        document.addEventListener('PrinChatActiveChatResult', handler);
+        document.dispatchEvent(new CustomEvent('PrinChatGetActiveChat', {
           detail: { requestId }
         }));
       });
@@ -1636,7 +1638,7 @@
         const handler = (event: any) => {
           if (event.detail?.requestId === requestId) {
             clearTimeout(timeout);
-            document.removeEventListener('X1FloxChatInfoResult', handler);
+            document.removeEventListener('PrinChatChatInfoResult', handler);
             if (event.detail.success) {
               // Don't use getChatPhoto() fallback here - it gets the ACTIVE chat photo, not the specific chat
               // If WhatsApp API doesn't have the photo, it's better to show placeholder than wrong photo
@@ -1651,15 +1653,15 @@
           }
         };
 
-        document.addEventListener('X1FloxChatInfoResult', handler);
-        document.dispatchEvent(new CustomEvent('X1FloxGetChatInfo', {
+        document.addEventListener('PrinChatChatInfoResult', handler);
+        document.dispatchEvent(new CustomEvent('PrinChatGetChatInfo', {
           detail: { requestId, chatId }
         }));
       });
     }
 
     private getChatPhoto(): string | undefined {
-      console.log('[X1Flox Injector] Getting chat photo from DOM as fallback...');
+      console.log('[PrinChat Injector] Getting chat photo from DOM as fallback...');
 
       // Try multiple selectors for profile picture
       const selectors = [
@@ -1674,12 +1676,12 @@
       for (const selector of selectors) {
         const img = document.querySelector(selector) as HTMLImageElement;
         if (img?.src && img.src !== 'data:') {
-          console.log('[X1Flox Injector] Found chat photo from selector:', selector, '→', img.src);
+          console.log('[PrinChat Injector] Found chat photo from selector:', selector, '→', img.src);
           return img.src;
         }
       }
 
-      console.log('[X1Flox Injector] No chat photo found in DOM');
+      console.log('[PrinChat Injector] No chat photo found in DOM');
       return undefined;
     }
 
@@ -1696,7 +1698,7 @@
         const handler = (event: any) => {
           if (event.detail?.requestId === requestId) {
             clearTimeout(timeout);
-            document.removeEventListener('X1FloxOpenChatResult', handler);
+            document.removeEventListener('PrinChatOpenChatResult', handler);
             resolve({
               success: event.detail.success,
               error: event.detail.error
@@ -1704,8 +1706,8 @@
           }
         };
 
-        document.addEventListener('X1FloxOpenChatResult', handler);
-        document.dispatchEvent(new CustomEvent('X1FloxOpenChat', {
+        document.addEventListener('PrinChatOpenChatResult', handler);
+        document.dispatchEvent(new CustomEvent('PrinChatOpenChat', {
           detail: { chatId, requestId }
         }));
       });
@@ -1716,5 +1718,5 @@
   // Initialize
   new WhatsAppInjector();
 
-  console.log('[X1Flox] Content script initialization complete');
+  console.log('[PrinChat] Content script initialization complete');
 })();

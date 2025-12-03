@@ -1,13 +1,13 @@
-# Arquitetura do X1Flox
+# Arquitetura do PrinChat
 
-Este documento explica as decisões arquiteturais e técnicas do projeto X1Flox Chrome Extension.
+Este documento explica as decisões arquiteturais e técnicas do projeto PrinChat Chrome Extension.
 
 ## 📋 Índice
 
 - [Visão Geral](#visão-geral)
 - [Decisões Técnicas Principais](#decisões-técnicas-principais)
 - [Estrutura de Scripts](#estrutura-de-scripts)
-- [Fluxo de Dados](#fluxo-de-dados)
+- [Fluxo de Dados](#princhato-de-dados)
 - [Integração com WhatsApp Web](#integração-com-whatsapp-web)
 - [Sistema de Injeção de Scripts](#sistema-de-injeção-de-scripts)
 - [Armazenamento de Dados](#armazenamento-de-dados)
@@ -16,7 +16,7 @@ Este documento explica as decisões arquiteturais e técnicas do projeto X1Flox 
 
 ## 🎯 Visão Geral
 
-X1Flox é uma Chrome Extension (Manifest V3) que automatiza o envio de mensagens no WhatsApp Web. A arquitetura foi projetada para:
+PrinChat é uma Chrome Extension (Manifest V3) que automatiza o envio de mensagens no WhatsApp Web. A arquitetura foi projetada para:
 
 1. **Acessar APIs internas do WhatsApp Web** - Store API para envio de mensagens
 2. **Contornar restrições de segurança** - CSP, CORS, isolated worlds
@@ -105,7 +105,7 @@ export default defineConfig({
 **Implementação:**
 ```typescript
 // src/utils/db.ts
-export const db = new Dexie('X1FloxDB');
+export const db = new Dexie('PrinChatDB');
 db.version(1).stores({
   messages: '++id, title, type, *tags',
   scripts: '++id, name',
@@ -251,7 +251,7 @@ document.documentElement.appendChild(script);
 │ (ISOLATED world)           │
 └────┬───────────────────────┘
      │ 4. document.dispatchEvent(
-     │      new CustomEvent('X1FloxSendText', ...)
+     │      new CustomEvent('PrinChatSendText', ...)
      │    )
      ▼
 ┌────────────────────────────┐
@@ -564,12 +564,12 @@ const response = await chrome.tabs.sendMessage(tab.id!, {
 
 ```typescript
 // whatsapp-injector.ts (ISOLATED)
-document.dispatchEvent(new CustomEvent('X1FloxSendText', {
+document.dispatchEvent(new CustomEvent('PrinChatSendText', {
   detail: { content: 'Hello', requestId: '123' }
 }));
 
 // Aguardar resposta
-document.addEventListener('X1FloxMessageSent', (event) => {
+document.addEventListener('PrinChatMessageSent', (event) => {
   const { success, requestId } = event.detail;
   // Retornar para background
 });
@@ -579,7 +579,7 @@ document.addEventListener('X1FloxMessageSent', (event) => {
 
 ```typescript
 // whatsapp-page-script.ts (MAIN)
-document.dispatchEvent(new CustomEvent('X1FloxMessageSent', {
+document.dispatchEvent(new CustomEvent('PrinChatMessageSent', {
   detail: { success: true, requestId: '123' }
 }));
 ```
@@ -793,15 +793,15 @@ async function checkPermissions() {
 ### Console Prefixes
 
 Todos os logs usam prefixes para filtrar:
-- `[X1Flox]` - Content script (ISOLATED)
-- `[X1Flox Loader]` - Script loader (MAIN)
-- `[X1Flox Page]` - Page script (MAIN)
-- `[X1Flox Store]` - Store accessor (MAIN)
+- `[PrinChat]` - Content script (ISOLATED)
+- `[PrinChat Loader]` - Script loader (MAIN)
+- `[PrinChat Page]` - Page script (MAIN)
+- `[PrinChat Store]` - Store accessor (MAIN)
 
 **Como debugar:**
 ```javascript
 // No console do WhatsApp Web, filtre por:
-// [X1Flox
+// [PrinChat
 
 // Verificar se Store está disponível:
 window.Store
@@ -810,7 +810,7 @@ window.Store
 window.WPP
 
 // Ver eventos customizados:
-monitorEvents(document, 'X1Flox');
+monitorEvents(document, 'PrinChat');
 ```
 
 ---

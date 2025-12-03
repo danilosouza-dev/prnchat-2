@@ -1,5 +1,5 @@
 /**
- * Background Service Worker for X1Flox
+ * Background Service Worker for PrinChat
  * Handles background tasks and message passing between components
  *
  * Architecture Decision:
@@ -18,8 +18,8 @@ class BackgroundService {
   }
 
   private async init() {
-    console.log('[X1Flox] Background service worker initialized');
-    console.log('[X1Flox] Current time:', new Date().toISOString());
+    console.log('[PrinChat] Background service worker initialized');
+    console.log('[PrinChat] Current time:', new Date().toISOString());
 
     // Listen for extension installation
     chrome.runtime.onInstalled.addListener(this.handleInstalled.bind(this));
@@ -29,7 +29,7 @@ class BackgroundService {
 
     // Clean up when tabs are closed
     chrome.tabs.onRemoved.addListener((tabId) => {
-      console.log('[X1Flox] Tab closed:', tabId);
+      console.log('[PrinChat] Tab closed:', tabId);
       this.injectedTabs.delete(tabId);
     });
 
@@ -40,7 +40,7 @@ class BackgroundService {
     // This is a beta feature and will be implemented in future versions
     // await this.setupTriggersMonitoring();
 
-    console.log('[X1Flox] Initialization complete');
+    console.log('[PrinChat] Initialization complete');
   }
 
   /**
@@ -48,7 +48,7 @@ class BackgroundService {
    */
   private async handleInstalled(details: chrome.runtime.InstalledDetails) {
     if (details.reason === 'install') {
-      console.log('[X1Flox] Extension installed');
+      console.log('[PrinChat] Extension installed');
 
       // Open options page on first install
       chrome.runtime.openOptionsPage();
@@ -56,7 +56,7 @@ class BackgroundService {
       // Create sample data (optional)
       await this.createSampleData();
     } else if (details.reason === 'update') {
-      console.log('[X1Flox] Extension updated to version', chrome.runtime.getManifest().version);
+      console.log('[PrinChat] Extension updated to version', chrome.runtime.getManifest().version);
     }
   }
 
@@ -68,7 +68,7 @@ class BackgroundService {
     sender: chrome.runtime.MessageSender,
     sendResponse: (response: any) => void
   ): boolean {
-    console.log('[X1Flox] Service worker received message:', message.type, 'from tab:', sender.tab?.id);
+    console.log('[PrinChat] Service worker received message:', message.type, 'from tab:', sender.tab?.id);
 
     // Handle different message types
     switch (message.type) {
@@ -138,17 +138,17 @@ class BackgroundService {
    * The loader will then inject WPPConnect and page scripts via DOM
    */
   private async injectPageScripts(tabId: number) {
-    console.log('[X1Flox] Injecting loader script into tab:', tabId);
+    console.log('[PrinChat] Injecting loader script into tab:', tabId);
 
     // Prevent multiple injections
     if (this.injectedTabs.has(tabId)) {
-      console.log('[X1Flox] Tab', tabId, 'already injected, skipping');
+      console.log('[PrinChat] Tab', tabId, 'already injected, skipping');
       return;
     }
 
     try {
       // Inject the loader script which will load Store accessor and page script
-      console.log('[X1Flox] Injecting script loader...');
+      console.log('[PrinChat] Injecting script loader...');
       await chrome.scripting.executeScript({
         target: { tabId: tabId },
         world: 'MAIN',
@@ -157,10 +157,10 @@ class BackgroundService {
 
       // Mark tab as injected
       this.injectedTabs.add(tabId);
-      console.log('[X1Flox] ✅ Loader script injected into tab', tabId);
+      console.log('[PrinChat] ✅ Loader script injected into tab', tabId);
     } catch (error: any) {
       const errorMessage = error?.message || String(error);
-      console.error('[X1Flox] ❌ Failed to inject loader into tab', tabId, ':', errorMessage, error);
+      console.error('[PrinChat] ❌ Failed to inject loader into tab', tabId, ':', errorMessage, error);
       throw error;
     }
   }
@@ -189,10 +189,10 @@ class BackgroundService {
       };
       await db.saveMessage(sampleMessage);
 
-      console.log('[X1Flox] Sample data created');
+      console.log('[PrinChat] Sample data created');
     } catch (error: any) {
       const errorMessage = error?.message || String(error);
-      console.error('[X1Flox] Error creating sample data:', errorMessage, error);
+      console.error('[PrinChat] Error creating sample data:', errorMessage, error);
     }
   }
 
@@ -202,33 +202,33 @@ class BackgroundService {
   private async checkTriggersAndExecute(payload: any, tabId: number) {
     const { messageText, chatId } = payload;
 
-    console.log('[X1Flox] Checking triggers for message:', messageText, 'from chat:', chatId);
+    console.log('[PrinChat] Checking triggers for message:', messageText, 'from chat:', chatId);
 
     // Get all enabled triggers
     const allTriggers = await db.getAllTriggers();
     const enabledTriggers = allTriggers.filter(t => t.enabled);
 
     if (enabledTriggers.length === 0) {
-      console.log('[X1Flox] No enabled triggers found');
+      console.log('[PrinChat] No enabled triggers found');
       return;
     }
 
     // Check each trigger
     for (const trigger of enabledTriggers) {
       if (this.messageMatchesTrigger(messageText, trigger.conditions)) {
-        console.log('[X1Flox] Trigger matched:', trigger.name);
+        console.log('[PrinChat] Trigger matched:', trigger.name);
 
         // Check if we should skip this trigger based on chat type
         const isGroup = chatId.includes('@g.us');
         const isContact = chatId.includes('@c.us');
 
         if (trigger.skipGroups && isGroup) {
-          console.log('[X1Flox] Skipping trigger for group chat (skipGroups enabled)');
+          console.log('[PrinChat] Skipping trigger for group chat (skipGroups enabled)');
           continue;
         }
 
         if (trigger.skipContacts && isContact) {
-          console.log('[X1Flox] Skipping trigger for contact chat (skipContacts enabled)');
+          console.log('[PrinChat] Skipping trigger for contact chat (skipContacts enabled)');
           continue;
         }
 
@@ -243,10 +243,10 @@ class BackgroundService {
             chatId: chatId  // Chat that sent the triggering message
           }
         }).then(() => {
-          console.log('[X1Flox] Triggered script execution for trigger:', trigger.name, 'to chat:', chatId);
+          console.log('[PrinChat] Triggered script execution for trigger:', trigger.name, 'to chat:', chatId);
         }).catch((error: any) => {
           const errorMessage = error?.message || String(error);
-          console.error('[X1Flox] Error executing triggered script:', errorMessage, error);
+          console.error('[PrinChat] Error executing triggered script:', errorMessage, error);
         });
 
         // Only execute first matching trigger
@@ -339,19 +339,19 @@ class BackgroundService {
         } else if (message.type === 'video' && message.videoData instanceof Blob) {
           processedMessage.videoData = await this.blobToBase64(message.videoData);
         } else if (message.type === 'file') {
-          console.log('[X1Flox SW] 🔍 Processing file message:', message.id);
-          console.log('[X1Flox SW] 🔍 message.fileData type:', typeof message.fileData);
-          console.log('[X1Flox SW] 🔍 message.fileData instanceof Blob:', message.fileData instanceof Blob);
-          console.log('[X1Flox SW] 🔍 message.fileName:', message.fileName);
+          console.log('[PrinChat SW] 🔍 Processing file message:', message.id);
+          console.log('[PrinChat SW] 🔍 message.fileData type:', typeof message.fileData);
+          console.log('[PrinChat SW] 🔍 message.fileData instanceof Blob:', message.fileData instanceof Blob);
+          console.log('[PrinChat SW] 🔍 message.fileName:', message.fileName);
 
           if (message.fileData instanceof Blob) {
-            console.log('[X1Flox SW] 🔍 Blob size:', message.fileData.size, 'type:', message.fileData.type);
+            console.log('[PrinChat SW] 🔍 Blob size:', message.fileData.size, 'type:', message.fileData.type);
             processedMessage.fileData = await this.blobToBase64(message.fileData);
-            console.log('[X1Flox SW] 🔍 Converted to Base64, length:', processedMessage.fileData.length);
-            console.log('[X1Flox SW] 🔍 Base64 starts with:', processedMessage.fileData.substring(0, 50));
+            console.log('[PrinChat SW] 🔍 Converted to Base64, length:', processedMessage.fileData.length);
+            console.log('[PrinChat SW] 🔍 Base64 starts with:', processedMessage.fileData.substring(0, 50));
             processedMessage.fileName = message.fileName || 'file';
           } else {
-            console.warn('[X1Flox SW] ⚠️ fileData is NOT a Blob! Value:', message.fileData);
+            console.warn('[PrinChat SW] ⚠️ fileData is NOT a Blob! Value:', message.fileData);
           }
         }
 
@@ -420,7 +420,7 @@ class BackgroundService {
    * Content scripts can't access extension's IndexedDB due to origin isolation
    */
   private async getScriptWithMessages(scriptId: string): Promise<any> {
-    console.log('[X1Flox] Service worker fetching script with messages:', scriptId);
+    console.log('[PrinChat] Service worker fetching script with messages:', scriptId);
 
     // Get the script
     const script = await db.getScript(scriptId);
@@ -428,7 +428,7 @@ class BackgroundService {
       throw new Error(`Script ${scriptId} not found`);
     }
 
-    console.log('[X1Flox] Script loaded:', script.name, 'with', script.steps.length, 'steps');
+    console.log('[PrinChat] Script loaded:', script.name, 'with', script.steps.length, 'steps');
 
     // Get all messages
     const allMessages = await db.getAllMessages();
@@ -492,7 +492,7 @@ class BackgroundService {
       steps: stepsWithMessages
     };
 
-    console.log('[X1Flox] Script prepared with', stepsWithMessages.length, 'steps containing message data');
+    console.log('[PrinChat] Script prepared with', stepsWithMessages.length, 'steps containing message data');
     return result;
   }
 
@@ -510,7 +510,7 @@ class BackgroundService {
   //   // 2. Message passing to background to check trigger conditions
   //   // 3. Execution of scripts when triggers match
   //   // 4. User notification system
-  //   console.log('[X1Flox] Triggers monitoring setup (feature in development)');
+  //   console.log('[PrinChat] Triggers monitoring setup (feature in development)');
   // }
 }
 

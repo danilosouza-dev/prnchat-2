@@ -73,7 +73,7 @@ const TriggersTab: React.FC<TriggersTabProps> = ({ setHeaderActions }) => {
   const handleExport = async () => {
     try {
       const data = await db.exportData();
-      downloadFile(data, `x1flox-backup-${Date.now()}.json`, 'application/json');
+      downloadFile(data, `princhat-backup-${Date.now()}.json`, 'application/json');
     } catch (error) {
       console.error('Error exporting data:', error);
       alert('Erro ao exportar dados');
@@ -269,178 +269,172 @@ const TriggersTab: React.FC<TriggersTabProps> = ({ setHeaderActions }) => {
       {/* Lista de Gatilhos */}
       <div className="triggers-list-container" style={{ marginTop: '4rem', paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
         <div className="triggers-list">
-        {triggers.map((trigger) => {
-          const isExpanded = expandedCards.has(trigger.id);
+          {triggers.map((trigger) => {
+            const isExpanded = expandedCards.has(trigger.id);
 
-          return (
-          <Card
-            key={trigger.id}
-            className="hover:shadow-xl transition-all duration-200 border-border/50 animate-card-entry"
-            style={{
-              '--card-index': triggers.findIndex(t => t.id === trigger.id)
-            } as React.CSSProperties}
-          >
-            <CardHeader className="pb-3">
-              <div className="flex justify-between items-start">
-                <div className="flex-1 flex items-start gap-3">
-                  {/* Ícone de status */}
-                  <div className={`flex items-center justify-center w-10 h-10 rounded-lg flex-shrink-0 transition-all ${
-                    trigger.enabled
-                      ? 'bg-success/20 text-success'
-                      : 'bg-muted text-muted-foreground'
-                  }`}>
-                    {trigger.enabled ? <Target size={20} /> : <Pause size={20} />}
-                  </div>
-
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <CardTitle className="text-lg font-semibold text-foreground">
-                        {trigger.name}
-                      </CardTitle>
-                      <Badge
-                        variant={trigger.enabled ? "success" : "secondary"}
-                        className="text-xs"
-                      >
-                        {trigger.enabled ? (
-                          <><Play size={12} className="mr-1" /> Ativo</>
-                        ) : (
-                          <><Pause size={12} className="mr-1" /> Inativo</>
-                        )}
-                      </Badge>
-                    </div>
-                    {trigger.description && (
-                      <CardDescription className="text-sm text-muted-foreground mt-1">
-                        {trigger.description}
-                      </CardDescription>
-                    )}
-                  </div>
-                </div>
-                <div className="flex gap-2 ml-4">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => toggleCardExpansion(trigger.id)}
-                    title={isExpanded ? "Recolher" : "Expandir"}
-                    className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-[#e91e63] hover:scale-110"
-                  >
-                    {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-                  </Button>
-
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleToggleEnabled(trigger)}
-                    title={trigger.enabled ? "Desativar gatilho" : "Ativar gatilho"}
-                    className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-[#e91e63] hover:scale-110"
-                  >
-                    {trigger.enabled ? <Pause size={18} /> : <Play size={18} />}
-                  </Button>
-
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleEdit(trigger)}
-                    title="Editar gatilho"
-                    className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-[#e91e63] hover:scale-110"
-                  >
-                    <Edit2 size={18} />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleDelete(trigger.id)}
-                    title="Excluir gatilho"
-                    className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-red-500 hover:scale-110"
-                  >
-                    <Trash2 size={18} />
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-
-            {isExpanded && (
-              <div className="animate-expand-smooth">
-                <CardContent className="pb-3 space-y-3">
-                  {/* Script associado */}
-                  <div className="flex items-center gap-2 p-3 bg-secondary/30 rounded-lg border border-border/30">
-                    <Zap size={16} className="text-[#e91e63] flex-shrink-0" />
+            return (
+              <Card
+                key={trigger.id}
+                className="hover:shadow-xl transition-all duration-200 border-border/50 animate-card-entry"
+                style={{
+                  '--card-index': triggers.findIndex(t => t.id === trigger.id)
+                } as React.CSSProperties}
+              >
+                <CardHeader className="pb-3">
+                  <div className="flex justify-between items-start">
                     <div className="flex-1">
-                      <p className="text-xs text-muted-foreground">Script a executar</p>
-                      <p className="text-sm font-medium text-foreground">{getScriptName(trigger.scriptId)}</p>
+                      <div className="flex items-center gap-2 mb-1">
+                        <CardTitle className="text-lg font-semibold text-foreground flex items-center gap-2">
+                          {trigger.enabled ? (
+                            <Target size={18} className="text-[#e91e63] flex-shrink-0" />
+                          ) : (
+                            <Pause size={18} className="text-muted-foreground flex-shrink-0" />
+                          )}
+                          {trigger.name}
+                        </CardTitle>
+                        <Badge
+                          variant={trigger.enabled ? "success" : "secondary"}
+                          className="text-xs"
+                        >
+                          {trigger.enabled ? (
+                            <><Play size={12} className="mr-1" /> Ativo</>
+                          ) : (
+                            <><Pause size={12} className="mr-1" /> Inativo</>
+                          )}
+                        </Badge>
+                      </div>
+                      {trigger.description && (
+                        <CardDescription className="text-sm text-muted-foreground mt-1">
+                          {trigger.description}
+                        </CardDescription>
+                      )}
+                    </div>
+                    <div className="flex gap-2 ml-4">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => toggleCardExpansion(trigger.id)}
+                        title={isExpanded ? "Recolher" : "Expandir"}
+                        className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-[#e91e63] hover:scale-110"
+                      >
+                        {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                      </Button>
+
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleToggleEnabled(trigger)}
+                        title={trigger.enabled ? "Desativar gatilho" : "Ativar gatilho"}
+                        className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-[#e91e63] hover:scale-110"
+                      >
+                        {trigger.enabled ? <Pause size={18} /> : <Play size={18} />}
+                      </Button>
+
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleEdit(trigger)}
+                        title="Editar gatilho"
+                        className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-[#e91e63] hover:scale-110"
+                      >
+                        <Edit2 size={18} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleDelete(trigger.id)}
+                        title="Excluir gatilho"
+                        className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-red-500 hover:scale-110"
+                      >
+                        <Trash2 size={18} />
+                      </Button>
                     </div>
                   </div>
+                </CardHeader>
 
-                  {/* Condições */}
-                  <div>
-                    <p className="text-xs font-medium text-foreground mb-2">Condições ({trigger.conditions.length}):</p>
-                    <div className="space-y-2">
-                      {trigger.conditions.map((condition, index) => (
-                        <div
-                          key={index}
-                          className="flex items-start gap-2 p-2.5 bg-secondary/20 rounded border border-border/20"
-                        >
-                          <div className="flex items-center justify-center w-5 h-5 rounded-full bg-primary/20 text-primary text-xs font-bold flex-shrink-0 mt-0.5">
-                            {index + 1}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs text-foreground">
-                              <span className="font-medium capitalize">{condition.type.replace('_', ' ')}</span>
-                              {': '}
-                              <span className="text-muted-foreground">{condition.value}</span>
+                {isExpanded && (
+                  <div className="animate-expand-smooth">
+                    <CardContent className="pb-3 space-y-3">
+                      {/* Script associado */}
+                      <div className="flex items-center gap-2 p-3 bg-secondary/30 rounded-lg border border-border/30">
+                        <Zap size={16} className="text-[#e91e63] flex-shrink-0" />
+                        <div className="flex-1">
+                          <p className="text-xs text-muted-foreground">Script a executar</p>
+                          <p className="text-sm font-medium text-foreground">{getScriptName(trigger.scriptId)}</p>
+                        </div>
+                      </div>
+
+                      {/* Condições */}
+                      <div>
+                        <p className="text-xs font-medium text-foreground mb-2">Condições ({trigger.conditions.length}):</p>
+                        <div className="space-y-2">
+                          {trigger.conditions.map((condition, index) => (
+                            <div
+                              key={index}
+                              className="flex items-start gap-2 p-2.5 bg-secondary/20 rounded border border-border/20"
+                            >
+                              <div className="flex items-center justify-center w-5 h-5 rounded-full bg-primary/20 text-primary text-xs font-bold flex-shrink-0 mt-0.5">
+                                {index + 1}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs text-foreground">
+                                  <span className="font-medium capitalize">{condition.type.replace('_', ' ')}</span>
+                                  {': '}
+                                  <span className="text-muted-foreground">{condition.value}</span>
+                                </p>
+                                {condition.caseSensitive && (
+                                  <Badge variant="secondary" className="mt-1 text-[10px] px-1.5 py-0">
+                                    Case sensitive
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        {trigger.conditions.length > 1 && (
+                          <div className="flex items-start gap-2 mt-2 p-2 bg-blue-500/10 rounded border border-blue-500/20">
+                            <AlertCircle size={14} className="text-blue-500 flex-shrink-0 mt-0.5" />
+                            <p className="text-xs text-blue-500">
+                              Todas as condições devem ser verdadeiras (AND) para o gatilho ser ativado
                             </p>
-                            {condition.caseSensitive && (
-                              <Badge variant="secondary" className="mt-1 text-[10px] px-1.5 py-0">
-                                Case sensitive
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Opções de Envio */}
+                      {(trigger.skipContacts || trigger.skipGroups) && (
+                        <div>
+                          <p className="text-xs font-medium text-foreground mb-2">Restrições de envio:</p>
+                          <div className="flex flex-wrap gap-2">
+                            {trigger.skipContacts && (
+                              <Badge variant="secondary" className="text-xs">
+                                Não envia para contatos
+                              </Badge>
+                            )}
+                            {trigger.skipGroups && (
+                              <Badge variant="secondary" className="text-xs">
+                                Não envia para grupos
                               </Badge>
                             )}
                           </div>
                         </div>
-                      ))}
-                    </div>
-                    {trigger.conditions.length > 1 && (
-                      <div className="flex items-start gap-2 mt-2 p-2 bg-blue-500/10 rounded border border-blue-500/20">
-                        <AlertCircle size={14} className="text-blue-500 flex-shrink-0 mt-0.5" />
-                        <p className="text-xs text-blue-500">
-                          Todas as condições devem ser verdadeiras (AND) para o gatilho ser ativado
-                        </p>
-                      </div>
-                    )}
+                      )}
+                    </CardContent>
+
+                    <CardFooter className="pt-3 flex-wrap gap-2 text-xs text-muted-foreground">
+                      <span>Criado em: {formatDate(trigger.createdAt)}</span>
+                    </CardFooter>
                   </div>
-
-                  {/* Opções de Envio */}
-                  {(trigger.skipContacts || trigger.skipGroups) && (
-                    <div>
-                      <p className="text-xs font-medium text-foreground mb-2">Restrições de envio:</p>
-                      <div className="flex flex-wrap gap-2">
-                        {trigger.skipContacts && (
-                          <Badge variant="secondary" className="text-xs">
-                            Não envia para contatos
-                          </Badge>
-                        )}
-                        {trigger.skipGroups && (
-                          <Badge variant="secondary" className="text-xs">
-                            Não envia para grupos
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-
-                <CardFooter className="pt-3 flex-wrap gap-2 text-xs text-muted-foreground">
-                  <span>Criado em: {formatDate(trigger.createdAt)}</span>
-                </CardFooter>
-              </div>
-            )}
-          </Card>
-          );
-        })}
+                )}
+              </Card>
+            );
+          })}
         </div>
 
         {triggers.length === 0 && !isCreating && (
-          <div className="empty-state-large">
-            <div className="empty-icon" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-              <Target size={64} className="text-muted-foreground opacity-50" />
+          <div className="empty-state">
+            <div className="empty-icon">
+              <Target size={48} className="text-[#e91e63]" />
             </div>
             <h3>Nenhum gatilho criado</h3>
             <p>
@@ -449,12 +443,12 @@ const TriggersTab: React.FC<TriggersTabProps> = ({ setHeaderActions }) => {
             </p>
             {scripts.length === 0 ? (
               <Button variant="secondary" disabled>
-                <AlertCircle size={16} />
+                <AlertCircle size={16} className="mr-2" />
                 Crie um script primeiro
               </Button>
             ) : (
               <Button variant="accent" onClick={handleCreateNew}>
-                <Plus size={16} />
+                <Plus size={16} className="mr-2" />
                 Criar Primeiro Gatilho
               </Button>
             )}

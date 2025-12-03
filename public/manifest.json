@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "X1Flox - WhatsApp Automation",
+  "name": "PrinChat - WhatsApp Automation",
   "version": "1.0.0",
   "description": "Send messages and audio to WhatsApp Web with one click. Create scripts, triggers, and automate your communication.",
   "permissions": [
@@ -28,14 +28,20 @@
   "options_page": "src/options/index.html",
   "content_scripts": [
     {
-      "matches": ["*://web.whatsapp.com/*"],
-      "js": ["content/whatsapp-injector.js"],
+      "matches": [
+        "*://web.whatsapp.com/*"
+      ],
+      "js": [
+        "content/whatsapp-injector.js"
+      ],
       "run_at": "document_end",
       "all_frames": false
     }
   ],
   "externally_connectable": {
-    "matches": ["*://web.whatsapp.com/*"]
+    "matches": [
+      "*://web.whatsapp.com/*"
+    ]
   },
   "icons": {
     "16": "icons/icon16.svg",
@@ -59,9 +65,12 @@
         "fab-popup.js",
         "popup.js",
         "chunks/*",
-        "wppconnect-wa.js"
+        "wppconnect-wa.js",
+        "fab-icon.png"
       ],
-      "matches": ["https://web.whatsapp.com/*"]
+      "matches": [
+        "https://web.whatsapp.com/*"
+      ]
     }
   ]
 }

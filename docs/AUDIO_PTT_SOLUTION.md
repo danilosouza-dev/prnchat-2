@@ -291,9 +291,9 @@ Loading the script violates the following Content Security Policy directive:
 ```typescript
 try {
   // STEP 1: Load WPPConnect library from local extension
-  console.log('[X1Flox Loader] Loading WPPConnect library...');
+  console.log('[PrinChat Loader] Loading WPPConnect library...');
   await injectScript(`chrome-extension://${extensionId}/wppconnect-wa.js`);
-  console.log('[X1Flox Loader] ✅ WPPConnect loaded');
+  console.log('[PrinChat Loader] ✅ WPPConnect loaded');
 
   // STEP 2: Load Store Accessor
   await injectScript(`chrome-extension://${extensionId}/content/whatsapp-store-accessor.js`);
@@ -302,9 +302,9 @@ try {
   await injectScript(`chrome-extension://${extensionId}/content/whatsapp-page-script.js`);
 
   // Verificar disponibilidade
-  console.log('[X1Flox Loader] WPP available:', !!window.WPP);
+  console.log('[PrinChat Loader] WPP available:', !!window.WPP);
 } catch (error) {
-  console.error('[X1Flox Loader] ❌ Error loading scripts:', error);
+  console.error('[PrinChat Loader] ❌ Error loading scripts:', error);
 }
 ```
 
@@ -456,9 +456,9 @@ function showErrorNotification(title: string, message: string, details: string) 
 ### Logs de Sucesso
 
 ```
-[X1Flox Loader] Loading WPPConnect library...
-[X1Flox Loader] ✅ WPPConnect loaded
-[X1Flox Loader] WPP available: true
+[PrinChat Loader] Loading WPPConnect library...
+[PrinChat Loader] ✅ WPPConnect loaded
+[PrinChat Loader] WPP available: true
 
 🎤 AUDIO EVENT RECEIVED!
 🎵 Using WPPConnect to send audio...

@@ -32,6 +32,8 @@ interface Notification {
   timestamp: number;
 }
 
+import logo from '../assets/logo.png';
+
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('messages');
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>('all');
@@ -78,7 +80,7 @@ const App: React.FC = () => {
     // Run migration if needed before loading data
     const initializeApp = async () => {
       if (await needsMigration()) {
-        console.log('[X1Flox] Running migration from tags to folders...');
+        console.log('[PrinChat] Running migration from tags to folders...');
         await migrateTagsToFolders();
       }
       loadData();
@@ -98,7 +100,7 @@ const App: React.FC = () => {
     const handleStorageChange = (changes: any, areaName: string) => {
       // Check if messages, scripts, or folders changed
       if (areaName === 'local' && (changes.messages || changes.scripts || changes.folders)) {
-        console.log('[X1Flox] Storage changed, reloading data...');
+        console.log('[PrinChat] Storage changed, reloading data...');
         loadData();
       }
     };
@@ -282,7 +284,7 @@ const App: React.FC = () => {
       }
     } catch (err: any) {
       const errorMessage = err?.message || String(err);
-      console.error('[X1Flox] Error sending message:', errorMessage, err);
+      console.error('[PrinChat] Error sending message:', errorMessage, err);
       // Don't show alert - UI overlay already shows errors visually
     } finally {
       setIsExecuting(false);
@@ -345,7 +347,7 @@ const App: React.FC = () => {
       }
     } catch (err: any) {
       const errorMessage = err?.message || String(err);
-      console.error('[X1Flox] Error executing script:', errorMessage, err);
+      console.error('[PrinChat] Error executing script:', errorMessage, err);
       // Don't show alert - UI overlay already shows errors visually
       setExecutionState(null);
     } finally {
@@ -549,6 +551,7 @@ const App: React.FC = () => {
     <div className="popup-dark">
       {/* Header */}
       <header className="header-dark">
+        <img src={logo} alt="PrinChat" className="h-6 w-auto" style={{ height: '20px' }} />
         <div className="header-icons">
           <div className="notification-wrapper" ref={notificationRef}>
             <button

@@ -1,4 +1,4 @@
-# X1Flox - WhatsApp Web Automation Chrome Extension
+# PrinChat - WhatsApp Web Automation Chrome Extension
 
 Extensão Chrome para automação do WhatsApp Web que permite enviar mensagens e áudios pré-configurados com um clique.
 
@@ -47,7 +47,7 @@ Extensão Chrome para automação do WhatsApp Web que permite enviar mensagens e
 
 ### Visão Geral
 
-O X1Flox usa uma arquitetura multi-camadas para integração profunda com WhatsApp Web:
+O PrinChat usa uma arquitetura multi-camadas para integração profunda com WhatsApp Web:
 
 ```
 ┌─────────────┐
@@ -127,7 +127,7 @@ Para entender profundamente o projeto, consulte:
 ```bash
 # Clone o repositório
 git clone <repository-url>
-cd x1flox
+cd princhat
 
 # Instale as dependências
 npm install
@@ -174,7 +174,7 @@ npm run dev
 ## 📁 Estrutura do Projeto
 
 ```
-x1flox/
+princhat/
 ├── public/
 │   ├── manifest.json          # Manifest V3 da extensão
 │   └── icons/                 # Ícones da extensão

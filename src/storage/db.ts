@@ -1,12 +1,12 @@
 /**
- * IndexedDB wrapper for X1Flox
+ * IndexedDB wrapper for PrinChat
  * Handles storage of messages (including audio blobs), scripts, triggers, and tags
  */
 
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
 import type { Message, Script, Trigger, Tag, Folder, Settings } from '@/types';
 
-interface X1FloxDB extends DBSchema {
+interface PrinChatDB extends DBSchema {
   messages: {
     key: string;
     value: Message;
@@ -58,14 +58,14 @@ interface X1FloxDB extends DBSchema {
 }
 
 class DatabaseService {
-  private db: IDBPDatabase<X1FloxDB> | null = null;
-  private readonly DB_NAME = 'x1flox-db';
+  private db: IDBPDatabase<PrinChatDB> | null = null;
+  private readonly DB_NAME = 'princhat-db';
   private readonly DB_VERSION = 4; // Updated to version 4 for file support
 
-  async init(): Promise<IDBPDatabase<X1FloxDB>> {
+  async init(): Promise<IDBPDatabase<PrinChatDB>> {
     if (this.db) return this.db;
 
-    this.db = await openDB<X1FloxDB>(this.DB_NAME, this.DB_VERSION, {
+    this.db = await openDB<PrinChatDB>(this.DB_NAME, this.DB_VERSION, {
       upgrade(db) {
         // Messages store
         if (!db.objectStoreNames.contains('messages')) {
@@ -279,17 +279,17 @@ class DatabaseService {
         }
 
         if (msg.type === 'file') {
-          console.log('[X1Flox DB] 🔍 Loading file for message:', msg.id);
+          console.log('[PrinChat DB] 🔍 Loading file for message:', msg.id);
           const fileData = await db.get('fileBlobs', msg.id);
-          console.log('[X1Flox DB] 🔍 fileData from IndexedDB:', fileData ? 'FOUND' : 'NOT FOUND');
+          console.log('[PrinChat DB] 🔍 fileData from IndexedDB:', fileData ? 'FOUND' : 'NOT FOUND');
           if (fileData) {
-            console.log('[X1Flox DB] 🔍 fileData.blob type:', typeof fileData.blob);
-            console.log('[X1Flox DB] 🔍 fileData.blob instanceof Blob:', fileData.blob instanceof Blob);
-            console.log('[X1Flox DB] 🔍 fileData.blob size:', fileData.blob?.size);
+            console.log('[PrinChat DB] 🔍 fileData.blob type:', typeof fileData.blob);
+            console.log('[PrinChat DB] 🔍 fileData.blob instanceof Blob:', fileData.blob instanceof Blob);
+            console.log('[PrinChat DB] 🔍 fileData.blob size:', fileData.blob?.size);
             msg.fileData = fileData.blob;
             msg.fileName = fileData.fileName;
           } else {
-            console.warn('[X1Flox DB] ⚠️ No file blob found for message:', msg.id, msg.name);
+            console.warn('[PrinChat DB] ⚠️ No file blob found for message:', msg.id, msg.name);
           }
         }
 

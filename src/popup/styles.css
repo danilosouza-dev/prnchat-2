@@ -1,4 +1,4 @@
-/* X1Flox Popup - Dark Theme (Leadzy Style) */
+/* PrinChat Popup - Dark Theme (Leadzy Style) */
 
 * {
   margin: 0;
@@ -61,7 +61,7 @@ body {
 /* Header */
 .header-dark {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   align-items: center;
   padding: 8px 12px;
   background-color: var(--bg-primary);
@@ -138,6 +138,7 @@ body {
     opacity: 0;
     transform: translateY(-10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -153,7 +154,7 @@ body {
   background: var(--bg-tertiary);
 }
 
-.notification-header > span {
+.notification-header>span {
   font-weight: 600;
   font-size: 13px;
   color: var(--text-primary);
@@ -304,7 +305,7 @@ body {
 .tabs-dark {
   display: flex;
   background-color: var(--bg-primary);
-  padding: 0 12px;
+  padding: 10px 12px;
   gap: 8px;
   flex-shrink: 0;
 }
@@ -354,6 +355,7 @@ body {
     opacity: 0;
     transform: translateY(-10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -397,7 +399,7 @@ body {
 }
 
 /* Filter icon (only direct child SVG, not TagIcons inside nested elements) */
-.filter-input-wrapper > svg {
+.filter-input-wrapper>svg {
   position: absolute;
   left: 8px;
   top: 50%;
@@ -428,7 +430,7 @@ body {
   box-shadow: 0 0 0 2px rgba(233, 30, 99, 0.15);
 }
 
-.filter-input-wrapper:focus-within > svg {
+.filter-input-wrapper:focus-within>svg {
   color: var(--accent-pink);
 }
 
@@ -459,11 +461,11 @@ body {
   overflow: hidden;
 }
 
-.tag-option > svg {
+.tag-option>svg {
   flex-shrink: 0;
 }
 
-.tag-option > span {
+.tag-option>span {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -492,11 +494,11 @@ body {
   overflow: hidden;
 }
 
-.selected-tag > svg {
+.selected-tag>svg {
   flex-shrink: 0;
 }
 
-.selected-tag > span {
+.selected-tag>span {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -619,6 +621,7 @@ body {
     height: 100%;
     opacity: 0.8;
   }
+
   100% {
     width: 250%;
     height: 250%;
@@ -644,7 +647,7 @@ body {
   padding-bottom: 20px;
 }
 
-.scrollable-content > * {
+.scrollable-content>* {
   animation: fadeIn 0.4s ease;
 }
 
@@ -653,6 +656,7 @@ body {
     opacity: 0;
     transform: translateY(10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -696,6 +700,7 @@ body {
     opacity: 0;
     transform: translateX(-20px);
   }
+
   to {
     opacity: 1;
     transform: translateX(0);
@@ -703,16 +708,45 @@ body {
 }
 
 /* Staggered animation for items */
-.item-dark:nth-child(1) { animation-delay: 0.05s; }
-.item-dark:nth-child(2) { animation-delay: 0.1s; }
-.item-dark:nth-child(3) { animation-delay: 0.15s; }
-.item-dark:nth-child(4) { animation-delay: 0.2s; }
-.item-dark:nth-child(5) { animation-delay: 0.25s; }
-.item-dark:nth-child(6) { animation-delay: 0.3s; }
-.item-dark:nth-child(7) { animation-delay: 0.35s; }
-.item-dark:nth-child(8) { animation-delay: 0.4s; }
-.item-dark:nth-child(9) { animation-delay: 0.45s; }
-.item-dark:nth-child(n+10) { animation-delay: 0.5s; }
+.item-dark:nth-child(1) {
+  animation-delay: 0.05s;
+}
+
+.item-dark:nth-child(2) {
+  animation-delay: 0.1s;
+}
+
+.item-dark:nth-child(3) {
+  animation-delay: 0.15s;
+}
+
+.item-dark:nth-child(4) {
+  animation-delay: 0.2s;
+}
+
+.item-dark:nth-child(5) {
+  animation-delay: 0.25s;
+}
+
+.item-dark:nth-child(6) {
+  animation-delay: 0.3s;
+}
+
+.item-dark:nth-child(7) {
+  animation-delay: 0.35s;
+}
+
+.item-dark:nth-child(8) {
+  animation-delay: 0.4s;
+}
+
+.item-dark:nth-child(9) {
+  animation-delay: 0.45s;
+}
+
+.item-dark:nth-child(n+10) {
+  animation-delay: 0.5s;
+}
 
 .item-dark:hover {
   background-color: var(--bg-tertiary);
@@ -742,9 +776,12 @@ body {
 }
 
 @keyframes pulse-scale {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: scale(1);
   }
+
   50% {
     transform: scale(1.15);
   }

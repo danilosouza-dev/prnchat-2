@@ -1,5 +1,5 @@
 /**
- * Utility functions for X1Flox
+ * Utility functions for PrinChat
  */
 
 /**

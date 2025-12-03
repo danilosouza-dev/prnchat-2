@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Script to create placeholder icons for X1Flox Chrome Extension
+Script to create placeholder icons for PrinChat Chrome Extension
 Creates simple PNG icons in sizes: 16x16, 32x32, 48x48, 128x128
 """
 
 import os
 
 def create_svg_icon(size):
-    """Create an SVG icon with the X1Flox logo"""
+    """Create an SVG icon with the PrinChat logo"""
     svg_content = f'''<?xml version="1.0" encoding="UTF-8"?>
 <svg width="{size}" height="{size}" viewBox="0 0 {size} {size}" xmlns="http://www.w3.org/2000/svg">
   <!-- Background circle with WhatsApp green -->

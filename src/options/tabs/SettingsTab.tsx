@@ -66,7 +66,7 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ setHeaderActions }) => {
   const handleExport = async () => {
     try {
       const data = await db.exportData();
-      downloadFile(data, `x1flox-backup-${Date.now()}.json`, 'application/json');
+      downloadFile(data, `princhat-backup-${Date.now()}.json`, 'application/json');
       toast.success('Dados exportados com sucesso!');
     } catch (error) {
       console.error('Error exporting data:', error);
@@ -384,11 +384,10 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ setHeaderActions }) => {
               <Label>Tipo de Armazenamento</Label>
               <div className="space-y-3">
                 <div
-                  className={`flex items-center gap-3 p-4 rounded-lg border-2 cursor-pointer transition-all ${
-                    settings.storageType === 'local'
+                  className={`flex items-center gap-3 p-4 rounded-lg border-2 cursor-pointer transition-all ${settings.storageType === 'local'
                       ? 'border-[var(--accent-pink)] bg-[var(--accent-pink)]/10'
                       : 'border-[var(--border-color)] hover:border-[var(--accent-pink)]/50'
-                  }`}
+                    }`}
                   onClick={() => setSettings({ ...settings, storageType: 'local' })}
                 >
                   <HardDrive className="h-5 w-5 text-[var(--accent-pink)]" />
@@ -471,13 +470,13 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ setHeaderActions }) => {
               <CardTitle>Sobre</CardTitle>
             </div>
             <CardDescription>
-              Informações sobre o X1Flox
+              Informações sobre o PrinChat
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <p className="text-sm">
-                <strong className="text-[var(--accent-pink)]">X1Flox</strong> - Extensão Chrome para automação do WhatsApp Web
+                <strong className="text-[var(--accent-pink)]">PrinChat</strong> - Extensão Chrome para automação do WhatsApp Web
               </p>
               <p className="text-sm text-[var(--text-secondary)]">Versão: 1.0.0</p>
               <p className="text-sm text-[var(--text-secondary)]">

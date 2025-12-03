@@ -51,7 +51,7 @@ const ScriptsTab: React.FC<ScriptsTabProps> = ({ setHeaderActions }) => {
   const handleExport = async () => {
     try {
       const data = await db.exportData();
-      downloadFile(data, `x1flox-backup-${Date.now()}.json`, 'application/json');
+      downloadFile(data, `princhat-backup-${Date.now()}.json`, 'application/json');
     } catch (error) {
       console.error('Error exporting data:', error);
       alert('Erro ao exportar dados');
@@ -228,115 +228,117 @@ const ScriptsTab: React.FC<ScriptsTabProps> = ({ setHeaderActions }) => {
       {/* Lista de Scripts */}
       <div className="scripts-list-container" style={{ marginTop: '4rem', paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
         <div className="scripts-list">
-        {scripts.map((script) => {
-          const isExpanded = expandedCards.has(script.id);
+          {scripts.map((script) => {
+            const isExpanded = expandedCards.has(script.id);
 
-          return (
-          <Card
-            key={script.id}
-            className="hover:shadow-xl transition-all duration-200 border-border/50 animate-card-entry"
-            style={{
-              '--card-index': scripts.findIndex(s => s.id === script.id)
-            } as React.CSSProperties}
-          >
-            <CardHeader className="pb-3">
-              <div className="flex justify-between items-start">
-                <div className="flex-1">
-                  <CardTitle className="text-lg font-semibold text-foreground mb-1 flex items-center gap-2">
-                    <Zap size={18} className="text-[#e91e63] flex-shrink-0" />
-                    {script.name}
-                  </CardTitle>
-                  {script.description && (
-                    <CardDescription className="text-sm text-muted-foreground mt-1">
-                      {script.description}
-                    </CardDescription>
-                  )}
-                </div>
-                <div className="flex gap-2 ml-4">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => toggleCardExpansion(script.id)}
-                    title={isExpanded ? "Recolher" : "Expandir"}
-                    className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-[#e91e63] hover:scale-110"
-                  >
-                    {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-                  </Button>
-
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleEdit(script)}
-                    title="Editar script"
-                    className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-[#e91e63] hover:scale-110"
-                  >
-                    <Edit2 size={18} />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleDelete(script.id)}
-                    title="Excluir script"
-                    className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-red-500 hover:scale-110"
-                  >
-                    <Trash2 size={18} />
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-
-            {isExpanded && (
-              <div className="animate-expand-smooth">
-                <CardContent className="pb-3 space-y-2">
-                  {script.steps.map((step, index) => (
-                    <div
-                      key={index}
-                      className="flex items-center gap-3 p-3 bg-secondary/30 rounded-lg border border-border/30 hover:border-border/60 transition-colors"
-                    >
-                      <div className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold flex-shrink-0">
-                        {index + 1}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm text-foreground truncate">
-                          {getMessageName(step.messageId)}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-1 text-xs text-muted-foreground flex-shrink-0">
-                        <Clock size={12} />
-                        <span>+{step.delayAfter / 1000}s</span>
-                      </div>
+            return (
+              <Card
+                key={script.id}
+                className="hover:shadow-xl transition-all duration-200 border-border/50 animate-card-entry"
+                style={{
+                  '--card-index': scripts.findIndex(s => s.id === script.id)
+                } as React.CSSProperties}
+              >
+                <CardHeader className="pb-3">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <CardTitle className="text-lg font-semibold text-foreground mb-1 flex items-center gap-2">
+                        <Zap size={18} className="text-[#e91e63] flex-shrink-0" />
+                        {script.name}
+                      </CardTitle>
+                      {script.description && (
+                        <CardDescription className="text-sm text-muted-foreground mt-1">
+                          {script.description}
+                        </CardDescription>
+                      )}
                     </div>
-                  ))}
-                </CardContent>
+                    <div className="flex gap-2 ml-4">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => toggleCardExpansion(script.id)}
+                        title={isExpanded ? "Recolher" : "Expandir"}
+                        className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-[#e91e63] hover:scale-110"
+                      >
+                        {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                      </Button>
 
-                <CardFooter className="pt-3 flex-wrap gap-2">
-                  <Badge variant="secondary" className="flex items-center gap-1.5 px-2.5 py-1">
-                    <MessageSquare size={13} />
-                    <span>{script.steps.length} mensagens</span>
-                  </Badge>
-                  <Badge variant="secondary" className="flex items-center gap-1.5 px-2.5 py-1">
-                    <Clock size={13} />
-                    <span>{formatDuration(script.totalDuration)}</span>
-                  </Badge>
-                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground ml-auto">
-                    <Calendar size={13} />
-                    <span>{formatDate(script.createdAt)}</span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleEdit(script)}
+                        title="Editar script"
+                        className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-[#e91e63] hover:scale-110"
+                      >
+                        <Edit2 size={18} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleDelete(script.id)}
+                        title="Excluir script"
+                        className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-red-500 hover:scale-110"
+                      >
+                        <Trash2 size={18} />
+                      </Button>
+                    </div>
                   </div>
-                </CardFooter>
-              </div>
-            )}
-          </Card>
-          );
-        })}
+                </CardHeader>
+
+                {isExpanded && (
+                  <div className="animate-expand-smooth">
+                    <CardContent className="pb-3 space-y-2">
+                      {script.steps.map((step, index) => (
+                        <div
+                          key={index}
+                          className="flex items-center gap-3 p-3 bg-secondary/30 rounded-lg border border-border/30 hover:border-border/60 transition-colors"
+                        >
+                          <div className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold flex-shrink-0">
+                            {index + 1}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-foreground truncate">
+                              {getMessageName(step.messageId)}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground flex-shrink-0">
+                            <Clock size={12} />
+                            <span>+{step.delayAfter / 1000}s</span>
+                          </div>
+                        </div>
+                      ))}
+                    </CardContent>
+
+                    <CardFooter className="pt-3 flex-wrap gap-2">
+                      <Badge variant="secondary" className="flex items-center gap-1.5 px-2.5 py-1">
+                        <MessageSquare size={13} />
+                        <span>{script.steps.length} mensagens</span>
+                      </Badge>
+                      <Badge variant="secondary" className="flex items-center gap-1.5 px-2.5 py-1">
+                        <Clock size={13} />
+                        <span>{formatDuration(script.totalDuration)}</span>
+                      </Badge>
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground ml-auto">
+                        <Calendar size={13} />
+                        <span>{formatDate(script.createdAt)}</span>
+                      </div>
+                    </CardFooter>
+                  </div>
+                )}
+              </Card>
+            );
+          })}
         </div>
 
         {scripts.length === 0 && !isCreating && (
-          <div className="empty-state-large">
-            <div className="empty-icon">⚡</div>
+          <div className="empty-state">
+            <div className="empty-icon">
+              <Zap size={48} className="text-[#e91e63]" />
+            </div>
             <h3>Nenhum script criado</h3>
             <p>Crie scripts para enviar múltiplas mensagens em sequência</p>
             <Button variant="accent" onClick={handleCreateNew}>
-              <Plus size={16} />
+              <Plus size={16} className="mr-2" />
               Criar Primeiro Script
             </Button>
           </div>

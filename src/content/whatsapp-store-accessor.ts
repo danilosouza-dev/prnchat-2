@@ -12,10 +12,10 @@
  * VERSION: 3.0 - Metro Bundler Rewrite
  */
 
-(function() {
+(function () {
   'use strict';
 
-  console.log('[X1Flox Store] Initializing WhatsApp Store accessor... [VERSION: 3.0 - METRO]');
+  console.log('[PrinChat Store] Initializing WhatsApp Store accessor... [VERSION: 3.0 - METRO]');
 
   /**
    * Known WhatsApp Metro module names
@@ -53,27 +53,27 @@
       const win = window as any;
 
       if (typeof win.require !== 'function') {
-        console.log(`[X1Flox Store] window.require is not available (yet)`);
+        console.log(`[PrinChat Store] window.require is not available (yet)`);
         return null;
       }
 
-      console.log(`[X1Flox Store] Attempting to require: ${moduleName}`);
+      console.log(`[PrinChat Store] Attempting to require: ${moduleName}`);
       const module = win.require(moduleName);
 
       if (module) {
-        console.log(`[X1Flox Store] ✅ Successfully loaded: ${moduleName}`);
+        console.log(`[PrinChat Store] ✅ Successfully loaded: ${moduleName}`);
         // Log module structure for debugging
         if (typeof module === 'object') {
           const keys = Object.keys(module);
-          console.log(`[X1Flox Store]    Module has ${keys.length} exports:`, keys.slice(0, 10).join(', '));
+          console.log(`[PrinChat Store]    Module has ${keys.length} exports:`, keys.slice(0, 10).join(', '));
         }
         return module;
       } else {
-        console.log(`[X1Flox Store] ⚠️ Module returned null: ${moduleName}`);
+        console.log(`[PrinChat Store] ⚠️ Module returned null: ${moduleName}`);
         return null;
       }
     } catch (error: any) {
-      console.log(`[X1Flox Store] ❌ Failed to require ${moduleName}:`, error.message);
+      console.log(`[PrinChat Store] ❌ Failed to require ${moduleName}:`, error.message);
       return null;
     }
   }
@@ -82,17 +82,17 @@
    * Search for modules by trying common patterns
    */
   function searchForModule(baseName: string, patterns: string[]): any {
-    console.log(`[X1Flox Store] Searching for ${baseName} using patterns...`);
+    console.log(`[PrinChat Store] Searching for ${baseName} using patterns...`);
 
     for (const pattern of patterns) {
       const module = requireModule(pattern);
       if (module) {
-        console.log(`[X1Flox Store] ✅ Found ${baseName} at: ${pattern}`);
+        console.log(`[PrinChat Store] ✅ Found ${baseName} at: ${pattern}`);
         return module;
       }
     }
 
-    console.log(`[X1Flox Store] ⚠️ Could not find ${baseName} in any pattern`);
+    console.log(`[PrinChat Store] ⚠️ Could not find ${baseName} in any pattern`);
     return null;
   }
 
@@ -119,7 +119,7 @@
    */
   function initializeStore() {
     try {
-      console.log('[X1Flox Store] Starting Metro bundler-based initialization...');
+      console.log('[PrinChat Store] Starting Metro bundler-based initialization...');
 
       const win = window as any;
 
@@ -128,7 +128,7 @@
         throw new Error('window.require is not available - WhatsApp may not be loaded yet');
       }
 
-      console.log('[X1Flox Store] ✅ window.require is available');
+      console.log('[PrinChat Store] ✅ window.require is available');
 
       // Create Store object
       const Store: any = {};
@@ -136,7 +136,7 @@
       // ==========================================
       // LOAD COLLECTIONS
       // ==========================================
-      console.log('[X1Flox Store] Loading collections...');
+      console.log('[PrinChat Store] Loading collections...');
 
       const collections = requireModule(KNOWN_MODULES.COLLECTIONS);
       if (collections) {
@@ -145,7 +145,7 @@
         Store.Msg = collections.Msg || collections.MsgCollection;
         Store.Contact = collections.Contact || collections.ContactCollection;
 
-        console.log('[X1Flox Store] Collections loaded:', {
+        console.log('[PrinChat Store] Collections loaded:', {
           Chat: !!Store.Chat,
           Msg: !!Store.Msg,
           Contact: !!Store.Contact
@@ -171,7 +171,7 @@
       // ==========================================
       // LOAD SEND MESSAGE MODULE
       // ==========================================
-      console.log('[X1Flox Store] Loading send message module...');
+      console.log('[PrinChat Store] Loading send message module...');
 
       // Try multiple patterns for send message
       const sendModule = searchForModule('SendMessage', [
@@ -193,7 +193,7 @@
           'default'
         ]);
 
-        console.log('[X1Flox Store] SendMessage loaded:', {
+        console.log('[PrinChat Store] SendMessage loaded:', {
           module: !!Store.SendMessage,
           function: !!Store.sendMessage
         });
@@ -202,7 +202,7 @@
       // ==========================================
       // LOAD USER INFO
       // ==========================================
-      console.log('[X1Flox Store] Loading user info...');
+      console.log('[PrinChat Store] Loading user info...');
 
       const userModule = searchForModule('User', [
         KNOWN_MODULES.USER_PREFS,
@@ -217,21 +217,21 @@
         if (typeof getMeUserFn === 'function') {
           try {
             Store.Me = getMeUserFn();
-            console.log('[X1Flox Store] User loaded via function call:', !!Store.Me);
+            console.log('[PrinChat Store] User loaded via function call:', !!Store.Me);
           } catch (e) {
-            console.log('[X1Flox Store] Could not call getMeUser():', e);
+            console.log('[PrinChat Store] Could not call getMeUser():', e);
           }
         }
 
         // Also store the user module for access to utility functions
         Store.UserPrefs = userModule;
-        console.log('[X1Flox Store] UserPrefs module stored');
+        console.log('[PrinChat Store] UserPrefs module stored');
       }
 
       // ==========================================
       // LOAD MESSAGE KEY MODULE
       // ==========================================
-      console.log('[X1Flox Store] Loading MsgKey module...');
+      console.log('[PrinChat Store] Loading MsgKey module...');
 
       const msgKeyModule = searchForModule('MsgKey', [
         KNOWN_MODULES.MSG_KEY,
@@ -242,15 +242,15 @@
         // WAWebMsgKey exports: fromString, from, newId, newId_DEPRECATED, displayName
         // The module itself is the MsgKey constructor function
         Store.MsgKey = msgKeyModule;
-        console.log('[X1Flox Store] MsgKey constructor loaded:', typeof Store.MsgKey);
+        console.log('[PrinChat Store] MsgKey constructor loaded:', typeof Store.MsgKey);
 
         // Extract the ID generator from MsgKey module
         if (msgKeyModule.newId) {
           Store.genId = msgKeyModule.newId;
-          console.log('[X1Flox Store] ✅ genId extracted from MsgKey.newId');
+          console.log('[PrinChat Store] ✅ genId extracted from MsgKey.newId');
         } else if (msgKeyModule.newId_DEPRECATED) {
           Store.genId = msgKeyModule.newId_DEPRECATED;
-          console.log('[X1Flox Store] ✅ genId extracted from MsgKey.newId_DEPRECATED');
+          console.log('[PrinChat Store] ✅ genId extracted from MsgKey.newId_DEPRECATED');
         }
       }
 
@@ -259,7 +259,7 @@
       // ==========================================
       // LOAD WID FACTORY (WhatsApp ID)
       // ==========================================
-      console.log('[X1Flox Store] Loading WID factory...');
+      console.log('[PrinChat Store] Loading WID factory...');
 
       const widModule = searchForModule('WidFactory', [
         KNOWN_MODULES.WID_FACTORY,
@@ -268,13 +268,13 @@
 
       if (widModule) {
         Store.WidFactory = extractProperty(widModule, ['createWid', 'createUserWid', 'default']);
-        console.log('[X1Flox Store] WidFactory loaded:', !!Store.WidFactory);
+        console.log('[PrinChat Store] WidFactory loaded:', !!Store.WidFactory);
       }
 
       // ==========================================
       // LOAD MEDIA MODULES
       // ==========================================
-      console.log('[X1Flox Store] Loading media modules...');
+      console.log('[PrinChat Store] Loading media modules...');
 
       // WAWebMediaPrep - Upload and send media
       const mediaPrepModule = searchForModule('MediaPrep', [
@@ -287,7 +287,7 @@
         // Keep the whole module for utility functions (they need the module context)
         Store.MediaPrepModule = mediaPrepModule;
 
-        console.log('[X1Flox Store] MediaPrep loaded:', {
+        console.log('[PrinChat Store] MediaPrep loaded:', {
           constructor: !!Store.MediaPrepConstructor,
           module: !!Store.MediaPrepModule,
           uploadMediaWithPrep: !!(mediaPrepModule.uploadMediaWithPrep),
@@ -299,7 +299,7 @@
       const mediaObjectModule = requireModule(KNOWN_MODULES.MEDIA_OBJECT);
       if (mediaObjectModule) {
         Store.MediaObject = mediaObjectModule;
-        console.log('[X1Flox Store] MediaObject loaded');
+        console.log('[PrinChat Store] MediaObject loaded');
       }
 
       // WAWebMediaTypes - Media type constants
@@ -308,34 +308,34 @@
       ]);
       if (mediaTypesModule) {
         Store.MediaTypes = mediaTypesModule;
-        console.log('[X1Flox Store] MediaTypes loaded');
+        console.log('[PrinChat Store] MediaTypes loaded');
       }
 
       // ==========================================
       // FALLBACK: Try to find modules by inspecting window
       // ==========================================
-      console.log('[X1Flox Store] Attempting fallback module discovery...');
+      console.log('[PrinChat Store] Attempting fallback module discovery...');
 
       // If we're missing critical modules, try to inspect window for alternatives
       if (!Store.Chat || !Store.SendMessage) {
-        console.log('[X1Flox Store] Missing critical modules, trying window inspection...');
+        console.log('[PrinChat Store] Missing critical modules, trying window inspection...');
 
         // Look for Store object that might already exist
         if (win.Store && typeof win.Store === 'object') {
-          console.log('[X1Flox Store] Found existing window.Store!');
+          console.log('[PrinChat Store] Found existing window.Store!');
 
           // Copy missing properties
           if (!Store.Chat && win.Store.Chat) {
             Store.Chat = win.Store.Chat;
-            console.log('[X1Flox Store] Copied Chat from window.Store');
+            console.log('[PrinChat Store] Copied Chat from window.Store');
           }
           if (!Store.SendMessage && win.Store.SendMessage) {
             Store.SendMessage = win.Store.SendMessage;
-            console.log('[X1Flox Store] Copied SendMessage from window.Store');
+            console.log('[PrinChat Store] Copied SendMessage from window.Store');
           }
           if (!Store.Msg && win.Store.Msg) {
             Store.Msg = win.Store.Msg;
-            console.log('[X1Flox Store] Copied Msg from window.Store');
+            console.log('[PrinChat Store] Copied Msg from window.Store');
           }
         }
       }
@@ -346,43 +346,43 @@
 
       // Count successfully loaded modules
       const loadedModules = Object.keys(Store).filter(key => Store[key] !== null && Store[key] !== undefined);
-      console.log('[X1Flox Store] Loaded', loadedModules.length, 'modules:', loadedModules.join(', '));
+      console.log('[PrinChat Store] Loaded', loadedModules.length, 'modules:', loadedModules.join(', '));
 
       // Check if we have minimum required modules
       const hasMinimumModules = Store.Chat && (Store.SendMessage || Store.sendMessage);
 
       if (!hasMinimumModules) {
-        console.error('[X1Flox Store] ❌ Missing critical modules!');
-        console.error('[X1Flox Store] Chat:', !!Store.Chat);
-        console.error('[X1Flox Store] SendMessage:', !!Store.SendMessage);
-        console.error('[X1Flox Store] sendMessage:', !!Store.sendMessage);
+        console.error('[PrinChat Store] ❌ Missing critical modules!');
+        console.error('[PrinChat Store] Chat:', !!Store.Chat);
+        console.error('[PrinChat Store] SendMessage:', !!Store.SendMessage);
+        console.error('[PrinChat Store] sendMessage:', !!Store.sendMessage);
 
         // Still expose what we have for debugging
         win.Store = Store;
-        win.__X1FLOX_STORE_READY__ = false;
-        win.__X1FLOX_STORE_ERROR__ = 'Missing critical modules';
+        win.__PRINCHAT_STORE_READY__ = false;
+        win.__PRINCHAT_STORE_ERROR__ = 'Missing critical modules';
 
         throw new Error('Missing critical modules for Store initialization');
       }
 
       // Expose Store globally
       win.Store = Store;
-      win.__X1FLOX_STORE_READY__ = true;
+      win.__PRINCHAT_STORE_READY__ = true;
 
-      console.log('[X1Flox Store] ✅✅✅ Store initialized successfully via Metro bundler! ✅✅✅');
-      console.log('[X1Flox Store] Available modules:', Object.keys(Store));
-      console.log('[X1Flox Store] Store.Chat:', Store.Chat);
-      console.log('[X1Flox Store] Store.SendMessage:', Store.SendMessage);
+      console.log('[PrinChat Store] ✅✅✅ Store initialized successfully via Metro bundler! ✅✅✅');
+      console.log('[PrinChat Store] Available modules:', Object.keys(Store));
+      console.log('[PrinChat Store] Store.Chat:', Store.Chat);
+      console.log('[PrinChat Store] Store.SendMessage:', Store.SendMessage);
 
       return Store;
 
     } catch (error: any) {
-      console.error('[X1Flox Store] ❌ Failed to initialize Store:', error);
-      console.error('[X1Flox Store] Error details:', error.message);
-      console.error('[X1Flox Store] Stack:', error.stack);
+      console.error('[PrinChat Store] ❌ Failed to initialize Store:', error);
+      console.error('[PrinChat Store] Error details:', error.message);
+      console.error('[PrinChat Store] Stack:', error.stack);
 
-      (window as any).__X1FLOX_STORE_READY__ = false;
-      (window as any).__X1FLOX_STORE_ERROR__ = error.message;
+      (window as any).__PRINCHAT_STORE_READY__ = false;
+      (window as any).__PRINCHAT_STORE_ERROR__ = error.message;
 
       return null;
     }
@@ -395,7 +395,7 @@
     let attempts = 0;
     const maxAttempts = 60; // 30 seconds max (500ms intervals)
 
-    console.log('[X1Flox Store] Waiting for WhatsApp Metro bundler to load...');
+    console.log('[PrinChat Store] Waiting for WhatsApp Metro bundler to load...');
 
     const checkInterval = setInterval(() => {
       attempts++;
@@ -407,7 +407,7 @@
       const hasMetro = typeof win.__d === 'function'; // Metro's define function
       const hasAppLoaded = document.querySelector('[data-app-version]') !== null;
 
-      console.log('[X1Flox Store] Attempt', attempts, '/', maxAttempts, '-', {
+      console.log('[PrinChat Store] Attempt', attempts, '/', maxAttempts, '-', {
         require: hasRequire,
         metro: hasMetro,
         app: hasAppLoaded
@@ -420,7 +420,7 @@
           const testModule = win.require('WAWebCollections');
           canAccessModules = !!testModule;
           if (canAccessModules) {
-            console.log('[X1Flox Store] ✅ Can access WAWebCollections!');
+            console.log('[PrinChat Store] ✅ Can access WAWebCollections!');
           }
         } catch (e) {
           // Not ready yet
@@ -430,7 +430,7 @@
       // Initialize when Metro is ready OR when we timeout
       if (canAccessModules) {
         clearInterval(checkInterval);
-        console.log('[X1Flox Store] ✅ Metro bundler ready! Initializing Store...');
+        console.log('[PrinChat Store] ✅ Metro bundler ready! Initializing Store...');
 
         // Give it a moment to stabilize
         setTimeout(() => {
@@ -438,13 +438,13 @@
         }, 500);
       } else if (attempts >= maxAttempts) {
         clearInterval(checkInterval);
-        console.error('[X1Flox Store] ❌ Timeout waiting for Metro bundler!');
-        console.error('[X1Flox Store] Has require:', hasRequire);
-        console.error('[X1Flox Store] Has Metro __d:', hasMetro);
-        console.error('[X1Flox Store] App loaded:', hasAppLoaded);
+        console.error('[PrinChat Store] ❌ Timeout waiting for Metro bundler!');
+        console.error('[PrinChat Store] Has require:', hasRequire);
+        console.error('[PrinChat Store] Has Metro __d:', hasMetro);
+        console.error('[PrinChat Store] App loaded:', hasAppLoaded);
 
         // Try initialization anyway
-        console.log('[X1Flox Store] Attempting initialization anyway...');
+        console.log('[PrinChat Store] Attempting initialization anyway...');
         initializeStore();
       }
     }, 500);

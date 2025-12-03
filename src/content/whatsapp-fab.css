@@ -1,15 +1,15 @@
 /**
- * X1Flox Floating Action Button Styles
+ * PrinChat Floating Action Button Styles
  */
 
-.x1flox-fab-button {
+.princhat-fab-button {
   position: fixed;
   width: 56px;
   height: 56px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #00a884 0%, #008069 100%);
+  background: #1A1A1A;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15),
-              0 2px 6px rgba(0, 0, 0, 0.1);
+    0 2px 6px rgba(0, 0, 0, 0.1);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -19,22 +19,22 @@
   z-index: 999999;
 }
 
-.x1flox-fab-button:hover {
+.princhat-fab-button:hover {
   transform: scale(1.05);
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2),
-              0 3px 8px rgba(0, 0, 0, 0.15);
+    0 3px 8px rgba(0, 0, 0, 0.15);
 }
 
-.x1flox-fab-button:active,
-.x1flox-fab-button.dragging {
+.princhat-fab-button:active,
+.princhat-fab-button.dragging {
   cursor: grabbing;
   transform: scale(1.1);
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3),
-              0 4px 10px rgba(0, 0, 0, 0.2);
+    0 4px 10px rgba(0, 0, 0, 0.2);
   transition: none;
 }
 
-.x1flox-fab-button svg {
+.princhat-fab-button svg {
   width: 28px;
   height: 28px;
   color: white;
@@ -42,79 +42,41 @@
 }
 
 /* Popup Container */
-.x1flox-fab-popup {
+.princhat-fab-popup {
   position: fixed;
   width: 400px;
-  height: 650px;
+  height: 700px;
   background: #1a1a1a;
   border-radius: 12px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15),
-              0 4px 12px rgba(0, 0, 0, 0.1);
+    0 4px 12px rgba(0, 0, 0, 0.1);
   overflow: hidden;
   opacity: 0;
   visibility: hidden;
   transform: scale(0.95);
   transition: opacity 0.2s ease,
-              transform 0.2s ease,
-              visibility 0.2s ease;
+    transform 0.2s ease,
+    visibility 0.2s ease;
   z-index: 999998;
 }
 
-.x1flox-fab-popup.open {
+.princhat-fab-popup.open {
   opacity: 1;
   visibility: visible;
   transform: scale(1);
 }
 
-/* Header invisível para o botão X */
-.x1flox-fab-popup-header {
-  height: 48px;
-  background: #1a1a1a;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding: 0 8px;
-  flex-shrink: 0;
-  border-radius: 12px 12px 0 0;
-}
 
-/* Close button - dentro do header */
-.x1flox-fab-popup-close {
-  width: 32px;
-  height: 32px;
-  border: none;
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
-  border-radius: 50%;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 18px;
-  font-weight: 600;
-  transition: all 0.2s ease;
-  z-index: 10;
-}
-
-.x1flox-fab-popup-close:hover {
-  background: rgba(233, 30, 99, 0.9);
-  transform: scale(1.1);
-}
-
-.x1flox-fab-popup-close:active {
-  background: rgba(233, 30, 99, 1);
-  transform: scale(0.95);
-}
 
 /* Popup Content */
-.x1flox-fab-popup-content {
+.princhat-fab-popup-content {
   width: 100%;
-  height: calc(100% - 48px);
+  height: 100%;
   overflow: hidden;
   position: relative;
 }
 
-.x1flox-fab-popup-content iframe {
+.princhat-fab-popup-content iframe {
   width: 100%;
   height: 100%;
   border: none;
@@ -123,17 +85,17 @@
 
 /* Responsive adjustments */
 @media (max-width: 768px) {
-  .x1flox-fab-popup {
+  .princhat-fab-popup {
     width: min(400px, calc(100vw - 40px));
-    height: min(650px, calc(100vh - 100px));
+    height: min(700px, calc(100vh - 100px));
   }
 
-  .x1flox-fab-button {
+  .princhat-fab-button {
     width: 50px;
     height: 50px;
   }
 
-  .x1flox-fab-button svg {
+  .princhat-fab-button svg {
     width: 24px;
     height: 24px;
   }
@@ -141,18 +103,16 @@
 
 /* Dark mode support */
 @media (prefers-color-scheme: dark) {
-  .x1flox-fab-popup {
+  .princhat-fab-popup {
     background: #1a1a1a;
     color: #f3f4f6;
   }
 
-  .x1flox-fab-popup-header {
-    background: #1a1a1a;
-  }
+
 }
 
 /* Prevent text selection during drag */
-.x1flox-fab-button.dragging * {
+.princhat-fab-button.dragging * {
   user-select: none;
   -webkit-user-select: none;
   -moz-user-select: none;
@@ -160,6 +120,6 @@
 }
 
 /* Smooth position updates */
-.x1flox-fab-button:not(.dragging) {
+.princhat-fab-button:not(.dragging) {
   transition: left 0.2s ease, top 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
 }

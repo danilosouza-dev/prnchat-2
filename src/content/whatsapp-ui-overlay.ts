@@ -1,5 +1,5 @@
 /**
- * X1Flox UI Overlay
+ * PrinChat UI Overlay
  * Injects custom UI components into WhatsApp Web interface
  */
 
@@ -102,57 +102,57 @@ class WhatsAppUIOverlay {
 
   private async init() {
     try {
-      console.log('[X1Flox UI] Initializing overlay...');
+      console.log('[PrinChat UI] Initializing overlay...');
 
       // Wait for WhatsApp to load
-      console.log('[X1Flox UI] Step 1: Waiting for WhatsApp to load...');
+      console.log('[PrinChat UI] Step 1: Waiting for WhatsApp to load...');
       await this.waitForWhatsApp();
-      console.log('[X1Flox UI] ✓ WhatsApp loaded');
+      console.log('[PrinChat UI] ✓ WhatsApp loaded');
 
       // Load data
-      console.log('[X1Flox UI] Step 2: Loading scripts and messages...');
+      console.log('[PrinChat UI] Step 2: Loading scripts and messages...');
       await this.loadData();
-      console.log('[X1Flox UI] ✓ Data loaded');
+      console.log('[PrinChat UI] ✓ Data loaded');
 
       // Create UI components
-      console.log('[X1Flox UI] Step 3: Creating shortcut bar...');
+      console.log('[PrinChat UI] Step 3: Creating shortcut bar...');
       this.createShortcutBar();
-      console.log('[X1Flox UI] ✓ Shortcut bar created');
+      console.log('[PrinChat UI] ✓ Shortcut bar created');
 
-      console.log('[X1Flox UI] Step 4: Creating tooltip...');
+      console.log('[PrinChat UI] Step 4: Creating tooltip...');
       this.createTooltip();
-      console.log('[X1Flox UI] ✓ Tooltip created');
+      console.log('[PrinChat UI] ✓ Tooltip created');
 
       // Monitor chat changes
-      console.log('[X1Flox UI] Step 5: Setting up chat monitor...');
+      console.log('[PrinChat UI] Step 5: Setting up chat monitor...');
       this.monitorChatChanges();
-      console.log('[X1Flox UI] ✓ Chat monitor active');
+      console.log('[PrinChat UI] ✓ Chat monitor active');
 
       // Listen for execution events
-      console.log('[X1Flox UI] Step 6: Setting up execution listeners...');
+      console.log('[PrinChat UI] Step 6: Setting up execution listeners...');
       this.listenForExecutionEvents();
-      console.log('[X1Flox UI] ✓ Execution listeners active');
+      console.log('[PrinChat UI] ✓ Execution listeners active');
 
       // Listen for settings changes
-      console.log('[X1Flox UI] Step 7: Setting up settings change listeners...');
+      console.log('[PrinChat UI] Step 7: Setting up settings change listeners...');
       this.listenForSettingsChanges();
-      console.log('[X1Flox UI] ✓ Settings change listeners active');
+      console.log('[PrinChat UI] ✓ Settings change listeners active');
 
       // Listen for data changes (messages, scripts, tags)
-      console.log('[X1Flox UI] Step 8: Setting up data change listeners...');
+      console.log('[PrinChat UI] Step 8: Setting up data change listeners...');
       this.listenForDataChanges();
-      console.log('[X1Flox UI] ✓ Data change listeners active');
+      console.log('[PrinChat UI] ✓ Data change listeners active');
 
       // Setup resize/scroll listeners for responsive popups
-      console.log('[X1Flox UI] Step 9: Setting up responsive popup listeners...');
+      console.log('[PrinChat UI] Step 9: Setting up responsive popup listeners...');
       this.setupResizeListeners();
-      console.log('[X1Flox UI] ✓ Responsive popup listeners active');
+      console.log('[PrinChat UI] ✓ Responsive popup listeners active');
 
-      console.log('[X1Flox UI] ✅ Overlay fully initialized');
+      console.log('[PrinChat UI] ✅ Overlay fully initialized');
     } catch (error: any) {
       const errorMessage = error?.message || String(error);
-      console.error('[X1Flox UI] ❌ Fatal error during initialization:', errorMessage);
-      console.error('[X1Flox UI] Error stack:', error instanceof Error ? error.stack : 'No stack trace');
+      console.error('[PrinChat UI] ❌ Fatal error during initialization:', errorMessage);
+      console.error('[PrinChat UI] Error stack:', error instanceof Error ? error.stack : 'No stack trace');
     }
   }
 
@@ -165,14 +165,14 @@ class WhatsAppUIOverlay {
         attempts++;
         const main = document.querySelector('#main');
 
-        console.log(`[X1Flox UI] Checking for WhatsApp #main (attempt ${attempts}/${maxAttempts})...`);
+        console.log(`[PrinChat UI] Checking for WhatsApp #main (attempt ${attempts}/${maxAttempts})...`);
 
         if (main) {
-          console.log('[X1Flox UI] Found #main element');
+          console.log('[PrinChat UI] Found #main element');
           clearInterval(checkInterval);
           resolve();
         } else if (attempts >= maxAttempts) {
-          console.error('[X1Flox UI] Timeout: #main element not found after 30 seconds');
+          console.error('[PrinChat UI] Timeout: #main element not found after 30 seconds');
           clearInterval(checkInterval);
           reject(new Error('WhatsApp #main element not found'));
         }
@@ -182,21 +182,21 @@ class WhatsAppUIOverlay {
 
   private async loadData() {
     try {
-      console.log('[X1Flox UI] Requesting scripts and messages from content script...');
+      console.log('[PrinChat UI] Requesting scripts and messages from content script...');
       // Request data from content script via custom event
       const response = await this.requestFromContentScript({ type: 'GET_SCRIPTS_AND_MESSAGES' });
 
-      console.log('[X1Flox UI] Response received:', response);
+      console.log('[PrinChat UI] Response received:', response);
 
       if (response && response.success) {
         this.scripts = response.data.scripts || [];
         this.messages = response.data.messages || [];
 
         // Debug: Check file messages after receiving from injector
-        console.log('[X1Flox UI] 🔍 DEBUG - Messages received in UI overlay');
+        console.log('[PrinChat UI] 🔍 DEBUG - Messages received in UI overlay');
         const fileMessages = this.messages.filter((m: any) => m.type === 'file');
         fileMessages.forEach((msg: any) => {
-          console.log('[X1Flox UI] 🔍 File message in UI overlay:', {
+          console.log('[PrinChat UI] 🔍 File message in UI overlay:', {
             id: msg.id,
             name: msg.name,
             hasFileData: !!msg.fileData,
@@ -211,28 +211,28 @@ class WhatsAppUIOverlay {
         // No need to restore here as the injector already handled it
 
         // Load settings
-        console.log('[X1Flox UI] Loading settings...');
+        console.log('[PrinChat UI] Loading settings...');
         const settingsResponse = await this.requestFromContentScript({ type: 'GET_SETTINGS' });
         if (settingsResponse && settingsResponse.success) {
           this.requireConfirmation = settingsResponse.data?.requireSendConfirmation ?? true;
           this.showShortcuts = settingsResponse.data?.showShortcuts ?? true;
           this.showScriptExecutionPopup = settingsResponse.data?.showScriptExecutionPopup ?? true;
           this.showMessageExecutionPopup = settingsResponse.data?.showMessageExecutionPopup ?? true;
-          console.log('[X1Flox UI] Require confirmation:', this.requireConfirmation);
-          console.log('[X1Flox UI] Show shortcuts:', this.showShortcuts);
-          console.log('[X1Flox UI] Show script execution popup:', this.showScriptExecutionPopup);
-          console.log('[X1Flox UI] Show message execution popup:', this.showMessageExecutionPopup);
+          console.log('[PrinChat UI] Require confirmation:', this.requireConfirmation);
+          console.log('[PrinChat UI] Show shortcuts:', this.showShortcuts);
+          console.log('[PrinChat UI] Show script execution popup:', this.showScriptExecutionPopup);
+          console.log('[PrinChat UI] Show message execution popup:', this.showMessageExecutionPopup);
         }
-        console.log('[X1Flox UI] Loaded', this.scripts.length, 'scripts and', this.messages.length, 'messages');
+        console.log('[PrinChat UI] Loaded', this.scripts.length, 'scripts and', this.messages.length, 'messages');
       } else {
-        console.error('[X1Flox UI] Failed to load data:', response?.error || 'Unknown error');
+        console.error('[PrinChat UI] Failed to load data:', response?.error || 'Unknown error');
         // Initialize with empty arrays to prevent errors
         this.scripts = [];
         this.messages = [];
       }
     } catch (error: any) {
       const errorMessage = error?.message || String(error);
-      console.error('[X1Flox UI] Error loading data:', errorMessage);
+      console.error('[PrinChat UI] Error loading data:', errorMessage);
       // Initialize with empty arrays to prevent errors
       this.scripts = [];
       this.messages = [];
@@ -242,53 +242,53 @@ class WhatsAppUIOverlay {
   private async requestFromContentScript(message: any, timeoutMs: number = 5000): Promise<any> {
     return new Promise((resolve) => {
       const requestId = `ui-${Date.now()}-${Math.random()}`;
-      console.log('[X1Flox UI] Sending request:', message.type, 'with ID:', requestId);
+      console.log('[PrinChat UI] Sending request:', message.type, 'with ID:', requestId);
 
       const handler = (event: any) => {
-        console.log('[X1Flox UI] Response event received:', event.detail);
+        console.log('[PrinChat UI] Response event received:', event.detail);
         if (event.detail?.requestId === requestId) {
-          console.log('[X1Flox UI] Response matches request ID:', requestId);
-          document.removeEventListener('X1FloxUIResponse', handler);
+          console.log('[PrinChat UI] Response matches request ID:', requestId);
+          document.removeEventListener('PrinChatUIResponse', handler);
           resolve(event.detail.response);
         }
       };
 
-      document.addEventListener('X1FloxUIResponse', handler);
-      console.log('[X1Flox UI] Added response listener for:', requestId);
+      document.addEventListener('PrinChatUIResponse', handler);
+      console.log('[PrinChat UI] Added response listener for:', requestId);
 
       // Configurable timeout
       setTimeout(() => {
-        console.log('[X1Flox UI] Request timed out:', requestId);
-        document.removeEventListener('X1FloxUIResponse', handler);
+        console.log('[PrinChat UI] Request timed out:', requestId);
+        document.removeEventListener('PrinChatUIResponse', handler);
         resolve({ success: false, error: `Request timeout after ${timeoutMs}ms`, isTimeout: true });
       }, timeoutMs);
 
-      console.log('[X1Flox UI] Dispatching X1FloxUIRequest event...');
-      document.dispatchEvent(new CustomEvent('X1FloxUIRequest', {
+      console.log('[PrinChat UI] Dispatching PrinChatUIRequest event...');
+      document.dispatchEvent(new CustomEvent('PrinChatUIRequest', {
         detail: { requestId, message }
       }));
-      console.log('[X1Flox UI] Event dispatched successfully');
+      console.log('[PrinChat UI] Event dispatched successfully');
     });
   }
 
   private createShortcutBar() {
-    console.log('[X1Flox UI] Creating shortcut bar with', this.scripts.length, 'scripts and', this.messages.length, 'messages');
+    console.log('[PrinChat UI] Creating shortcut bar with', this.scripts.length, 'scripts and', this.messages.length, 'messages');
 
     // Remove existing bar if any
-    const existing = document.querySelector('.x1flox-shortcut-bar');
+    const existing = document.querySelector('.princhat-shortcut-bar');
     if (existing) {
-      console.log('[X1Flox UI] Removing existing shortcut bar');
+      console.log('[PrinChat UI] Removing existing shortcut bar');
       existing.remove();
     }
 
     // Create shortcut bar
     this.shortcutBar = document.createElement('div');
-    this.shortcutBar.className = 'x1flox-shortcut-bar';
-    console.log('[X1Flox UI] Shortcut bar div created');
+    this.shortcutBar.className = 'princhat-shortcut-bar';
+    console.log('[PrinChat UI] Shortcut bar div created');
 
     // Add script buttons
     this.scripts.forEach((script, index) => {
-      console.log(`[X1Flox UI] Adding script button ${index + 1}/${this.scripts.length}:`, script.name);
+      console.log(`[PrinChat UI] Adding script button ${index + 1}/${this.scripts.length}:`, script.name);
       const btn = this.createShortcutButton(
         script.name,
         'script',
@@ -302,7 +302,7 @@ class WhatsAppUIOverlay {
     // Add message buttons
     this.messages.forEach((message, index) => {
       const preview = message.content.substring(0, 30) + (message.content.length > 30 ? '...' : '');
-      console.log(`[X1Flox UI] Adding message button ${index + 1}/${this.messages.length}:`, preview);
+      console.log(`[PrinChat UI] Adding message button ${index + 1}/${this.messages.length}:`, preview);
       const btn = this.createShortcutButton(
         preview,
         'message',
@@ -313,26 +313,26 @@ class WhatsAppUIOverlay {
       this.shortcutBar!.appendChild(btn);
     });
 
-    console.log('[X1Flox UI] Appending shortcut bar to WhatsApp footer');
+    console.log('[PrinChat UI] Appending shortcut bar to WhatsApp footer');
 
     // Try to find WhatsApp footer and insert shortcut bar inside it
     const footer = document.querySelector('#main footer');
     if (footer) {
-      console.log('[X1Flox UI] Found WhatsApp footer, inserting shortcut bar at the end');
+      console.log('[PrinChat UI] Found WhatsApp footer, inserting shortcut bar at the end');
       footer.appendChild(this.shortcutBar);
     } else {
-      console.log('[X1Flox UI] WhatsApp footer not found, appending to body');
+      console.log('[PrinChat UI] WhatsApp footer not found, appending to body');
       document.body.appendChild(this.shortcutBar);
     }
 
-    console.log('[X1Flox UI] Shortcut bar appended, checking visibility...');
+    console.log('[PrinChat UI] Shortcut bar appended, checking visibility...');
 
     // Verify it's in the DOM
-    const inDOM = document.querySelector('.x1flox-shortcut-bar');
-    console.log('[X1Flox UI] Shortcut bar in DOM?', !!inDOM);
+    const inDOM = document.querySelector('.princhat-shortcut-bar');
+    console.log('[PrinChat UI] Shortcut bar in DOM?', !!inDOM);
     if (inDOM) {
       const styles = window.getComputedStyle(inDOM);
-      console.log('[X1Flox UI] Shortcut bar display:', styles.display, 'visibility:', styles.visibility, 'opacity:', styles.opacity);
+      console.log('[PrinChat UI] Shortcut bar display:', styles.display, 'visibility:', styles.visibility, 'opacity:', styles.opacity);
     }
   }
 
@@ -344,7 +344,7 @@ class WhatsAppUIOverlay {
     onActionClick: () => void
   ): HTMLElement {
     const btn = document.createElement('div');
-    btn.className = `x1flox-shortcut-btn`;
+    btn.className = `princhat-shortcut-btn`;
     btn.dataset.id = id;
     btn.dataset.type = type;
     btn.title = text;
@@ -393,9 +393,9 @@ class WhatsAppUIOverlay {
     }
 
     btn.innerHTML = `
-      <div class="x1flox-shortcut-btn-icon">${iconSvg}</div>
-      <span class="x1flox-shortcut-btn-text">${text}</span>
-      <button class="x1flox-shortcut-btn-action" title="Clique para enviar">
+      <div class="princhat-shortcut-btn-icon">${iconSvg}</div>
+      <span class="princhat-shortcut-btn-text">${text}</span>
+      <button class="princhat-shortcut-btn-action" title="Clique para enviar">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
           <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
         </svg>
@@ -405,14 +405,14 @@ class WhatsAppUIOverlay {
     // Card click handler
     btn.addEventListener('click', (e) => {
       // Don't trigger if clicking the action button
-      if ((e.target as HTMLElement).closest('.x1flox-shortcut-btn-action')) {
+      if ((e.target as HTMLElement).closest('.princhat-shortcut-btn-action')) {
         return;
       }
       onCardClick();
     });
 
     // Action button click handler
-    const actionBtn = btn.querySelector('.x1flox-shortcut-btn-action');
+    const actionBtn = btn.querySelector('.princhat-shortcut-btn-action');
     actionBtn?.addEventListener('click', (e) => {
       e.stopPropagation();
       onActionClick();
@@ -463,15 +463,15 @@ class WhatsAppUIOverlay {
   private handleMessageCardClick(message: Message) {
     if (!this.requireConfirmation) return;
 
-    console.log('[X1Flox UI] Message card clicked:', message.id);
+    console.log('[PrinChat UI] Message card clicked:', message.id);
     // Toggle confirmation state
     if (this.confirmingMessageId === message.id) {
       this.confirmingMessageId = null;
-      console.log('[X1Flox UI] Deselecting message');
+      console.log('[PrinChat UI] Deselecting message');
     } else {
       this.confirmingMessageId = message.id;
       this.confirmingScriptId = null; // Clear script confirmation
-      console.log('[X1Flox UI] Selecting message for confirmation');
+      console.log('[PrinChat UI] Selecting message for confirmation');
     }
     this.updateShortcutButtons();
   }
@@ -528,7 +528,7 @@ class WhatsAppUIOverlay {
   }
 
   private updateShortcutButtons() {
-    const buttons = document.querySelectorAll('.x1flox-shortcut-btn');
+    const buttons = document.querySelectorAll('.princhat-shortcut-btn');
     buttons.forEach((btn) => {
       const element = btn as HTMLElement;
       const id = element.dataset.id;
@@ -545,7 +545,7 @@ class WhatsAppUIOverlay {
       }
 
       // Update action button icon
-      const actionBtn = element.querySelector('.x1flox-shortcut-btn-action');
+      const actionBtn = element.querySelector('.princhat-shortcut-btn-action');
       if (actionBtn) {
         const isConfirming = (type === 'message' && id === this.confirmingMessageId) ||
           (type === 'script' && id === this.confirmingScriptId);
@@ -569,25 +569,25 @@ class WhatsAppUIOverlay {
 
     // Return cached value if still valid
     if (this.cachedChatId && (now - this.cachedChatTimestamp) < this.CHAT_CACHE_TTL) {
-      console.log('[X1Flox UI] Using cached chat ID:', this.cachedChatId);
+      console.log('[PrinChat UI] Using cached chat ID:', this.cachedChatId);
       return this.cachedChatId;
     }
 
     // Fetch fresh chat ID
-    console.log('[X1Flox UI] Fetching active chat (cache expired or empty)...');
+    console.log('[PrinChat UI] Fetching active chat (cache expired or empty)...');
     const chatResponse = await this.requestFromContentScript({
       type: 'GET_ACTIVE_CHAT'
     }, 15000);
 
     if (!chatResponse || !chatResponse.success || !chatResponse.data?.chatId) {
-      console.error('[X1Flox UI] Nenhum chat ativo selecionado');
+      console.error('[PrinChat UI] Nenhum chat ativo selecionado');
       return null;
     }
 
     // Update cache
     this.cachedChatId = chatResponse.data.chatId;
     this.cachedChatTimestamp = now;
-    console.log('[X1Flox UI] Chat ID cached:', this.cachedChatId);
+    console.log('[PrinChat UI] Chat ID cached:', this.cachedChatId);
 
     return this.cachedChatId;
   }
@@ -597,7 +597,7 @@ class WhatsAppUIOverlay {
    * Called by monitorChatChanges when chat changes are detected
    */
   private invalidateChatCache() {
-    console.log('[X1Flox UI] Invalidating chat cache');
+    console.log('[PrinChat UI] Invalidating chat cache');
     this.cachedChatId = null;
     this.cachedChatTimestamp = 0;
   }
@@ -621,7 +621,7 @@ class WhatsAppUIOverlay {
 
     if (!hasDelay) {
       // Send directly without popup (no delay = no need for pause/cancel controls)
-      console.log('[X1Flox UI] Sending message without delay (no popup):', message.type);
+      console.log('[PrinChat UI] Sending message without delay (no popup):', message.type);
       await this.sendMessageDirect(message);
       return;
     }
@@ -632,7 +632,7 @@ class WhatsAppUIOverlay {
     // IMPORTANT: Capture chat info NOW (not after delay) - like scripts do
     const chatId = await this.getActiveChatId();
     if (!chatId) {
-      console.error('[X1Flox UI] No active chat selected');
+      console.error('[PrinChat UI] No active chat selected');
       return;
     }
 
@@ -647,13 +647,13 @@ class WhatsAppUIOverlay {
       isCancelled: false
     });
 
-    console.log('[X1Flox UI] Starting message execution with delay (PARALLEL):', message.type, 'ID:', messageId, 'Chat:', chatName);
+    console.log('[PrinChat UI] Starting message execution with delay (PARALLEL):', message.type, 'ID:', messageId, 'Chat:', chatName);
 
     // Execute in background (don't await - allows parallel execution)
     // Pass chatId, chatName, chatPhoto so message goes to correct chat even if user switches
     this.executeMessageWithDelay(message, messageId, chatId, chatName, chatPhoto).catch((error: any) => {
       const errorMessage = error?.message || String(error);
-      console.error('[X1Flox UI] Message execution failed:', errorMessage);
+      console.error('[PrinChat UI] Message execution failed:', errorMessage);
     });
   }
 
@@ -667,7 +667,7 @@ class WhatsAppUIOverlay {
       const sendDelay = message.sendDelay || 0;
 
       // Dispatch start event (creates popup card)
-      document.dispatchEvent(new CustomEvent('X1FloxMessageStart', {
+      document.dispatchEvent(new CustomEvent('PrinChatMessageStart', {
         detail: {
           messageId,
           messagePreview: this.getMessagePreview(message),
@@ -685,9 +685,9 @@ class WhatsAppUIOverlay {
 
       // If animation: start it in page script (runs in parallel with delay)
       if (hasAnimation && sendDelay > 0) {
-        console.log('[X1Flox UI] Starting animation in page script (parallel with delay)...');
+        console.log('[PrinChat UI] Starting animation in page script (parallel with delay)...');
         // Dispatch event to start animation in page script
-        document.dispatchEvent(new CustomEvent('X1FloxStartAnimation', {
+        document.dispatchEvent(new CustomEvent('PrinChatStartAnimation', {
           detail: {
             messageId,
             chatId: targetChatId,
@@ -699,7 +699,7 @@ class WhatsAppUIOverlay {
 
       // ALWAYS process delay in overlay (allows pause/cancel for ALL messages)
       if (sendDelay > 0) {
-        console.log('[X1Flox UI] Waiting', sendDelay, 'ms with pause/cancel support...');
+        console.log('[PrinChat UI] Waiting', sendDelay, 'ms with pause/cancel support...');
 
         // Break delay into 100ms chunks (like scripts do for pause/cancel responsiveness)
         const chunks = Math.ceil(sendDelay / 100);
@@ -709,10 +709,10 @@ class WhatsAppUIOverlay {
 
           // Check if cancelled
           if (execution.isCancelled) {
-            console.log('[X1Flox UI] Message cancelled during delay:', messageId);
+            console.log('[PrinChat UI] Message cancelled during delay:', messageId);
             // If animation was running, stop it
             if (hasAnimation) {
-              document.dispatchEvent(new CustomEvent('X1FloxStopAnimation', {
+              document.dispatchEvent(new CustomEvent('PrinChatStopAnimation', {
                 detail: { messageId, chatId: targetChatId }
               }));
             }
@@ -722,16 +722,16 @@ class WhatsAppUIOverlay {
 
           // Wait if paused
           while (execution.isPaused && !execution.isCancelled) {
-            console.log('[X1Flox UI] Message paused, waiting...', messageId);
+            console.log('[PrinChat UI] Message paused, waiting...', messageId);
             await new Promise(resolve => setTimeout(resolve, 100));
           }
 
           // Check again after pause
           if (execution.isCancelled) {
-            console.log('[X1Flox UI] Message cancelled after pause:', messageId);
+            console.log('[PrinChat UI] Message cancelled after pause:', messageId);
             // If animation was running, stop it
             if (hasAnimation) {
-              document.dispatchEvent(new CustomEvent('X1FloxStopAnimation', {
+              document.dispatchEvent(new CustomEvent('PrinChatStopAnimation', {
                 detail: { messageId, chatId: targetChatId }
               }));
             }
@@ -747,7 +747,7 @@ class WhatsAppUIOverlay {
       // Check one more time before sending
       const execution = this.messageExecutions.get(messageId);
       if (execution?.isCancelled) {
-        console.log('[X1Flox UI] Message cancelled before send:', messageId);
+        console.log('[PrinChat UI] Message cancelled before send:', messageId);
         this.messageExecutions.delete(messageId);
         return;
       }
@@ -755,7 +755,7 @@ class WhatsAppUIOverlay {
       // Send message to page script
       // IMPORTANT: Use targetChatId (captured at start), not current chat
       // Delay already processed - animation (if any) already running
-      console.log('[X1Flox UI] Delay complete, sending message to target chat:', targetChatId);
+      console.log('[PrinChat UI] Delay complete, sending message to target chat:', targetChatId);
 
       const messageToSend = {
         ...message,
@@ -772,22 +772,22 @@ class WhatsAppUIOverlay {
       // Clean up execution state
       this.messageExecutions.delete(messageId);
 
-      console.log('[X1Flox UI] ✅ Message sent successfully');
+      console.log('[PrinChat UI] ✅ Message sent successfully');
 
       // Dispatch complete event
-      document.dispatchEvent(new CustomEvent('X1FloxMessageComplete', {
+      document.dispatchEvent(new CustomEvent('PrinChatMessageComplete', {
         detail: { messageId, success: true }
       }));
 
     } catch (error: any) {
       const errorMessage = error?.message || String(error);
-      console.error('[X1Flox UI] ❌ Error sending message:', errorMessage);
+      console.error('[PrinChat UI] ❌ Error sending message:', errorMessage);
 
       // Clean up execution state
       this.messageExecutions.delete(messageId);
 
       // Dispatch error event
-      document.dispatchEvent(new CustomEvent('X1FloxMessageError', {
+      document.dispatchEvent(new CustomEvent('PrinChatMessageError', {
         detail: { messageId, error: error.message }
       }));
     }
@@ -804,11 +804,11 @@ class WhatsAppUIOverlay {
       const chatId = targetChatId || await this.getActiveChatId();
 
       if (!chatId) {
-        console.error('[X1Flox UI] Nenhum chat ativo selecionado');
+        console.error('[PrinChat UI] Nenhum chat ativo selecionado');
         throw new Error('Nenhum chat ativo selecionado');
       }
 
-      console.log('[X1Flox UI] Sending message to chat:', chatId, 'Type:', message.type);
+      console.log('[PrinChat UI] Sending message to chat:', chatId, 'Type:', message.type);
 
       // Send based on message type
       let response;
@@ -891,31 +891,31 @@ class WhatsAppUIOverlay {
           break;
 
         case 'file':
-          console.log('[X1Flox UI] 🔍 DEBUG FILE - message object:', message);
-          console.log('[X1Flox UI] 🔍 DEBUG FILE - message.fileData type:', typeof message.fileData);
-          console.log('[X1Flox UI] 🔍 DEBUG FILE - message.fileData value:', message.fileData);
-          console.log('[X1Flox UI] 🔍 DEBUG FILE - message.fileName:', message.fileName);
+          console.log('[PrinChat UI] 🔍 DEBUG FILE - message object:', message);
+          console.log('[PrinChat UI] 🔍 DEBUG FILE - message.fileData type:', typeof message.fileData);
+          console.log('[PrinChat UI] 🔍 DEBUG FILE - message.fileData value:', message.fileData);
+          console.log('[PrinChat UI] 🔍 DEBUG FILE - message.fileName:', message.fileName);
 
           // Data comes as base64 string from service worker
           let fileData = message.fileData;
 
-          console.log('[X1Flox UI] 🔍 DEBUG FILE - fileData before Blob check:', fileData);
-          console.log('[X1Flox UI] 🔍 DEBUG FILE - fileData instanceof Blob?', fileData instanceof Blob);
+          console.log('[PrinChat UI] 🔍 DEBUG FILE - fileData before Blob check:', fileData);
+          console.log('[PrinChat UI] 🔍 DEBUG FILE - fileData instanceof Blob?', fileData instanceof Blob);
 
           if (fileData instanceof Blob) {
-            console.log('[X1Flox UI] 🔍 DEBUG FILE - Converting Blob to base64...');
+            console.log('[PrinChat UI] 🔍 DEBUG FILE - Converting Blob to base64...');
             fileData = await this.blobToBase64(fileData);
-            console.log('[X1Flox UI] 🔍 DEBUG FILE - After conversion:', typeof fileData, fileData?.substring?.(0, 100));
+            console.log('[PrinChat UI] 🔍 DEBUG FILE - After conversion:', typeof fileData, fileData?.substring?.(0, 100));
           }
 
           // Validate fileData is a string (base64 or blob URL)
-          console.log('[X1Flox UI] 🔍 DEBUG FILE - Final fileData type:', typeof fileData);
-          console.log('[X1Flox UI] 🔍 DEBUG FILE - Final fileData valid?', !!fileData && typeof fileData === 'string');
+          console.log('[PrinChat UI] 🔍 DEBUG FILE - Final fileData type:', typeof fileData);
+          console.log('[PrinChat UI] 🔍 DEBUG FILE - Final fileData valid?', !!fileData && typeof fileData === 'string');
 
           if (!fileData || typeof fileData !== 'string') {
-            console.error('[X1Flox UI] ❌ DEBUG FILE - Validation failed!');
-            console.error('[X1Flox UI] ❌ DEBUG FILE - fileData:', fileData);
-            console.error('[X1Flox UI] ❌ DEBUG FILE - Complete message:', JSON.stringify(message, null, 2));
+            console.error('[PrinChat UI] ❌ DEBUG FILE - Validation failed!');
+            console.error('[PrinChat UI] ❌ DEBUG FILE - fileData:', fileData);
+            console.error('[PrinChat UI] ❌ DEBUG FILE - Complete message:', JSON.stringify(message, null, 2));
 
             // Provide helpful error message
             let errorMsg = 'Arquivo não encontrado ou inválido.';
@@ -928,7 +928,7 @@ class WhatsAppUIOverlay {
             throw new Error(errorMsg);
           }
 
-          console.log('[X1Flox UI] ✅ DEBUG FILE - Validation passed, sending file...');
+          console.log('[PrinChat UI] ✅ DEBUG FILE - Validation passed, sending file...');
 
           // Dynamic timeout: sendDelay + 150s buffer (files can be large like videos)
           const fileTimeout = (message.sendDelay || 0) + 150000;
@@ -945,18 +945,18 @@ class WhatsAppUIOverlay {
           break;
 
         default:
-          console.error('[X1Flox UI] Tipo de mensagem não suportado:', message.type);
+          console.error('[PrinChat UI] Tipo de mensagem não suportado:', message.type);
           return;
       }
 
       if (response && response.success) {
-        console.log('[X1Flox UI] Message sent successfully');
+        console.log('[PrinChat UI] Message sent successfully');
       } else {
         throw new Error(response?.error || 'Erro ao enviar mensagem');
       }
     } catch (error: any) {
       const errorMessage = error?.message || String(error);
-      console.error('[X1Flox UI] Error sending message:', errorMessage);
+      console.error('[PrinChat UI] Error sending message:', errorMessage);
       throw error; // Re-throw for queue processor to handle
     }
   }
@@ -969,31 +969,31 @@ class WhatsAppUIOverlay {
     if (this.messageStatusPopup) this.messageStatusPopup.remove();
 
     this.messageStatusPopup = document.createElement('div');
-    this.messageStatusPopup.className = 'x1flox-script-popup x1flox-message-popup';
+    this.messageStatusPopup.className = 'princhat-script-popup princhat-message-popup';
     this.messageStatusPopup.innerHTML = `
-      <button class="x1flox-script-popup-close">✕</button>
+      <button class="princhat-script-popup-close">✕</button>
 
       <!-- Seção EM ENVIO (MENSAGENS) -->
-      <div class="x1flox-script-section">
-        <div class="x1flox-script-section-header">
-          <span class="x1flox-script-section-title">ENVIANDO MENSAGENS</span>
-          <button class="x1flox-script-btn-discrete" data-action="cancel-all-messages">Cancelar Todos</button>
+      <div class="princhat-script-section">
+        <div class="princhat-script-section-header">
+          <span class="princhat-script-section-title">ENVIANDO MENSAGENS</span>
+          <button class="princhat-script-btn-discrete" data-action="cancel-all-messages">Cancelar Todos</button>
         </div>
-        <div class="x1flox-script-section-body" data-section="running-messages"></div>
+        <div class="princhat-script-section-body" data-section="running-messages"></div>
       </div>
 
       <!-- Seção ENVIO CONCLUÍDO (MENSAGENS) -->
-      <div class="x1flox-script-section">
-        <div class="x1flox-script-section-header">
-          <span class="x1flox-script-section-title">ENVIO CONCLUÍDO</span>
-          <button class="x1flox-script-btn-discrete" data-action="clear-all-messages">Limpar Lista</button>
+      <div class="princhat-script-section">
+        <div class="princhat-script-section-header">
+          <span class="princhat-script-section-title">ENVIO CONCLUÍDO</span>
+          <button class="princhat-script-btn-discrete" data-action="clear-all-messages">Limpar Lista</button>
         </div>
-        <div class="x1flox-script-section-body" data-section="completed-messages"></div>
+        <div class="princhat-script-section-body" data-section="completed-messages"></div>
       </div>
     `;
 
     // Close button
-    const closeBtn = this.messageStatusPopup.querySelector('.x1flox-script-popup-close');
+    const closeBtn = this.messageStatusPopup.querySelector('.princhat-script-popup-close');
     closeBtn?.addEventListener('click', () => this.closeMessageStatusPopup());
 
     // Cancel all button
@@ -1049,31 +1049,31 @@ class WhatsAppUIOverlay {
 
     // Only animate new cards, not re-rendered existing ones
     const isNewCard = !this.renderedCardIds.has(msgExec.id);
-    card.className = isNewCard ? 'x1flox-script-card new-card' : 'x1flox-script-card';
+    card.className = isNewCard ? 'princhat-script-card new-card' : 'princhat-script-card';
     card.dataset.messageId = msgExec.id;
 
     // Mark this card as rendered
     this.renderedCardIds.add(msgExec.id);
 
     const photoHtml = msgExec.chatPhoto
-      ? `<img src="${msgExec.chatPhoto}" alt="${msgExec.chatName}" class="x1flox-script-card-photo">`
-      : `<div class="x1flox-script-card-photo-placeholder">${msgExec.chatName.charAt(0).toUpperCase()}</div>`;
+      ? `<img src="${msgExec.chatPhoto}" alt="${msgExec.chatName}" class="princhat-script-card-photo">`
+      : `<div class="princhat-script-card-photo-placeholder">${msgExec.chatName.charAt(0).toUpperCase()}</div>`;
 
     if (isCompleted) {
       // Card concluído (simples - igual scripts)
       card.innerHTML = `
         ${photoHtml}
-        <div class="x1flox-script-card-info">
-          <div class="x1flox-script-card-contact">${msgExec.chatName}</div>
-          <div class="x1flox-script-card-name">${msgExec.messagePreview}</div>
+        <div class="princhat-script-card-info">
+          <div class="princhat-script-card-contact">${msgExec.chatName}</div>
+          <div class="princhat-script-card-name">${msgExec.messagePreview}</div>
         </div>
-        <div class="x1flox-script-card-status">
+        <div class="princhat-script-card-status">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="#00a884">
             <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
           </svg>
           <span>enviado</span>
         </div>
-        <button class="x1flox-script-btn-discrete" data-action="clear-message" data-id="${msgExec.id}">Limpar</button>
+        <button class="princhat-script-btn-discrete" data-action="clear-message" data-id="${msgExec.id}">Limpar</button>
       `;
 
       const clearBtn = card.querySelector('[data-action="clear-message"]');
@@ -1094,17 +1094,17 @@ class WhatsAppUIOverlay {
 
         card.innerHTML = `
           ${photoHtml}
-          <div class="x1flox-script-card-info">
-            <div class="x1flox-script-card-contact">${msgExec.chatName}</div>
-            <div class="x1flox-script-card-name">${msgExec.messagePreview}</div>
+          <div class="princhat-script-card-info">
+            <div class="princhat-script-card-contact">${msgExec.chatName}</div>
+            <div class="princhat-script-card-name">${msgExec.messagePreview}</div>
           </div>
-          <div class="x1flox-script-card-timer">${msgExec.elapsedSeconds}s</div>
-          <button class="x1flox-script-btn-icon ${buttonClass}" data-action="pause-play-message" data-id="${msgExec.id}" title="${buttonTitle}">
+          <div class="princhat-script-card-timer">${msgExec.elapsedSeconds}s</div>
+          <button class="princhat-script-btn-icon ${buttonClass}" data-action="pause-play-message" data-id="${msgExec.id}" title="${buttonTitle}">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
               ${pausePlayIcon}
             </svg>
           </button>
-          <button class="x1flox-script-btn-discrete" data-action="cancel-message" data-id="${msgExec.id}">Cancelar</button>
+          <button class="princhat-script-btn-discrete" data-action="cancel-message" data-id="${msgExec.id}">Cancelar</button>
         `;
 
         const pausePlayBtn = card.querySelector('[data-action="pause-play-message"]');
@@ -1116,12 +1116,12 @@ class WhatsAppUIOverlay {
         // Sem delay - layout simples
         card.innerHTML = `
           ${photoHtml}
-          <div class="x1flox-script-card-info">
-            <div class="x1flox-script-card-contact">${msgExec.chatName}</div>
-            <div class="x1flox-script-card-name">${msgExec.messagePreview}</div>
+          <div class="princhat-script-card-info">
+            <div class="princhat-script-card-contact">${msgExec.chatName}</div>
+            <div class="princhat-script-card-name">${msgExec.messagePreview}</div>
           </div>
-          <div class="x1flox-script-card-progress">Enviando...</div>
-          <button class="x1flox-script-btn-discrete" data-action="cancel-message" data-id="${msgExec.id}">Cancelar</button>
+          <div class="princhat-script-card-progress">Enviando...</div>
+          <button class="princhat-script-btn-discrete" data-action="cancel-message" data-id="${msgExec.id}">Cancelar</button>
         `;
 
         const cancelBtn = card.querySelector('[data-action="cancel-message"]');
@@ -1142,12 +1142,12 @@ class WhatsAppUIOverlay {
       // Resume
       execution.isPaused = false;
       this.startMessageTimer(messageId); // Resume timer
-      console.log('[X1Flox UI] Message resumed:', messageId);
+      console.log('[PrinChat UI] Message resumed:', messageId);
     } else {
       // Pause
       execution.isPaused = true;
       this.stopMessageTimer(messageId); // Stop timer
-      console.log('[X1Flox UI] Message paused:', messageId);
+      console.log('[PrinChat UI] Message paused:', messageId);
     }
 
     // Update UI
@@ -1184,7 +1184,7 @@ class WhatsAppUIOverlay {
       this.renderedCardIds.delete(messageId);
       this.updateMessageStatusPopup();
     }
-    console.log('[X1Flox UI] Message cancelled:', messageId);
+    console.log('[PrinChat UI] Message cancelled:', messageId);
   }
 
   /**
@@ -1194,7 +1194,7 @@ class WhatsAppUIOverlay {
     this.runningMessages.forEach((_, messageId) => {
       this.cancelMessage(messageId);
     });
-    console.log('[X1Flox UI] All messages cancelled');
+    console.log('[PrinChat UI] All messages cancelled');
   }
 
   /**
@@ -1215,7 +1215,7 @@ class WhatsAppUIOverlay {
       this.renderedCardIds.delete(messageId);
       this.updateMessageStatusPopup();
     }
-    console.log('[X1Flox UI] Completed message cleared:', messageId);
+    console.log('[PrinChat UI] Completed message cleared:', messageId);
   }
 
   /**
@@ -1223,7 +1223,7 @@ class WhatsAppUIOverlay {
    */
   private clearAllCompletedMessages() {
     const completedSection = this.messageStatusPopup?.querySelector('[data-section="completed-messages"]');
-    const cards = completedSection?.querySelectorAll('.x1flox-script-card') || [];
+    const cards = completedSection?.querySelectorAll('.princhat-script-card') || [];
 
     if (cards.length > 0) {
       cards.forEach(card => card.classList.add('removing'));
@@ -1237,7 +1237,7 @@ class WhatsAppUIOverlay {
       this.completedMessages = [];
       this.updateMessageStatusPopup();
     }
-    console.log('[X1Flox UI] All completed messages cleared');
+    console.log('[PrinChat UI] All completed messages cleared');
   }
 
   /**
@@ -1263,7 +1263,7 @@ class WhatsAppUIOverlay {
       const availableSpace = window.innerHeight - top - 20; // 20px bottom margin
       const maxHeight = Math.min(500, Math.max(150, availableSpace)); // Between 150px and 500px
 
-      console.log('[X1Flox UI] Positioning message popup below script popup:', {
+      console.log('[PrinChat UI] Positioning message popup below script popup:', {
         top,
         left,
         availableSpace,
@@ -1292,7 +1292,7 @@ class WhatsAppUIOverlay {
       const availableSpace = window.innerHeight - top - 20;
       const maxHeight = Math.min(500, Math.max(200, availableSpace)); // Up to 500px
 
-      console.log('[X1Flox UI] Positioning message popup (script not open):', { top, left, maxHeight, availableSpace });
+      console.log('[PrinChat UI] Positioning message popup (script not open):', { top, left, maxHeight, availableSpace });
 
       this.messageStatusPopup.style.position = 'fixed';
       this.messageStatusPopup.style.top = `${top}px`;
@@ -1333,31 +1333,31 @@ class WhatsAppUIOverlay {
     const scriptId = `script-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
     try {
-      // NOTE: Do NOT dispatch X1FloxScriptStart here!
+      // NOTE: Do NOT dispatch PrinChatScriptStart here!
       // The content script (executeScriptWithSteps) will dispatch it to avoid duplication
 
       // Get active chat using cache for performance
-      console.log('[X1Flox UI] Getting active chat for script execution...');
+      console.log('[PrinChat UI] Getting active chat for script execution...');
       const chatId = await this.getActiveChatId();
 
       if (!chatId) {
         throw new Error('Nenhum chat ativo selecionado');
       }
 
-      console.log('[X1Flox UI] Active chat:', chatId);
+      console.log('[PrinChat UI] Active chat:', chatId);
 
       // Build full steps with message data
       // Steps from database have { messageId, delayAfter }
       // Need to transform to { message: {...}, delayAfter }
-      console.log('[X1Flox UI] Loading message data for steps...');
-      console.log('[X1Flox UI] Script has', script.steps.length, 'steps');
-      console.log('[X1Flox UI] Available messages:', this.messages.length);
+      console.log('[PrinChat UI] Loading message data for steps...');
+      console.log('[PrinChat UI] Script has', script.steps.length, 'steps');
+      console.log('[PrinChat UI] Available messages:', this.messages.length);
 
       // If no messages loaded, try to reload data first
       if (this.messages.length === 0) {
-        console.log('[X1Flox UI] ⚠️ No messages loaded, attempting to reload data...');
+        console.log('[PrinChat UI] ⚠️ No messages loaded, attempting to reload data...');
         await this.loadData();
-        console.log('[X1Flox UI] After reload: Available messages:', this.messages.length);
+        console.log('[PrinChat UI] After reload: Available messages:', this.messages.length);
       }
 
       const fullSteps = await Promise.all(script.steps.map(async (step) => {
@@ -1365,9 +1365,9 @@ class WhatsAppUIOverlay {
         const message = this.messages.find(m => m.id === messageId);
 
         if (!message) {
-          console.error('[X1Flox UI] ❌ Message not found!');
-          console.error('[X1Flox UI] Looking for message ID:', messageId);
-          console.error('[X1Flox UI] Available message IDs:', this.messages.map(m => m.id));
+          console.error('[PrinChat UI] ❌ Message not found!');
+          console.error('[PrinChat UI] Looking for message ID:', messageId);
+          console.error('[PrinChat UI] Available message IDs:', this.messages.map(m => m.id));
           throw new Error(`Message ${messageId} not found. Recarregue a página do WhatsApp Web.`);
         }
 
@@ -1413,7 +1413,7 @@ class WhatsAppUIOverlay {
       // Scripts can be paused indefinitely by the user, so a short timeout would cause false errors
       // Each individual message already has its own timeout (90s-150s depending on type)
       // User can manually cancel if needed via the UI controls
-      console.log('[X1Flox UI] Executing script with', fullSteps.length, 'steps');
+      console.log('[PrinChat UI] Executing script with', fullSteps.length, 'steps');
       const response = await this.requestFromContentScript({
         type: 'EXECUTE_SCRIPT',
         payload: {
@@ -1424,22 +1424,22 @@ class WhatsAppUIOverlay {
         }
       }, 24 * 60 * 60 * 1000); // 24 hours timeout (effectively infinite for user-controlled scripts)
 
-      // NOTE: Do NOT dispatch X1FloxScriptComplete here!
+      // NOTE: Do NOT dispatch PrinChatScriptComplete here!
       // The content script (executeScriptWithSteps) already dispatches it
       // Dispatching here would create duplicate cards in the completed section
 
       if (!response || !response.success) {
         // Check if this is a user cancellation (not an error)
         if (response?.error === 'Script cancelled by user') {
-          console.log('[X1Flox UI] Script cancelled by user');
+          console.log('[PrinChat UI] Script cancelled by user');
           return; // Exit silently - cancellation is not an error
         }
 
         // Check if this is a timeout
         if (response?.isTimeout) {
           const timeoutError = 'Script execution timeout. The script may be too large or WhatsApp is not responding.';
-          console.warn('[X1Flox UI] Script timeout:', response.error);
-          document.dispatchEvent(new CustomEvent('X1FloxScriptError', {
+          console.warn('[PrinChat UI] Script timeout:', response.error);
+          document.dispatchEvent(new CustomEvent('PrinChatScriptError', {
             detail: { scriptId, error: timeoutError }
           }));
           return; // Exit without throwing - timeout is logged as warning
@@ -1449,11 +1449,11 @@ class WhatsAppUIOverlay {
       }
     } catch (error: any) {
       const errorMessage = error?.message || String(error);
-      console.error('[X1Flox UI] Error executing script:', errorMessage, error);
+      console.error('[PrinChat UI] Error executing script:', errorMessage, error);
 
       // Only dispatch error if script hasn't started yet (no card created)
       // If script is running, executeScriptWithSteps will dispatch the error
-      document.dispatchEvent(new CustomEvent('X1FloxScriptError', {
+      document.dispatchEvent(new CustomEvent('PrinChatScriptError', {
         detail: { scriptId, error: errorMessage }
       }));
     }
@@ -1463,9 +1463,9 @@ class WhatsAppUIOverlay {
   // private createFAB(text: string) {
   //   if (this.fab) this.fab.remove();
   //   this.fab = document.createElement('div');
-  //   this.fab.className = 'x1flox-fab';
+  //   this.fab.className = 'princhat-fab';
   //   this.fab.innerHTML = `
-  //     <svg class="x1flox-fab-icon" viewBox="0 0 24 24" fill="currentColor">
+  //     <svg class="princhat-fab-icon" viewBox="0 0 24 24" fill="currentColor">
   //       <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
   //     </svg>
   //     <span>${text}</span>
@@ -1481,7 +1481,7 @@ class WhatsAppUIOverlay {
   //
   // private closeFAB() {
   //   if (this.fab) {
-  //     this.fab.style.animation = 'x1flox-slide-out 0.3s ease';
+  //     this.fab.style.animation = 'princhat-slide-out 0.3s ease';
   //     setTimeout(() => {
   //       if (this.fab) this.fab.remove();
   //       this.fab = null;
@@ -1566,7 +1566,7 @@ class WhatsAppUIOverlay {
   }
 
   private getChatPhoto(): string | undefined {
-    console.log('[X1Flox UI] Getting chat photo from DOM...');
+    console.log('[PrinChat UI] Getting chat photo from DOM...');
 
     // Try multiple selectors for profile picture
     const selectors = [
@@ -1581,12 +1581,12 @@ class WhatsAppUIOverlay {
     for (const selector of selectors) {
       const img = document.querySelector(selector) as HTMLImageElement;
       if (img?.src && img.src !== 'data:') {
-        console.log('[X1Flox UI] Found chat photo from selector:', selector, '→', img.src);
+        console.log('[PrinChat UI] Found chat photo from selector:', selector, '→', img.src);
         return img.src;
       }
     }
 
-    console.log('[X1Flox UI] No chat photo found in DOM');
+    console.log('[PrinChat UI] No chat photo found in DOM');
     return undefined;
   }
 
@@ -1595,31 +1595,31 @@ class WhatsAppUIOverlay {
     if (this.statusPopup) this.statusPopup.remove();
 
     this.statusPopup = document.createElement('div');
-    this.statusPopup.className = 'x1flox-script-popup';
+    this.statusPopup.className = 'princhat-script-popup';
     this.statusPopup.innerHTML = `
-      <button class="x1flox-script-popup-close">✕</button>
+      <button class="princhat-script-popup-close">✕</button>
 
       <!-- Seção EM ENVIO -->
-      <div class="x1flox-script-section">
-        <div class="x1flox-script-section-header">
-          <span class="x1flox-script-section-title">EM ENVIO (SCRIPTS/GATILHOS)</span>
-          <button class="x1flox-script-btn-discrete" data-action="cancel-all">Cancelar Todos</button>
+      <div class="princhat-script-section">
+        <div class="princhat-script-section-header">
+          <span class="princhat-script-section-title">EM ENVIO (SCRIPTS/GATILHOS)</span>
+          <button class="princhat-script-btn-discrete" data-action="cancel-all">Cancelar Todos</button>
         </div>
-        <div class="x1flox-script-section-body" data-section="running"></div>
+        <div class="princhat-script-section-body" data-section="running"></div>
       </div>
 
       <!-- Seção ENVIO CONCLUÍDO -->
-      <div class="x1flox-script-section">
-        <div class="x1flox-script-section-header">
-          <span class="x1flox-script-section-title">ENVIO CONCLUÍDO</span>
-          <button class="x1flox-script-btn-discrete" data-action="clear-all">Limpar Lista</button>
+      <div class="princhat-script-section">
+        <div class="princhat-script-section-header">
+          <span class="princhat-script-section-title">ENVIO CONCLUÍDO</span>
+          <button class="princhat-script-btn-discrete" data-action="clear-all">Limpar Lista</button>
         </div>
-        <div class="x1flox-script-section-body" data-section="completed"></div>
+        <div class="princhat-script-section-body" data-section="completed"></div>
       </div>
     `;
 
     // Close button
-    const closeBtn = this.statusPopup.querySelector('.x1flox-script-popup-close');
+    const closeBtn = this.statusPopup.querySelector('.princhat-script-popup-close');
     closeBtn?.addEventListener('click', () => this.closeStatusPopup());
 
     // Cancel all button
@@ -1650,7 +1650,7 @@ class WhatsAppUIOverlay {
   // Not used in new design
   // private updateStatusPopupTitle(title: string) {
   //   if (!this.statusPopup) return;
-  //   const titleEl = this.statusPopup.querySelector('.x1flox-status-title');
+  //   const titleEl = this.statusPopup.querySelector('.princhat-status-title');
   //   if (titleEl) titleEl.textContent = title;
   // }
 
@@ -1687,15 +1687,15 @@ class WhatsAppUIOverlay {
 
     // Only animate new cards, not re-rendered existing ones
     const isNewCard = !this.renderedCardIds.has(scriptExec.id);
-    card.className = isNewCard ? 'x1flox-script-card new-card' : 'x1flox-script-card';
+    card.className = isNewCard ? 'princhat-script-card new-card' : 'princhat-script-card';
     card.dataset.scriptId = scriptExec.id;
 
     // Mark this card as rendered
     this.renderedCardIds.add(scriptExec.id);
 
     const photoHtml = scriptExec.chatPhoto
-      ? `<img src="${scriptExec.chatPhoto}" alt="${scriptExec.chatName}" class="x1flox-script-card-photo">`
-      : `<div class="x1flox-script-card-photo-placeholder">${scriptExec.chatName.charAt(0).toUpperCase()}</div>`;
+      ? `<img src="${scriptExec.chatPhoto}" alt="${scriptExec.chatName}" class="princhat-script-card-photo">`
+      : `<div class="princhat-script-card-photo-placeholder">${scriptExec.chatName.charAt(0).toUpperCase()}</div>`;
 
     const progress = `${scriptExec.completedSteps}/${scriptExec.totalSteps}`;
 
@@ -1703,18 +1703,18 @@ class WhatsAppUIOverlay {
       // Card concluído
       card.innerHTML = `
         ${photoHtml}
-        <div class="x1flox-script-card-info">
-          <div class="x1flox-script-card-contact">${scriptExec.chatName}</div>
-          <div class="x1flox-script-card-name">★ ${scriptExec.scriptName}</div>
+        <div class="princhat-script-card-info">
+          <div class="princhat-script-card-contact">${scriptExec.chatName}</div>
+          <div class="princhat-script-card-name">★ ${scriptExec.scriptName}</div>
         </div>
-        <div class="x1flox-script-card-progress">${progress}</div>
-        <div class="x1flox-script-card-status">
+        <div class="princhat-script-card-progress">${progress}</div>
+        <div class="princhat-script-card-status">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="#00a884">
             <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
           </svg>
           <span>enviado</span>
         </div>
-        <button class="x1flox-script-btn-discrete" data-action="clear" data-id="${scriptExec.id}">Limpar</button>
+        <button class="princhat-script-btn-discrete" data-action="clear" data-id="${scriptExec.id}">Limpar</button>
       `;
 
       const clearBtn = card.querySelector('[data-action="clear"]');
@@ -1729,18 +1729,18 @@ class WhatsAppUIOverlay {
 
       card.innerHTML = `
         ${photoHtml}
-        <div class="x1flox-script-card-info">
-          <div class="x1flox-script-card-contact">${scriptExec.chatName}</div>
-          <div class="x1flox-script-card-name">★ ${scriptExec.scriptName}</div>
+        <div class="princhat-script-card-info">
+          <div class="princhat-script-card-contact">${scriptExec.chatName}</div>
+          <div class="princhat-script-card-name">★ ${scriptExec.scriptName}</div>
         </div>
-        <div class="x1flox-script-card-progress">${progress}</div>
-        <div class="x1flox-script-card-timer">${scriptExec.elapsedSeconds}s</div>
-        <button class="x1flox-script-btn-icon ${buttonClass}" data-action="pause-play" data-id="${scriptExec.id}" title="${isPaused ? 'Continuar' : 'Pausar'}">
+        <div class="princhat-script-card-progress">${progress}</div>
+        <div class="princhat-script-card-timer">${scriptExec.elapsedSeconds}s</div>
+        <button class="princhat-script-btn-icon ${buttonClass}" data-action="pause-play" data-id="${scriptExec.id}" title="${isPaused ? 'Continuar' : 'Pausar'}">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
             ${pausePlayIcon}
           </svg>
         </button>
-        <button class="x1flox-script-btn-discrete" data-action="cancel" data-id="${scriptExec.id}">Cancelar</button>
+        <button class="princhat-script-btn-discrete" data-action="cancel" data-id="${scriptExec.id}">Cancelar</button>
       `;
 
       const pausePlayBtn = card.querySelector('[data-action="pause-play"]');
@@ -1760,19 +1760,19 @@ class WhatsAppUIOverlay {
     if (scriptExec.status === 'running') {
       scriptExec.status = 'paused';
       this.stopScriptTimer(scriptId);
-      console.log('[X1Flox UI] Script paused:', scriptId);
+      console.log('[PrinChat UI] Script paused:', scriptId);
 
       // Dispatch event to pause script execution in content script
-      document.dispatchEvent(new CustomEvent('X1FloxPauseScript', {
+      document.dispatchEvent(new CustomEvent('PrinChatPauseScript', {
         detail: { scriptId }
       }));
     } else if (scriptExec.status === 'paused') {
       scriptExec.status = 'running';
       this.startScriptTimer(scriptId);
-      console.log('[X1Flox UI] Script resumed:', scriptId);
+      console.log('[PrinChat UI] Script resumed:', scriptId);
 
       // Dispatch event to resume script execution in content script
-      document.dispatchEvent(new CustomEvent('X1FloxResumeScript', {
+      document.dispatchEvent(new CustomEvent('PrinChatResumeScript', {
         detail: { scriptId }
       }));
     }
@@ -1804,18 +1804,18 @@ class WhatsAppUIOverlay {
     }
 
     // Dispatch event to cancel script execution in content script
-    document.dispatchEvent(new CustomEvent('X1FloxCancelScript', {
+    document.dispatchEvent(new CustomEvent('PrinChatCancelScript', {
       detail: { scriptId }
     }));
 
-    console.log('[X1Flox UI] Script cancelled:', scriptId);
+    console.log('[PrinChat UI] Script cancelled:', scriptId);
   }
 
   private cancelAllScripts() {
     this.runningScripts.forEach((_, scriptId) => {
       this.cancelScript(scriptId);
     });
-    console.log('[X1Flox UI] All scripts cancelled');
+    console.log('[PrinChat UI] All scripts cancelled');
   }
 
   private clearCompletedScript(scriptId: string) {
@@ -1836,13 +1836,13 @@ class WhatsAppUIOverlay {
       this.renderedCardIds.delete(scriptId);
       this.updateStatusPopup();
     }
-    console.log('[X1Flox UI] Completed script cleared:', scriptId);
+    console.log('[PrinChat UI] Completed script cleared:', scriptId);
   }
 
   private clearAllCompleted() {
     // Find all completed cards and animate them out
     const completedSection = this.statusPopup?.querySelector('[data-section="completed"]');
-    const cards = completedSection?.querySelectorAll('.x1flox-script-card') || [];
+    const cards = completedSection?.querySelectorAll('.princhat-script-card') || [];
 
     if (cards.length > 0) {
       // Add removing class to all cards
@@ -1860,7 +1860,7 @@ class WhatsAppUIOverlay {
       this.completedScripts = [];
       this.updateStatusPopup();
     }
-    console.log('[X1Flox UI] All completed scripts cleared');
+    console.log('[PrinChat UI] All completed scripts cleared');
   }
 
   private startScriptTimer(scriptId: string) {
@@ -1873,7 +1873,7 @@ class WhatsAppUIOverlay {
         scriptExec.elapsedSeconds++;
         // Update only the timer element to avoid re-rendering everything
         const card = this.statusPopup?.querySelector(`[data-script-id="${scriptId}"]`);
-        const timerEl = card?.querySelector('.x1flox-script-card-timer');
+        const timerEl = card?.querySelector('.princhat-script-card-timer');
         if (timerEl) {
           timerEl.textContent = `${scriptExec.elapsedSeconds}s`;
         }
@@ -1894,13 +1894,13 @@ class WhatsAppUIOverlay {
   private moveToCompleted(scriptId: string) {
     const scriptExec = this.runningScripts.get(scriptId);
     if (!scriptExec) {
-      console.log('[X1Flox UI] Script not found in running scripts:', scriptId);
+      console.log('[PrinChat UI] Script not found in running scripts:', scriptId);
       return;
     }
 
     // Don't move paused scripts to completed
     if (scriptExec.status === 'paused') {
-      console.log('[X1Flox UI] Script is paused, not moving to completed:', scriptId);
+      console.log('[PrinChat UI] Script is paused, not moving to completed:', scriptId);
       return;
     }
 
@@ -1918,7 +1918,7 @@ class WhatsAppUIOverlay {
         // Remove from rendered set so it animates as new card in completed section
         this.renderedCardIds.delete(scriptId);
         this.updateStatusPopup();
-        console.log('[X1Flox UI] Script moved to completed:', scriptId);
+        console.log('[PrinChat UI] Script moved to completed:', scriptId);
       }, 300); // Match animation duration (0.3s)
     } else {
       // If card not found, move immediately
@@ -1927,16 +1927,16 @@ class WhatsAppUIOverlay {
       this.runningScripts.delete(scriptId);
       this.renderedCardIds.delete(scriptId);
       this.updateStatusPopup();
-      console.log('[X1Flox UI] Script moved to completed:', scriptId);
+      console.log('[PrinChat UI] Script moved to completed:', scriptId);
     }
   }
 
   // Not used in new design
   // private getStatusIcon(status: 'sending' | 'success' | 'error'): string {
   //   const icons = {
-  //     sending: '<svg class="x1flox-status-icon sending" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4V2A10 10 0 0 0 2 12h2a8 8 0 0 1 8-8Z"/></svg>',
-  //     success: '<svg class="x1flox-status-icon success" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>',
-  //     error: '<svg class="x1flox-status-icon error" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>'
+  //     sending: '<svg class="princhat-status-icon sending" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4V2A10 10 0 0 0 2 12h2a8 8 0 0 1 8-8Z"/></svg>',
+  //     success: '<svg class="princhat-status-icon success" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>',
+  //     error: '<svg class="princhat-status-icon error" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>'
   //   };
   //   return icons[status];
   // }
@@ -1953,7 +1953,7 @@ class WhatsAppUIOverlay {
 
   private createTooltip() {
     this.tooltip = document.createElement('div');
-    this.tooltip.className = 'x1flox-tooltip';
+    this.tooltip.className = 'princhat-tooltip';
     this.tooltip.style.display = 'none';
     document.body.appendChild(this.tooltip);
   }
@@ -1979,34 +1979,34 @@ class WhatsAppUIOverlay {
 
   private updateShortcutBarVisibility() {
     // Check if shortcut bar exists in DOM, if not recreate it
-    const barInDOM = document.querySelector('.x1flox-shortcut-bar');
+    const barInDOM = document.querySelector('.princhat-shortcut-bar');
     if (!barInDOM && this.shortcutBar) {
-      console.log('[X1Flox UI] Shortcut bar was removed from DOM, recreating...');
+      console.log('[PrinChat UI] Shortcut bar was removed from DOM, recreating...');
       this.ensureShortcutBarInDOM();
     }
 
     const main = document.querySelector('#main');
     const hasActiveChat = main && main.querySelector('[data-tab]');
     const shouldShowShortcuts = hasActiveChat && this.showShortcuts;
-    const currentValue = document.body.getAttribute('data-x1flox-chat-active');
+    const currentValue = document.body.getAttribute('data-princhat-chat-active');
     const newValue = shouldShowShortcuts ? 'true' : 'false';
 
     // Detect chat changes and invalidate cache
     const currentChatElement = main?.querySelector('[data-tab]');
     if (currentChatElement && currentChatElement !== this.lastKnownChatElement) {
-      console.log('[X1Flox UI] Chat changed detected, invalidating cache');
+      console.log('[PrinChat UI] Chat changed detected, invalidating cache');
       this.invalidateChatCache();
       this.lastKnownChatElement = currentChatElement;
     } else if (!currentChatElement && this.lastKnownChatElement) {
       // Chat closed
-      console.log('[X1Flox UI] Chat closed, invalidating cache');
+      console.log('[PrinChat UI] Chat closed, invalidating cache');
       this.invalidateChatCache();
       this.lastKnownChatElement = null;
     }
 
     if (currentValue !== newValue) {
-      console.log('[X1Flox UI] Updating shortcut bar visibility:', newValue);
-      document.body.setAttribute('data-x1flox-chat-active', newValue);
+      console.log('[PrinChat UI] Updating shortcut bar visibility:', newValue);
+      document.body.setAttribute('data-princhat-chat-active', newValue);
     }
   }
 
@@ -2016,7 +2016,7 @@ class WhatsAppUIOverlay {
     // Try to find WhatsApp footer and insert shortcut bar inside it
     const footer = document.querySelector('#main footer');
     if (footer && !footer.contains(this.shortcutBar)) {
-      console.log('[X1Flox UI] Reinserting shortcut bar into footer');
+      console.log('[PrinChat UI] Reinserting shortcut bar into footer');
       footer.appendChild(this.shortcutBar);
     }
   }
@@ -2034,9 +2034,9 @@ class WhatsAppUIOverlay {
 
   private listenForExecutionEvents() {
     // Listen for script start (triggered when script is executed from anywhere)
-    document.addEventListener('X1FloxScriptStart', async (event: any) => {
+    document.addEventListener('PrinChatScriptStart', async (event: any) => {
       const { scriptName, totalSteps, scriptId, targetChatId, targetChatName, targetChatPhoto } = event.detail;
-      console.log('[X1Flox UI] Script started:', scriptName, 'with', totalSteps, 'steps');
+      console.log('[PrinChat UI] Script started:', scriptName, 'with', totalSteps, 'steps');
 
       // Determine which chat to show
       let chatName: string;
@@ -2046,13 +2046,13 @@ class WhatsAppUIOverlay {
         // Use provided target chat info (from trigger or specific execution)
         chatName = targetChatName;
         chatPhoto = targetChatPhoto; // Use photo from trigger/execution
-        console.log('[X1Flox UI] Using target chat:', chatName, 'ID:', targetChatId, 'Photo:', !!chatPhoto);
+        console.log('[PrinChat UI] Using target chat:', chatName, 'ID:', targetChatId, 'Photo:', !!chatPhoto);
       } else {
         // Get active chat info (for popup manual execution) with extended timeout
         const chatResponse = await this.requestFromContentScript({ type: 'GET_ACTIVE_CHAT' }, 15000);
         chatName = chatResponse?.data?.chatName || 'Chat';
         chatPhoto = chatResponse?.data?.chatPhoto || this.getChatPhoto();
-        console.log('[X1Flox UI] Using active chat:', chatName);
+        console.log('[PrinChat UI] Using active chat:', chatName);
       }
 
       // Create script execution object
@@ -2081,14 +2081,14 @@ class WhatsAppUIOverlay {
 
         this.updateStatusPopup();
       } else {
-        console.log('[X1Flox UI] Script execution popup is disabled in settings');
+        console.log('[PrinChat UI] Script execution popup is disabled in settings');
       }
     });
 
     // Listen for script progress
-    document.addEventListener('X1FloxScriptProgress', (event: any) => {
+    document.addEventListener('PrinChatScriptProgress', (event: any) => {
       const { scriptId, step, status } = event.detail;
-      console.log('[X1Flox UI] Script progress - scriptId:', scriptId, 'step:', step, 'status:', status);
+      console.log('[PrinChat UI] Script progress - scriptId:', scriptId, 'step:', step, 'status:', status);
 
       const scriptExec = this.runningScripts.get(scriptId);
       if (!scriptExec) return;
@@ -2103,9 +2103,9 @@ class WhatsAppUIOverlay {
     });
 
     // Listen for script completion
-    document.addEventListener('X1FloxScriptComplete', (event: any) => {
+    document.addEventListener('PrinChatScriptComplete', (event: any) => {
       const { scriptId, success } = event.detail;
-      console.log('[X1Flox UI] Script completed:', scriptId, success);
+      console.log('[PrinChat UI] Script completed:', scriptId, success);
 
       if (success) {
         this.moveToCompleted(scriptId);
@@ -2113,9 +2113,9 @@ class WhatsAppUIOverlay {
     });
 
     // Listen for script errors
-    document.addEventListener('X1FloxScriptError', (event: any) => {
+    document.addEventListener('PrinChatScriptError', (event: any) => {
       const { scriptId, error } = event.detail;
-      console.log('[X1Flox UI] Script error:', scriptId, error);
+      console.log('[PrinChat UI] Script error:', scriptId, error);
 
       const scriptExec = this.runningScripts.get(scriptId);
       if (scriptExec) {
@@ -2130,9 +2130,9 @@ class WhatsAppUIOverlay {
     });
 
     // Listen for message start (SAME logic as scripts)
-    document.addEventListener('X1FloxMessageStart', (event: any) => {
+    document.addEventListener('PrinChatMessageStart', (event: any) => {
       const { messageId, messagePreview, messageType, chatName, chatPhoto, hasDelay, sendDelay } = event.detail;
-      console.log('[X1Flox UI] Message started:', messagePreview);
+      console.log('[PrinChat UI] Message started:', messagePreview);
 
       // Create message execution object
       const messageExecution: MessageExecution = {
@@ -2163,14 +2163,14 @@ class WhatsAppUIOverlay {
         }
         this.updateMessageStatusPopup();
       } else {
-        console.log('[X1Flox UI] Message execution popup is disabled in settings');
+        console.log('[PrinChat UI] Message execution popup is disabled in settings');
       }
     });
 
     // Listen for message completion
-    document.addEventListener('X1FloxMessageComplete', (event: any) => {
+    document.addEventListener('PrinChatMessageComplete', (event: any) => {
       const { messageId, success } = event.detail;
-      console.log('[X1Flox UI] Message completed:', messageId, success);
+      console.log('[PrinChat UI] Message completed:', messageId, success);
 
       if (success) {
         this.moveMessageToCompleted(messageId);
@@ -2178,9 +2178,9 @@ class WhatsAppUIOverlay {
     });
 
     // Listen for message errors
-    document.addEventListener('X1FloxMessageError', (event: any) => {
+    document.addEventListener('PrinChatMessageError', (event: any) => {
       const { messageId, error } = event.detail;
-      console.log('[X1Flox UI] Message error:', messageId, error);
+      console.log('[PrinChat UI] Message error:', messageId, error);
 
       const msgExec = this.runningMessages.get(messageId);
       if (msgExec) {
@@ -2196,12 +2196,12 @@ class WhatsAppUIOverlay {
 
     // Listen for single message requests from popup/FAB
     // This routes popup messages through sendSingleMessage() so they show execution popup
-    document.addEventListener('X1FloxSendSingleMessageFromPopup', async (event: any) => {
+    document.addEventListener('PrinChatSendSingleMessageFromPopup', async (event: any) => {
       const { messageId } = event.detail;
-      console.log('[X1Flox UI] Single message request from popup, messageId:', messageId);
+      console.log('[PrinChat UI] Single message request from popup, messageId:', messageId);
 
       if (!messageId) {
-        console.error('[X1Flox UI] No messageId provided in event');
+        console.error('[PrinChat UI] No messageId provided in event');
         return;
       }
 
@@ -2209,17 +2209,17 @@ class WhatsAppUIOverlay {
       // This avoids chrome.tabs.sendMessage size limits for large media files
       const message = this.messages.find((m: any) => m.id === messageId);
       if (!message) {
-        console.error('[X1Flox UI] Message not found in cache:', messageId);
+        console.error('[PrinChat UI] Message not found in cache:', messageId);
         return;
       }
 
-      console.log('[X1Flox UI] Found message in cache, type:', message.type);
+      console.log('[PrinChat UI] Found message in cache, type:', message.type);
 
       // Message media data is already in base64 format from GET_SCRIPTS_AND_MESSAGES restoration
       // Call sendSingleMessage() which will:
       // 1. Capture chat info
       // 2. Create execution state
-      // 3. Dispatch X1FloxMessageStart event
+      // 3. Dispatch PrinChatMessageStart event
       // 4. Execute with delay/pause/cancel support
       await this.sendSingleMessage(message);
     });
@@ -2236,7 +2236,7 @@ class WhatsAppUIOverlay {
       if (msgExec && msgExec.status === 'sending' && execution && !execution.isPaused) {
         msgExec.elapsedSeconds++;
         const card = this.messageStatusPopup?.querySelector(`[data-message-id="${messageId}"]`);
-        const timerEl = card?.querySelector('.x1flox-script-card-timer');
+        const timerEl = card?.querySelector('.princhat-script-card-timer');
         if (timerEl) {
           timerEl.textContent = `${msgExec.elapsedSeconds}s`;
         }
@@ -2257,7 +2257,7 @@ class WhatsAppUIOverlay {
   private moveMessageToCompleted(messageId: string) {
     const msgExec = this.runningMessages.get(messageId);
     if (!msgExec) {
-      console.log('[X1Flox UI] Message not found in running messages:', messageId);
+      console.log('[PrinChat UI] Message not found in running messages:', messageId);
       return;
     }
 
@@ -2274,7 +2274,7 @@ class WhatsAppUIOverlay {
         if (this.showMessageExecutionPopup) {
           this.updateMessageStatusPopup();
         }
-        console.log('[X1Flox UI] Message moved to completed:', messageId);
+        console.log('[PrinChat UI] Message moved to completed:', messageId);
       }, 300);
     } else {
       msgExec.status = 'completed';
@@ -2284,49 +2284,49 @@ class WhatsAppUIOverlay {
       if (this.showMessageExecutionPopup) {
         this.updateMessageStatusPopup();
       }
-      console.log('[X1Flox UI] Message moved to completed:', messageId);
+      console.log('[PrinChat UI] Message moved to completed:', messageId);
     }
   }
 
   private listenForSettingsChanges() {
     // Listen for settings updates from content script
-    console.log('[X1Flox UI] Setting up X1FloxSettingsChanged listener...');
-    document.addEventListener('X1FloxSettingsChanged', (event: any) => {
-      console.log('[X1Flox UI] ⚙️ X1FloxSettingsChanged event received!');
+    console.log('[PrinChat UI] Setting up PrinChatSettingsChanged listener...');
+    document.addEventListener('PrinChatSettingsChanged', (event: any) => {
+      console.log('[PrinChat UI] ⚙️ PrinChatSettingsChanged event received!');
       const { settings } = event.detail;
-      console.log('[X1Flox UI] Settings changed:', settings);
+      console.log('[PrinChat UI] Settings changed:', settings);
 
       if (settings) {
         // Update local settings
         if (settings.requireSendConfirmation !== undefined) {
           this.requireConfirmation = settings.requireSendConfirmation;
-          console.log('[X1Flox UI] Updated requireConfirmation:', this.requireConfirmation);
+          console.log('[PrinChat UI] Updated requireConfirmation:', this.requireConfirmation);
         }
 
         if (settings.showShortcuts !== undefined) {
           const oldValue = this.showShortcuts;
           this.showShortcuts = settings.showShortcuts;
-          console.log('[X1Flox UI] Updated showShortcuts:', oldValue, '→', this.showShortcuts);
+          console.log('[PrinChat UI] Updated showShortcuts:', oldValue, '→', this.showShortcuts);
 
           // Update shortcut bar visibility immediately
-          console.log('[X1Flox UI] Calling updateShortcutBarVisibility()...');
+          console.log('[PrinChat UI] Calling updateShortcutBarVisibility()...');
           this.updateShortcutBarVisibility();
-          console.log('[X1Flox UI] ✅ Visibility updated');
+          console.log('[PrinChat UI] ✅ Visibility updated');
         }
 
         if (settings.showScriptExecutionPopup !== undefined) {
           const oldValue = this.showScriptExecutionPopup;
           this.showScriptExecutionPopup = settings.showScriptExecutionPopup;
-          console.log('[X1Flox UI] Updated showScriptExecutionPopup:', oldValue, '→', this.showScriptExecutionPopup);
+          console.log('[PrinChat UI] Updated showScriptExecutionPopup:', oldValue, '→', this.showScriptExecutionPopup);
 
           // If popup was just disabled, hide it (but keep tracking scripts)
           if (!this.showScriptExecutionPopup && this.statusPopup) {
-            console.log('[X1Flox UI] Hiding status popup (disabled in settings)');
+            console.log('[PrinChat UI] Hiding status popup (disabled in settings)');
             this.closeStatusPopup();
           }
           // If popup was just enabled and there are running scripts, show it
           else if (this.showScriptExecutionPopup && this.runningScripts.size > 0 && !this.statusPopup) {
-            console.log('[X1Flox UI] Creating status popup (enabled in settings with running scripts)');
+            console.log('[PrinChat UI] Creating status popup (enabled in settings with running scripts)');
             this.createStatusPopup();
             this.updateStatusPopup();
           }
@@ -2335,27 +2335,27 @@ class WhatsAppUIOverlay {
         if (settings.showMessageExecutionPopup !== undefined) {
           const oldValue = this.showMessageExecutionPopup;
           this.showMessageExecutionPopup = settings.showMessageExecutionPopup;
-          console.log('[X1Flox UI] Updated showMessageExecutionPopup:', oldValue, '→', this.showMessageExecutionPopup);
+          console.log('[PrinChat UI] Updated showMessageExecutionPopup:', oldValue, '→', this.showMessageExecutionPopup);
         }
       }
     });
-    console.log('[X1Flox UI] ✅ X1FloxSettingsChanged listener registered');
+    console.log('[PrinChat UI] ✅ PrinChatSettingsChanged listener registered');
   }
 
   private listenForDataChanges() {
     // Listen for data updates (messages, scripts, tags) from content script
-    console.log('[X1Flox UI] Setting up X1FloxDataChanged listener...');
-    document.addEventListener('X1FloxDataChanged', (event: any) => {
-      console.log('[X1Flox UI] 📊 X1FloxDataChanged event received!');
+    console.log('[PrinChat UI] Setting up PrinChatDataChanged listener...');
+    document.addEventListener('PrinChatDataChanged', (event: any) => {
+      console.log('[PrinChat UI] 📊 PrinChatDataChanged event received!');
       const { messagesChanged, scriptsChanged, tagsChanged } = event.detail;
-      console.log('[X1Flox UI] Changes:', { messagesChanged, scriptsChanged, tagsChanged });
+      console.log('[PrinChat UI] Changes:', { messagesChanged, scriptsChanged, tagsChanged });
 
       // Reload data and refresh UI
-      console.log('[X1Flox UI] Refreshing UI overlay with new data...');
+      console.log('[PrinChat UI] Refreshing UI overlay with new data...');
       this.refresh();
-      console.log('[X1Flox UI] ✅ UI overlay refreshed');
+      console.log('[PrinChat UI] ✅ UI overlay refreshed');
     });
-    console.log('[X1Flox UI] ✅ X1FloxDataChanged listener registered');
+    console.log('[PrinChat UI] ✅ PrinChatDataChanged listener registered');
   }
 
   private setupResizeListeners() {
@@ -2407,4 +2407,4 @@ if (document.readyState === 'loading') {
 }
 
 // Export for potential external access
-(window as any).x1floxUI = WhatsAppUIOverlay;
+(window as any).princhatUI = WhatsAppUIOverlay;

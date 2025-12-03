@@ -1,6 +1,6 @@
-# Guia de Desenvolvimento - X1Flox
+# Guia de Desenvolvimento - PrinChat
 
-Este documento contém todas as informações necessárias para desenvolver, testar e contribuir com o projeto X1Flox.
+Este documento contém todas as informações necessárias para desenvolver, testar e contribuir com o projeto PrinChat.
 
 ## 📋 Índice
 
@@ -30,7 +30,7 @@ Git: Para controle de versão
 1. **Clone o repositório**
    ```bash
    git clone <repository-url>
-   cd x1flox
+   cd princhat
    ```
 
 2. **Instale as dependências**
@@ -253,7 +253,7 @@ window.Store
 window.WPP
 
 // Ver eventos
-monitorEvents(document, 'X1Flox');
+monitorEvents(document, 'PrinChat');
 
 // Parar monitoramento
 unmonitorEvents(document);
@@ -367,12 +367,12 @@ db.version(2).stores({
 
 ```typescript
 // Use prefixes consistentes
-console.log('[X1Flox]', 'Message from ISOLATED world');
-console.log('[X1Flox Page]', 'Message from MAIN world');
-console.log('[X1Flox Store]', 'Store accessor logs');
+console.log('[PrinChat]', 'Message from ISOLATED world');
+console.log('[PrinChat Page]', 'Message from MAIN world');
+console.log('[PrinChat Store]', 'Store accessor logs');
 
 // Debug objects
-console.log('[X1Flox]', { audioData, duration, chatId });
+console.log('[PrinChat]', { audioData, duration, chatId });
 
 // Table format para arrays
 console.table(messages);
@@ -434,9 +434,9 @@ ls -la dist/manifest.json
 **Debug:**
 ```javascript
 // No console do WhatsApp Web
-document.getElementById('x1flox-marker')  // Deve existir
-window.__X1FLOX_INJECTED__  // Deve ser true
-window.__X1FLOX_VERSION__   // Deve ter versão
+document.getElementById('princhat-marker')  // Deve existir
+window.__PRINCHAT_INJECTED__  // Deve ser true
+window.__PRINCHAT_VERSION__   // Deve ter versão
 ```
 
 **Soluções:**
@@ -448,7 +448,7 @@ window.__X1FLOX_VERSION__   // Deve ter versão
 
 **Sintomas:**
 ```
-[X1Flox Loader] WPP available: false
+[PrinChat Loader] WPP available: false
 ❌ WPP library not loaded
 ```
 
@@ -760,7 +760,7 @@ du -sh dist/  # Tamanho total
 2. **Criar ZIP:**
    ```bash
    cd dist
-   zip -r ../x1flox-v1.0.0.zip .
+   zip -r ../princhat-v1.0.0.zip .
    ```
 
 3. **Upload:**

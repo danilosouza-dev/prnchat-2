@@ -1,5 +1,5 @@
 /**
- * Core data types for X1Flox Chrome Extension
+ * Core data types for PrinChat Chrome Extension
  * Defines the structure for Messages, Scripts, Triggers, and Storage
  */
 

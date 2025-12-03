@@ -1,4 +1,4 @@
-/* X1Flox Options Page Styles */
+/* PrinChat Options Page Styles */
 
 @tailwind base;
 @tailwind components;
@@ -33,7 +33,7 @@
     --ring: 340 82% 52%;
     --radius: 0.5rem;
 
-    /* X1Flox custom colors - tema rosa/pink do popup */
+    /* PrinChat custom colors - tema rosa/pink do popup */
     --primary-color: #e91e63;
     --secondary-color: #f06292;
     --accent-color: #c2185b;
@@ -57,19 +57,28 @@
     --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.5);
 
     /* Sidebar colors - dark theme com cores do popup (rosa/pink) */
-    --sidebar-background: 0 0% 10%;           /* #1a1a1a - background dark */
-    --sidebar-foreground: 0 0% 100%;          /* #ffffff - texto claro */
-    --sidebar-primary: 340 82% 52%;           /* #e91e63 - accent pink */
-    --sidebar-primary-foreground: 0 0% 100%;  /* #ffffff - texto sobre rosa */
-    --sidebar-accent: 340 82% 52%;            /* #e91e63 - rosa para hover/active */
-    --sidebar-accent-foreground: 0 0% 100%;   /* #ffffff - texto sobre rosa */
-    --sidebar-border: 0 0% 23%;               /* #3a3a3a - bordas */
-    --sidebar-ring: 340 82% 52%;              /* #e91e63 - focus ring */
+    --sidebar-background: 0 0% 10%;
+    /* #1a1a1a - background dark */
+    --sidebar-foreground: 0 0% 100%;
+    /* #ffffff - texto claro */
+    --sidebar-primary: 340 82% 52%;
+    /* #e91e63 - accent pink */
+    --sidebar-primary-foreground: 0 0% 100%;
+    /* #ffffff - texto sobre rosa */
+    --sidebar-accent: 340 82% 52%;
+    /* #e91e63 - rosa para hover/active */
+    --sidebar-accent-foreground: 0 0% 100%;
+    /* #ffffff - texto sobre rosa */
+    --sidebar-border: 0 0% 23%;
+    /* #3a3a3a - bordas */
+    --sidebar-ring: 340 82% 52%;
+    /* #e91e63 - focus ring */
   }
 }
 
 /* Estilos customizados para transições suaves da sidebar */
 @layer components {
+
   /* Transições muito suaves para a sidebar */
   [data-sidebar="sidebar"] {
     transition: all 600ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
@@ -78,9 +87,9 @@
   /* Transições suaves para os botões do menu - SEM movimento */
   [data-sidebar="menu-button"] {
     transition: background-color 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
-                color 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
-                border-left-color 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
-                padding-left 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+      color 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+      border-left-color 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+      padding-left 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
   }
 
   /* Estado ativo com rosa/pink */
@@ -101,7 +110,7 @@
   /* Trigger button com transição suave */
   [data-sidebar="trigger"] {
     transition: background-color 250ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
-                color 250ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+      color 250ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
   }
 
   [data-sidebar="trigger"]:hover {
@@ -195,6 +204,7 @@ body {
     opacity: 0;
     transform: translateY(10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -207,6 +217,7 @@ body {
     opacity: 0;
     max-height: 0;
   }
+
   to {
     opacity: 1;
     max-height: 2000px;
@@ -224,6 +235,7 @@ body {
     opacity: 0;
     transform: translateX(-20px);
   }
+
   to {
     opacity: 1;
     transform: translateX(0);
@@ -652,9 +664,12 @@ body {
 }
 
 @keyframes pulse {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 1;
   }
+
   50% {
     opacity: 0.3;
   }
@@ -1014,6 +1029,7 @@ body {
     opacity: 0;
     transform: translateX(-20px);
   }
+
   to {
     opacity: 1;
     transform: translateX(0);
@@ -1021,16 +1037,45 @@ body {
 }
 
 /* Staggered animation for triggers */
-.trigger-item:nth-child(1) { animation-delay: 0.05s; }
-.trigger-item:nth-child(2) { animation-delay: 0.1s; }
-.trigger-item:nth-child(3) { animation-delay: 0.15s; }
-.trigger-item:nth-child(4) { animation-delay: 0.2s; }
-.trigger-item:nth-child(5) { animation-delay: 0.25s; }
-.trigger-item:nth-child(6) { animation-delay: 0.3s; }
-.trigger-item:nth-child(7) { animation-delay: 0.35s; }
-.trigger-item:nth-child(8) { animation-delay: 0.4s; }
-.trigger-item:nth-child(9) { animation-delay: 0.45s; }
-.trigger-item:nth-child(n+10) { animation-delay: 0.5s; }
+.trigger-item:nth-child(1) {
+  animation-delay: 0.05s;
+}
+
+.trigger-item:nth-child(2) {
+  animation-delay: 0.1s;
+}
+
+.trigger-item:nth-child(3) {
+  animation-delay: 0.15s;
+}
+
+.trigger-item:nth-child(4) {
+  animation-delay: 0.2s;
+}
+
+.trigger-item:nth-child(5) {
+  animation-delay: 0.25s;
+}
+
+.trigger-item:nth-child(6) {
+  animation-delay: 0.3s;
+}
+
+.trigger-item:nth-child(7) {
+  animation-delay: 0.35s;
+}
+
+.trigger-item:nth-child(8) {
+  animation-delay: 0.4s;
+}
+
+.trigger-item:nth-child(9) {
+  animation-delay: 0.45s;
+}
+
+.trigger-item:nth-child(n+10) {
+  animation-delay: 0.5s;
+}
 
 .trigger-item.disabled {
   opacity: 0.6;
@@ -1473,6 +1518,7 @@ body {
     opacity: 0;
     transform: translateY(-10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -1485,7 +1531,7 @@ body {
 }
 
 /* Filter icon (only direct child SVG, not TagIcons inside nested elements) */
-.filter-input-wrapper > svg {
+.filter-input-wrapper>svg {
   position: absolute;
   left: 8px;
   top: 50%;
@@ -1516,7 +1562,7 @@ body {
   box-shadow: 0 0 0 2px rgba(233, 30, 99, 0.15);
 }
 
-.filter-input-wrapper:focus-within > svg {
+.filter-input-wrapper:focus-within>svg {
   color: var(--accent-pink);
 }
 
@@ -1547,11 +1593,11 @@ body {
   overflow: hidden;
 }
 
-.tag-option > svg {
+.tag-option>svg {
   flex-shrink: 0;
 }
 
-.tag-option > span {
+.tag-option>span {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1580,11 +1626,11 @@ body {
   overflow: hidden;
 }
 
-.selected-tag > svg {
+.selected-tag>svg {
   flex-shrink: 0;
 }
 
-.selected-tag > span {
+.selected-tag>span {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1631,7 +1677,36 @@ body {
   * {
     @apply border-border;
   }
+
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* Empty State Centering */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 60vh;
+  width: 100%;
+  color: var(--text-secondary);
+  animation: fadeIn 0.5s ease-out;
+}
+
+.empty-state h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.5rem;
+  margin-top: 1rem;
+}
+
+.empty-state p {
+  font-size: 0.9rem;
+  max-width: 400px;
+  line-height: 1.5;
+  margin-bottom: 1.5rem;
 }
