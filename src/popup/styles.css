@@ -612,7 +612,7 @@ body {
   height: 100%;
   background-color: #22c55e;
   border-radius: 50%;
-  animation: pulse-ring 1.5s ease-out infinite;
+  animation: pulse-ring 0.8s ease-out infinite;
 }
 
 @keyframes pulse-ring {
