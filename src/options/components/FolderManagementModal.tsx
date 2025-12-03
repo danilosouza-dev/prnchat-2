@@ -7,6 +7,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
   Button,
   Input,
@@ -233,9 +234,9 @@ const FolderManagementModal: React.FC<FolderManagementModalProps> = ({
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle className="text-xl">Gerenciar pastas</DialogTitle>
-            <p className="text-sm text-[var(--text-secondary)] mt-1">
+            <DialogDescription className="text-sm text-[var(--text-secondary)] mt-1">
               Reorganize, edite nomes e cores das suas pastas
-            </p>
+            </DialogDescription>
           </DialogHeader>
 
           <div className="flex-1 overflow-y-auto py-4">
@@ -348,6 +349,9 @@ const FolderManagementModal: React.FC<FolderManagementModalProps> = ({
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>{editingFolder ? 'Editar pasta' : 'Criar nova pasta'}</DialogTitle>
+            <DialogDescription>
+              {editingFolder ? 'Edite o nome e a cor da pasta.' : 'Defina o nome e a cor para a nova pasta.'}
+            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-4">
@@ -369,11 +373,10 @@ const FolderManagementModal: React.FC<FolderManagementModalProps> = ({
                   <button
                     key={color}
                     onClick={() => setFolderColor(color)}
-                    className={`w-10 h-10 rounded-md border-2 transition-all ${
-                      folderColor === color
-                        ? 'border-white scale-110'
-                        : 'border-transparent hover:scale-105'
-                    }`}
+                    className={`w-10 h-10 rounded-md border-2 transition-all ${folderColor === color
+                      ? 'border-white scale-110'
+                      : 'border-transparent hover:scale-105'
+                      }`}
                     style={{ backgroundColor: color }}
                   />
                 ))}
