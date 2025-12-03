@@ -1,28 +1,42 @@
 import React, { useState, useEffect } from 'react';
-import { Trigger, Script, Message } from '@/types';
+import { Trigger, TriggerCondition, Script } from '@/types';
 import { db } from '@/storage/db';
-import { generateId } from '@/utils/helpers';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
-import { Plus, Trash2, Edit, Zap, FileText, MessageSquare, Search } from 'lucide-react';
+import { generateId, downloadFile, formatDate } from '@/utils/helpers';
+import { Button, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Badge, AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui';
+import { Plus, Download, Upload, Target, Play, Pause, Edit2, Trash2, ChevronDown, ChevronUp, Zap, AlertCircle } from 'lucide-react';
+import { toast } from 'sonner';
+import NewTriggerModal from '../components/NewTriggerModal';
 
-const TriggersTab: React.FC = () => {
+interface TriggersTabProps {
+  setHeaderActions?: (actions: React.ReactNode) => void;
+}
+
+interface TriggerFormData {
+  name: string;
+  description: string;
+  enabled: boolean;
+  scriptId: string;
+  conditions: TriggerCondition[];
+  skipContacts?: boolean;
+  skipGroups?: boolean;
+}
+
+const TriggersTab: React.FC<TriggersTabProps> = ({ setHeaderActions }) => {
   const [triggers, setTriggers] = useState<Trigger[]>([]);
   const [scripts, setScripts] = useState<Script[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [editingTrigger, setEditingTrigger] = useState<Trigger | null>(null);
-  const [formData, setFormData] = useState({
-    keyword: '',
-    matchType: 'exact' as 'exact' | 'contains' | 'startsWith' | 'endsWith',
-    actionType: 'script' as 'script' | 'message',
-    actionId: '',
-    isActive: true,
+  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [triggerToDelete, setTriggerToDelete] = useState<string | null>(null);
+  const [formData, setFormData] = useState<TriggerFormData>({
+    name: '',
+    description: '',
+    enabled: true,
+    scriptId: '',
+    conditions: [],
+    skipContacts: false,
+    skipGroups: false,
   });
 
   useEffect(() => {
@@ -30,318 +44,445 @@ const TriggersTab: React.FC = () => {
   }, []);
 
   const loadData = async () => {
-    const [triggersData, scriptsData, messagesData] = await Promise.all([
+    const [triggersData, scriptsData] = await Promise.all([
       db.getAllTriggers(),
       db.getAllScripts(),
-      db.getAllMessages(),
     ]);
     setTriggers(triggersData.sort((a, b) => b.createdAt - a.createdAt));
     setScripts(scriptsData);
-    setMessages(messagesData);
   };
 
   const handleCreateNew = () => {
+    if (scripts.length === 0) {
+      alert('Crie pelo menos um script primeiro!');
+      return;
+    }
+    setIsCreating(true);
     setEditingTrigger(null);
     setFormData({
-      keyword: '',
-      matchType: 'exact',
-      actionType: 'script',
-      actionId: scripts.length > 0 ? scripts[0].id : '', // Default to first script if available
-      isActive: true,
+      name: '',
+      description: '',
+      enabled: true,
+      scriptId: scripts[0].id,
+      conditions: [],
+      skipContacts: false,
+      skipGroups: false,
     });
-    setIsDialogOpen(true);
   };
+
+  const handleExport = async () => {
+    try {
+      const data = await db.exportData();
+      downloadFile(data, `x1flox-backup-${Date.now()}.json`, 'application/json');
+    } catch (error) {
+      console.error('Error exporting data:', error);
+      alert('Erro ao exportar dados');
+    }
+  };
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const content = await file.text();
+      await db.importData(content);
+      await loadData();
+      alert('Dados importados com sucesso!');
+    } catch (error) {
+      console.error('Error importing data:', error);
+      alert('Erro ao importar dados');
+    }
+  };
+
+  // Expor actions para o header global
+  useEffect(() => {
+    if (setHeaderActions) {
+      setHeaderActions(
+        <>
+          <Button variant="ghost" size="sm" onClick={handleExport} title="Exportar">
+            <Download size={16} />
+            Exportar
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => document.getElementById('import-file-triggers')?.click()} title="Importar">
+            <Upload size={16} />
+            Importar
+          </Button>
+          <input
+            id="import-file-triggers"
+            type="file"
+            accept=".json"
+            onChange={handleImport}
+            style={{ display: 'none' }}
+          />
+          <Button variant="accent" onClick={handleCreateNew} size="sm">
+            <Plus size={16} />
+            Novo Gatilho
+          </Button>
+        </>
+      );
+    }
+
+    return () => {
+      if (setHeaderActions) {
+        setHeaderActions(null);
+      }
+    };
+  }, [handleExport, handleImport, handleCreateNew, setHeaderActions]);
 
   const handleEdit = (trigger: Trigger) => {
+    setIsCreating(true);
     setEditingTrigger(trigger);
     setFormData({
-      keyword: trigger.keyword,
-      matchType: trigger.matchType,
-      actionType: trigger.actionType,
-      actionId: trigger.actionId,
-      isActive: trigger.isActive,
+      name: trigger.name,
+      description: trigger.description || '',
+      enabled: trigger.enabled,
+      scriptId: trigger.scriptId,
+      conditions: trigger.conditions,
+      skipContacts: trigger.skipContacts || false,
+      skipGroups: trigger.skipGroups || false,
     });
-    setIsDialogOpen(true);
   };
 
-  const handleCloseDialog = () => {
-    setIsDialogOpen(false);
+  const handleCancel = () => {
+    setIsCreating(false);
     setEditingTrigger(null);
+    setFormData({
+      name: '',
+      description: '',
+      enabled: true,
+      scriptId: scripts[0]?.id || '',
+      conditions: [],
+      skipContacts: false,
+      skipGroups: false,
+    });
   };
 
   const handleSave = async () => {
-    if (!formData.keyword.trim()) {
-      alert('Por favor, preencha a palavra-chave');
+    if (!formData.name.trim()) {
+      toast.error('Por favor, preencha o nome do gatilho');
       return;
     }
 
-    if (!formData.actionId) {
-      alert('Por favor, selecione uma ação (script ou mensagem)');
+    if (formData.conditions.length === 0) {
+      toast.error('Adicione pelo menos uma condição');
+      return;
+    }
+
+    if (!formData.scriptId) {
+      toast.error('Selecione um script');
       return;
     }
 
     try {
       const trigger: Trigger = {
         id: editingTrigger?.id || generateId(),
-        keyword: formData.keyword.toLowerCase(),
-        matchType: formData.matchType,
-        actionType: formData.actionType,
-        actionId: formData.actionId,
-        isActive: formData.isActive,
+        name: formData.name,
+        description: formData.description,
+        enabled: formData.enabled,
+        scriptId: formData.scriptId,
+        conditions: formData.conditions,
+        skipContacts: formData.skipContacts,
+        skipGroups: formData.skipGroups,
         createdAt: editingTrigger?.createdAt || Date.now(),
         updatedAt: Date.now(),
       };
 
       await db.saveTrigger(trigger);
       await loadData();
-      handleCloseDialog();
+      handleCancel();
+
+      if (editingTrigger) {
+        toast.success('Gatilho atualizado com sucesso!');
+      } else {
+        toast.success('Gatilho criado com sucesso!');
+      }
     } catch (error) {
       console.error('Error saving trigger:', error);
-      alert('Erro ao salvar gatilho');
+      toast.error('Erro ao salvar gatilho');
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (confirm('Tem certeza que deseja excluir este gatilho?')) {
-      try {
-        await db.deleteTrigger(id);
-        await loadData();
-      } catch (error) {
-        console.error('Error deleting trigger:', error);
-        alert('Erro ao excluir gatilho');
-      }
-    }
+  const handleDelete = (id: string) => {
+    setTriggerToDelete(id);
+    setDeleteDialogOpen(true);
   };
 
-  const handleToggleActive = async (trigger: Trigger) => {
+  const confirmDeleteTrigger = async () => {
+    if (!triggerToDelete) return;
+
     try {
-      await db.saveTrigger({
-        ...trigger,
-        isActive: !trigger.isActive,
-        updatedAt: Date.now(),
-      });
+      await db.deleteTrigger(triggerToDelete);
       await loadData();
+      setDeleteDialogOpen(false);
+      setTriggerToDelete(null);
+      toast.success('Gatilho excluído com sucesso!');
+    } catch (error) {
+      console.error('Error deleting trigger:', error);
+      toast.error('Erro ao excluir gatilho');
+    }
+  };
+
+
+  const handleToggleEnabled = async (trigger: Trigger) => {
+    try {
+      await db.saveTrigger({ ...trigger, enabled: !trigger.enabled, updatedAt: Date.now() });
+      await loadData();
+      toast.success(trigger.enabled ? 'Gatilho desativado!' : 'Gatilho ativado!');
     } catch (error) {
       console.error('Error toggling trigger:', error);
+      toast.error('Erro ao atualizar gatilho');
     }
   };
 
-  const getActionName = (type: 'script' | 'message', id: string): string => {
-    if (type === 'script') {
-      const script = scripts.find((s) => s.id === id);
-      return script ? `Script: ${script.name}` : 'Script não encontrado';
-    } else {
-      const message = messages.find((m) => m.id === id);
-      return message
-        ? `Mensagem: ${message.content.substring(0, 30)}${message.content.length > 30 ? '...' : ''
-        }`
-        : 'Mensagem não encontrada';
-    }
+  const toggleCardExpansion = (triggerId: string) => {
+    setExpandedCards(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(triggerId)) {
+        newSet.delete(triggerId);
+      } else {
+        newSet.add(triggerId);
+      }
+      return newSet;
+    });
   };
 
-  const getMatchTypeLabel = (type: string) => {
-    switch (type) {
-      case 'exact': return 'Exata';
-      case 'contains': return 'Contém';
-      case 'startsWith': return 'Começa com';
-      case 'endsWith': return 'Termina com';
-      default: return type;
-    }
+  const getScriptName = (scriptId: string): string => {
+    const script = scripts.find((s) => s.id === scriptId);
+    return script?.name || 'Script não encontrado';
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight">Gatilhos</h2>
-          <p className="text-muted-foreground mt-1">
-            Configure respostas automáticas baseadas em palavras-chave.
-          </p>
-        </div>
-        <Button onClick={handleCreateNew}>
-          <Plus className="mr-2 h-4 w-4" /> Novo Gatilho
-        </Button>
-      </div>
+    <div className="tab-content">
+      {/* Modal de criação/edição */}
+      <NewTriggerModal
+        open={isCreating}
+        onOpenChange={setIsCreating}
+        editingTrigger={editingTrigger}
+        formData={formData}
+        setFormData={setFormData}
+        scripts={scripts}
+        onSave={handleSave}
+        onCancel={handleCancel}
+      />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {triggers.map((trigger) => (
-          <Card key={trigger.id} className={`hover:shadow-md transition-shadow ${!trigger.isActive ? 'opacity-70' : ''}`}>
+      {/* Lista de Gatilhos */}
+      <div className="triggers-list-container" style={{ marginTop: '4rem', paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
+        <div className="triggers-list">
+        {triggers.map((trigger) => {
+          const isExpanded = expandedCards.has(trigger.id);
+
+          return (
+          <Card
+            key={trigger.id}
+            className="hover:shadow-xl transition-all duration-200 border-border/50 animate-card-entry"
+            style={{
+              '--card-index': triggers.findIndex(t => t.id === trigger.id)
+            } as React.CSSProperties}
+          >
             <CardHeader className="pb-3">
               <div className="flex justify-between items-start">
-                <div className="flex items-center gap-2">
-                  <div className={`p-2 rounded-full ${trigger.isActive ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>
-                    <Zap className="h-4 w-4" />
+                <div className="flex-1 flex items-start gap-3">
+                  {/* Ícone de status */}
+                  <div className={`flex items-center justify-center w-10 h-10 rounded-lg flex-shrink-0 transition-all ${
+                    trigger.enabled
+                      ? 'bg-success/20 text-success'
+                      : 'bg-muted text-muted-foreground'
+                  }`}>
+                    {trigger.enabled ? <Target size={20} /> : <Pause size={20} />}
                   </div>
-                  <div>
-                    <CardTitle className="text-lg font-medium">{trigger.keyword}</CardTitle>
-                    <CardDescription className="text-xs mt-1">
-                      Correspondência: {getMatchTypeLabel(trigger.matchType)}
-                    </CardDescription>
+
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <CardTitle className="text-lg font-semibold text-foreground">
+                        {trigger.name}
+                      </CardTitle>
+                      <Badge
+                        variant={trigger.enabled ? "success" : "secondary"}
+                        className="text-xs"
+                      >
+                        {trigger.enabled ? (
+                          <><Play size={12} className="mr-1" /> Ativo</>
+                        ) : (
+                          <><Pause size={12} className="mr-1" /> Inativo</>
+                        )}
+                      </Badge>
+                    </div>
+                    {trigger.description && (
+                      <CardDescription className="text-sm text-muted-foreground mt-1">
+                        {trigger.description}
+                      </CardDescription>
+                    )}
                   </div>
                 </div>
-                <Switch
-                  checked={trigger.isActive}
-                  onCheckedChange={() => handleToggleActive(trigger)}
-                />
+                <div className="flex gap-2 ml-4">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => toggleCardExpansion(trigger.id)}
+                    title={isExpanded ? "Recolher" : "Expandir"}
+                    className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-[#e91e63] hover:scale-110"
+                  >
+                    {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                  </Button>
+
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleToggleEnabled(trigger)}
+                    title={trigger.enabled ? "Desativar gatilho" : "Ativar gatilho"}
+                    className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-[#e91e63] hover:scale-110"
+                  >
+                    {trigger.enabled ? <Pause size={18} /> : <Play size={18} />}
+                  </Button>
+
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleEdit(trigger)}
+                    title="Editar gatilho"
+                    className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-[#e91e63] hover:scale-110"
+                  >
+                    <Edit2 size={18} />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleDelete(trigger.id)}
+                    title="Excluir gatilho"
+                    className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-red-500 hover:scale-110"
+                  >
+                    <Trash2 size={18} />
+                  </Button>
+                </div>
               </div>
             </CardHeader>
-            <CardContent className="pb-3">
-              <div className="bg-muted/30 rounded-lg p-3 text-sm">
-                <div className="text-muted-foreground text-xs mb-1 uppercase tracking-wider font-semibold">Responde com</div>
-                <div className="flex items-center gap-2">
-                  {trigger.actionType === 'script' ? (
-                    <FileText className="h-4 w-4 text-blue-500" />
-                  ) : (
-                    <MessageSquare className="h-4 w-4 text-green-500" />
-                  )}
-                  <span className="font-medium truncate">
-                    {getActionName(trigger.actionType, trigger.actionId)}
-                  </span>
-                </div>
-              </div>
-            </CardContent>
-            <div className="px-6 pb-4 pt-0 flex justify-end gap-2">
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(trigger)}>
-                <Edit className="h-4 w-4" />
-              </Button>
-              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDelete(trigger.id)}>
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </div>
-          </Card>
-        ))}
 
-        {triggers.length === 0 && (
-          <div className="col-span-full flex flex-col items-center justify-center p-12 border-2 border-dashed rounded-lg text-muted-foreground bg-muted/10">
-            <Zap className="h-12 w-12 mb-4 opacity-20" />
-            <h3 className="text-lg font-medium">Nenhum gatilho criado</h3>
-            <p className="text-sm mb-4">Crie gatilhos para responder automaticamente a mensagens.</p>
-            <Button onClick={handleCreateNew}>
-              <Plus className="mr-2 h-4 w-4" /> Criar Gatilho
-            </Button>
+            {isExpanded && (
+              <div className="animate-expand-smooth">
+                <CardContent className="pb-3 space-y-3">
+                  {/* Script associado */}
+                  <div className="flex items-center gap-2 p-3 bg-secondary/30 rounded-lg border border-border/30">
+                    <Zap size={16} className="text-[#e91e63] flex-shrink-0" />
+                    <div className="flex-1">
+                      <p className="text-xs text-muted-foreground">Script a executar</p>
+                      <p className="text-sm font-medium text-foreground">{getScriptName(trigger.scriptId)}</p>
+                    </div>
+                  </div>
+
+                  {/* Condições */}
+                  <div>
+                    <p className="text-xs font-medium text-foreground mb-2">Condições ({trigger.conditions.length}):</p>
+                    <div className="space-y-2">
+                      {trigger.conditions.map((condition, index) => (
+                        <div
+                          key={index}
+                          className="flex items-start gap-2 p-2.5 bg-secondary/20 rounded border border-border/20"
+                        >
+                          <div className="flex items-center justify-center w-5 h-5 rounded-full bg-primary/20 text-primary text-xs font-bold flex-shrink-0 mt-0.5">
+                            {index + 1}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs text-foreground">
+                              <span className="font-medium capitalize">{condition.type.replace('_', ' ')}</span>
+                              {': '}
+                              <span className="text-muted-foreground">{condition.value}</span>
+                            </p>
+                            {condition.caseSensitive && (
+                              <Badge variant="secondary" className="mt-1 text-[10px] px-1.5 py-0">
+                                Case sensitive
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {trigger.conditions.length > 1 && (
+                      <div className="flex items-start gap-2 mt-2 p-2 bg-blue-500/10 rounded border border-blue-500/20">
+                        <AlertCircle size={14} className="text-blue-500 flex-shrink-0 mt-0.5" />
+                        <p className="text-xs text-blue-500">
+                          Todas as condições devem ser verdadeiras (AND) para o gatilho ser ativado
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Opções de Envio */}
+                  {(trigger.skipContacts || trigger.skipGroups) && (
+                    <div>
+                      <p className="text-xs font-medium text-foreground mb-2">Restrições de envio:</p>
+                      <div className="flex flex-wrap gap-2">
+                        {trigger.skipContacts && (
+                          <Badge variant="secondary" className="text-xs">
+                            Não envia para contatos
+                          </Badge>
+                        )}
+                        {trigger.skipGroups && (
+                          <Badge variant="secondary" className="text-xs">
+                            Não envia para grupos
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+
+                <CardFooter className="pt-3 flex-wrap gap-2 text-xs text-muted-foreground">
+                  <span>Criado em: {formatDate(trigger.createdAt)}</span>
+                </CardFooter>
+              </div>
+            )}
+          </Card>
+          );
+        })}
+        </div>
+
+        {triggers.length === 0 && !isCreating && (
+          <div className="empty-state-large">
+            <div className="empty-icon" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+              <Target size={64} className="text-muted-foreground opacity-50" />
+            </div>
+            <h3>Nenhum gatilho criado</h3>
+            <p>
+              Crie gatilhos para executar scripts automaticamente quando mensagens
+              recebidas atendem certas condições
+            </p>
+            {scripts.length === 0 ? (
+              <Button variant="secondary" disabled>
+                <AlertCircle size={16} />
+                Crie um script primeiro
+              </Button>
+            ) : (
+              <Button variant="accent" onClick={handleCreateNew}>
+                <Plus size={16} />
+                Criar Primeiro Gatilho
+              </Button>
+            )}
           </div>
         )}
       </div>
 
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent
-          className="max-w-md bg-background border border-border shadow-lg sm:rounded-xl"
-          style={{ backgroundColor: '#09090b', borderColor: '#27272a' }}
-        >
-          <DialogHeader>
-            <DialogTitle>{editingTrigger ? 'Editar Gatilho' : 'Novo Gatilho'}</DialogTitle>
-            <DialogDescription>
-              Defina a palavra-chave e a ação correspondente.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label>Palavra-chave</Label>
-              <div className="relative">
-                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  value={formData.keyword}
-                  onChange={(e) => setFormData({ ...formData, keyword: e.target.value })}
-                  placeholder="Ex: preço, olá, suporte"
-                  className="pl-8"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Tipo de Correspondência</Label>
-              <Select
-                value={formData.matchType}
-                onValueChange={(v: any) => setFormData({ ...formData, matchType: v })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="exact">Exata (igual a)</SelectItem>
-                  <SelectItem value="contains">Contém (parte do texto)</SelectItem>
-                  <SelectItem value="startsWith">Começa com</SelectItem>
-                  <SelectItem value="endsWith">Termina com</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Tipo de Ação</Label>
-              <div className="grid grid-cols-2 gap-2">
-                <Button
-                  type="button"
-                  variant={formData.actionType === 'script' ? 'default' : 'outline'}
-                  onClick={() => setFormData({ ...formData, actionType: 'script', actionId: scripts.length > 0 ? scripts[0].id : '' })}
-                  className="justify-start"
-                >
-                  <FileText className="mr-2 h-4 w-4" />
-                  Executar Script
-                </Button>
-                <Button
-                  type="button"
-                  variant={formData.actionType === 'message' ? 'default' : 'outline'}
-                  onClick={() => setFormData({ ...formData, actionType: 'message', actionId: messages.length > 0 ? messages[0].id : '' })}
-                  className="justify-start"
-                >
-                  <MessageSquare className="mr-2 h-4 w-4" />
-                  Enviar Mensagem
-                </Button>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>{formData.actionType === 'script' ? 'Selecionar Script' : 'Selecionar Mensagem'}</Label>
-              <Select
-                value={formData.actionId}
-                onValueChange={(v) => setFormData({ ...formData, actionId: v })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={formData.actionType === 'script' ? "Escolha um script..." : "Escolha uma mensagem..."} />
-                </SelectTrigger>
-                <SelectContent>
-                  {formData.actionType === 'script' ? (
-                    scripts.length > 0 ? (
-                      scripts.map((script) => (
-                        <SelectItem key={script.id} value={script.id}>
-                          {script.name}
-                        </SelectItem>
-                      ))
-                    ) : (
-                      <div className="p-2 text-sm text-muted-foreground text-center">Nenhum script disponível</div>
-                    )
-                  ) : (
-                    messages.length > 0 ? (
-                      messages.map((message) => (
-                        <SelectItem key={message.id} value={message.id}>
-                          {message.content.substring(0, 50)}
-                        </SelectItem>
-                      ))
-                    ) : (
-                      <div className="p-2 text-sm text-muted-foreground text-center">Nenhuma mensagem disponível</div>
-                    )
-                  )}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="flex items-center space-x-2 pt-2">
-              <Switch
-                id="is-active"
-                checked={formData.isActive}
-                onCheckedChange={(checked) => setFormData({ ...formData, isActive: checked })}
-              />
-              <Label htmlFor="is-active">Gatilho Ativo</Label>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={handleCloseDialog}>Cancelar</Button>
-            <Button onClick={handleSave}>{editingTrigger ? 'Atualizar' : 'Criar'}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Alert Dialog para confirmação de exclusão */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir Gatilho</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir este gatilho? Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel asChild>
+              <Button variant="secondary">Cancelar</Button>
+            </AlertDialogCancel>
+            <AlertDialogAction asChild>
+              <Button variant="danger" onClick={confirmDeleteTrigger}>
+                Excluir
+              </Button>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

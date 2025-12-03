@@ -180,6 +180,10 @@
             continue;
           }
 
+          // IMPORTANT: In scripts, we use step.delayAfter as the delay BEFORE sending (not after)
+          // The message's original sendDelay is ignored - only script timing matters
+          const scriptDelay = step.delayAfter || 0;
+
           // Send message
           let result;
 
@@ -189,23 +193,23 @@
           } else {
             switch (message.type) {
               case 'text':
-                // For text: delay is handled by page script as typing animation duration
+                // Use script delay (delayAfter) with message animation settings
                 result = await this.injector.sendTextMessage(
                   message.content,
                   execution.targetChatId,
                   message.showTyping,
-                  message.sendDelay
+                  scriptDelay  // Use script delay, not message.sendDelay
                 );
                 break;
               case 'audio':
                 if (message.audioData) {
-                  // For audio: delay is handled by page script as recording animation duration
+                  // Use script delay (delayAfter) with message animation settings
                   result = await this.injector.sendAudio({
                     audioData: message.audioData,
                     duration: message.duration,
                     chatId: execution.targetChatId,
                     showRecording: message.showRecording,
-                    sendDelay: message.sendDelay
+                    sendDelay: scriptDelay  // Use script delay, not message.sendDelay
                   });
                 } else {
                   result = { success: false, error: 'Audio data missing' };
@@ -213,9 +217,9 @@
                 break;
               case 'image':
                 if (message.imageData) {
-                  // For image: apply delay before sending (no animation)
-                  if (message.sendDelay && message.sendDelay > 0) {
-                    await this.delay(message.sendDelay, execution);
+                  // For image: apply script delay before sending (no animation)
+                  if (scriptDelay > 0) {
+                    await this.delay(scriptDelay, execution);
                   }
                   result = await this.injector.sendImage({
                     imageData: message.imageData,
@@ -228,9 +232,9 @@
                 break;
               case 'video':
                 if (message.videoData) {
-                  // For video: apply delay before sending (no animation)
-                  if (message.sendDelay && message.sendDelay > 0) {
-                    await this.delay(message.sendDelay, execution);
+                  // For video: apply script delay before sending (no animation)
+                  if (scriptDelay > 0) {
+                    await this.delay(scriptDelay, execution);
                   }
                   result = await this.injector.sendVideo({
                     videoData: message.videoData,
@@ -239,6 +243,22 @@
                   });
                 } else {
                   result = { success: false, error: 'Video data missing' };
+                }
+                break;
+              case 'file':
+                if (message.fileData) {
+                  // For file: apply script delay before sending (no animation)
+                  if (scriptDelay > 0) {
+                    await this.delay(scriptDelay, execution);
+                  }
+                  result = await this.injector.sendFile({
+                    fileData: message.fileData,
+                    fileName: message.fileName || 'file',
+                    caption: message.caption || '',
+                    chatId: execution.targetChatId
+                  });
+                } else {
+                  result = { success: false, error: 'File data missing' };
                 }
                 break;
               default:
@@ -258,15 +278,16 @@
                 status: 'success'
               }
             }));
+
+            // CRITICAL: Wait after sending message to ensure WhatsApp completes the send
+            // before starting the next animation (prevents next animation from being cut)
+            if (i < script.steps.length - 1) {
+              console.log('[X1Flox] Waiting 800ms for message to fully send before next animation...');
+              await new Promise(resolve => setTimeout(resolve, 800));
+            }
           } else {
             console.error('[X1Flox] Failed to send message:', result?.error);
             // Continue to next message even if one fails
-          }
-
-          // Delay before next message
-          if (i < script.steps.length - 1 && step.delayAfter > 0) {
-            console.log('[X1Flox] Waiting', step.delayAfter, 'ms before next message');
-            await this.delay(step.delayAfter, execution);
           }
         }
 
@@ -570,6 +591,34 @@
             // Forward to background service worker
             response = await chrome.runtime.sendMessage(message);
             console.log('[X1Flox] Got response from background:', response);
+
+            // Restore large media data from temp storage (for GET_SCRIPTS_AND_MESSAGES)
+            if (message.type === 'GET_SCRIPTS_AND_MESSAGES' && response.success) {
+              console.log('[X1Flox Injector] 🔍 DEBUG - Before restoration, checking messages...');
+              const fileMessages = response.data.messages?.filter((m: any) => m.type === 'file') || [];
+              fileMessages.forEach((msg: any) => {
+                console.log('[X1Flox Injector] 🔍 File message BEFORE restoration:', {
+                  id: msg.id,
+                  fileData: msg.fileData,
+                  fileDataType: typeof msg.fileData,
+                  isString: typeof msg.fileData === 'string',
+                  startsWithTemp: typeof msg.fileData === 'string' && msg.fileData.startsWith('__TEMP_STORAGE__:')
+                });
+              });
+
+              response.data.messages = await this.restoreTempMediaData(response.data.messages);
+
+              console.log('[X1Flox Injector] 🔍 DEBUG - After restoration, checking messages...');
+              const fileMessagesAfter = response.data.messages?.filter((m: any) => m.type === 'file') || [];
+              fileMessagesAfter.forEach((msg: any) => {
+                console.log('[X1Flox Injector] 🔍 File message AFTER restoration:', {
+                  id: msg.id,
+                  hasFileData: !!msg.fileData,
+                  fileDataType: typeof msg.fileData,
+                  fileDataLength: typeof msg.fileData === 'string' ? msg.fileData.length : 0
+                });
+              });
+            }
           } else {
             console.log('[X1Flox] Handling as action:', message.type);
             // Handle as action (EXECUTE_SCRIPT, SEND_MESSAGE, etc)
@@ -646,6 +695,70 @@
         }
       });
       console.log('[X1Flox] ✅ Storage change listener registered');
+    }
+
+    /**
+     * Restore large media data from chrome.storage.local
+     * Service worker stores large Base64 strings separately to avoid message size limits
+     */
+    private async restoreTempMediaData(messages: any[]): Promise<any[]> {
+      console.log('[X1Flox Injector] 🔍 restoreTempMediaData called with', messages.length, 'messages');
+      const keysToRestore: string[] = [];
+      const messageReferences: { message: any; field: string; key: string }[] = [];
+
+      // Find all temp storage references
+      for (const msg of messages) {
+        if (msg.type === 'file' && typeof msg.fileData === 'string' && msg.fileData.startsWith('__TEMP_STORAGE__:')) {
+          const key = msg.fileData.replace('__TEMP_STORAGE__:', '');
+          console.log('[X1Flox Injector] 🔍 Found file with temp storage key:', key);
+          keysToRestore.push(key);
+          messageReferences.push({ message: msg, field: 'fileData', key });
+        }
+        if (msg.type === 'image' && typeof msg.imageData === 'string' && msg.imageData.startsWith('__TEMP_STORAGE__:')) {
+          const key = msg.imageData.replace('__TEMP_STORAGE__:', '');
+          console.log('[X1Flox Injector] 🔍 Found image with temp storage key:', key);
+          keysToRestore.push(key);
+          messageReferences.push({ message: msg, field: 'imageData', key });
+        }
+        if (msg.type === 'video' && typeof msg.videoData === 'string' && msg.videoData.startsWith('__TEMP_STORAGE__:')) {
+          const key = msg.videoData.replace('__TEMP_STORAGE__:', '');
+          console.log('[X1Flox Injector] 🔍 Found video with temp storage key:', key);
+          keysToRestore.push(key);
+          messageReferences.push({ message: msg, field: 'videoData', key });
+        }
+        if (msg.type === 'audio' && typeof msg.audioData === 'string' && msg.audioData.startsWith('__TEMP_STORAGE__:')) {
+          const key = msg.audioData.replace('__TEMP_STORAGE__:', '');
+          console.log('[X1Flox Injector] 🔍 Found audio with temp storage key:', key);
+          keysToRestore.push(key);
+          messageReferences.push({ message: msg, field: 'audioData', key });
+        }
+      }
+
+      if (keysToRestore.length > 0) {
+        console.log('[X1Flox Injector] 🔍 Restoring', keysToRestore.length, 'items from chrome.storage.local');
+        console.log('[X1Flox Injector] 🔍 Keys:', keysToRestore);
+        const result = await chrome.storage.local.get(keysToRestore);
+        console.log('[X1Flox Injector] 🔍 Retrieved from storage:', Object.keys(result));
+
+        // Restore the data
+        for (const ref of messageReferences) {
+          const data = result[ref.key];
+          if (data) {
+            ref.message[ref.field] = data;
+            console.log('[X1Flox Injector] 🔍 Restored', ref.field, 'for', ref.message.id, '- length:', data.length);
+          } else {
+            console.warn('[X1Flox Injector] ⚠️ No data found for key:', ref.key);
+          }
+        }
+
+        // Clean up temp storage
+        await chrome.storage.local.remove(keysToRestore);
+        console.log('[X1Flox Injector] 🔍 Cleaned up temp storage');
+      } else {
+        console.log('[X1Flox Injector] 🔍 No temp storage keys found to restore');
+      }
+
+      return messages;
     }
 
     private async injectScripts() {
@@ -801,10 +914,11 @@
         case 'SEND_SINGLE_MESSAGE':
           // Route popup/FAB messages through overlay's sendSingleMessage()
           // This ensures they show the execution popup like footer shortcuts do
+          // Payload now contains only messageId to avoid chrome.tabs.sendMessage size limits
           console.log('[X1Flox] Routing popup message through overlay:', action.payload);
           document.dispatchEvent(new CustomEvent('X1FloxSendSingleMessageFromPopup', {
             detail: {
-              message: action.payload.message
+              messageId: action.payload.messageId
             }
           }));
           // Return success immediately - overlay will handle the actual sending
@@ -838,6 +952,13 @@
             await new Promise(resolve => setTimeout(resolve, action.payload.sendDelay));
           }
           return await this.sendVideo(action.payload);
+
+        case 'SEND_FILE':
+          // For file: delay is time to wait before sending (no animation)
+          if (action.payload.sendDelay && action.payload.sendDelay > 0) {
+            await new Promise(resolve => setTimeout(resolve, action.payload.sendDelay));
+          }
+          return await this.sendFile(action.payload);
 
         case 'EXECUTE_SCRIPT':
           // Handle three formats:
@@ -948,6 +1069,44 @@
       try {
         console.log('[X1Flox] Sending message via page script:', text.substring(0, 50) + '...', chatId ? `to chat: ${chatId}` : '');
 
+        const hasAnimation = showTyping && (sendDelay || 0) > 0;
+        const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+        // NEW ARCHITECTURE: If animation exists, start it BEFORE delay (like overlay does)
+        if (hasAnimation && chatId) {
+          document.dispatchEvent(new CustomEvent('X1FloxStartAnimation', {
+            detail: {
+              messageId,
+              chatId,
+              animationType: 'typing',
+              duration: sendDelay
+            }
+          }));
+
+          // Give page script time to process event and start animation
+          // Longer delay to handle cleanup of previous animations
+          await new Promise(resolve => setTimeout(resolve, 600));
+        }
+
+        // Process delay HERE in injector (like overlay does for full control)
+        if (sendDelay && sendDelay > 0) {
+          console.log('[X1Flox] Processing delay in injector:', sendDelay, 'ms');
+          await new Promise(resolve => setTimeout(resolve, sendDelay));
+        }
+
+        // CRITICAL: Stop animation BEFORE sending message
+        // When a message is sent, WhatsApp automatically stops all animations
+        // So we need to stop it manually first to prevent it from cutting the NEXT animation
+        if (hasAnimation && chatId) {
+          console.log('[X1Flox] Stopping animation before sending message:', messageId);
+          document.dispatchEvent(new CustomEvent('X1FloxStopAnimation', {
+            detail: { messageId, chatId }
+          }));
+          // Wait for animation to stop completely before sending
+          await new Promise(resolve => setTimeout(resolve, 200));
+          console.log('[X1Flox] Animation stopped, now sending message');
+        }
+
         // Generate unique request ID
         const requestId = `req_${Date.now()}_${Math.random()}`;
 
@@ -955,23 +1114,27 @@
         const promise = new Promise<any>((resolve, reject) => {
           this.pendingRequests.set(requestId, { resolve, reject });
 
-          // Dynamic timeout based on sendDelay + 60s buffer
-          // This ensures timeout never fires before typing animation completes
-          // For a 120s typing delay, timeout will be 180s (120s + 60s buffer)
-          const timeout = (sendDelay || 0) + 60000;
-          console.log('[X1Flox] Text message timeout set to', timeout, 'ms (sendDelay:', sendDelay, 'ms + 60s buffer)');
+          // Timeout: 60s buffer (delay already processed above)
+          const timeout = 60000;
+          console.log('[X1Flox] Text message timeout set to', timeout, 'ms');
           setTimeout(() => {
             if (this.pendingRequests.has(requestId)) {
               this.pendingRequests.delete(requestId);
-              console.error('[X1Flox] ❌ TIMEOUT: Text message took too long (timeout:', timeout, 'ms)');
+              console.error('[X1Flox] ❌ TIMEOUT: Text message took too long');
               reject(new Error('Timeout: Message send took too long'));
             }
           }, timeout);
         });
 
-        // Dispatch event to page script
+        // Dispatch event to page script (ALWAYS with sendDelay=0 - delay already processed)
         document.dispatchEvent(new CustomEvent('X1FloxSendMessage', {
-          detail: { text, requestId, chatId, showTyping, sendDelay }
+          detail: {
+            text,
+            requestId,
+            chatId,
+            showTyping: false,  // Animation already handled above
+            sendDelay: 0        // Delay already processed above
+          }
         }));
 
         // Wait for response
@@ -998,11 +1161,42 @@
         }
 
         console.log('[X1Flox] Sending audio via page script...');
-        console.log('[X1Flox] Payload received:', payload);
-        console.log('[X1Flox] audioData type:', typeof payload.audioData);
-        console.log('[X1Flox] audioData value:', payload.audioData);
-        console.log('[X1Flox] Is string?:', typeof payload.audioData === 'string');
-        console.log('[X1Flox] String length:', typeof payload.audioData === 'string' ? payload.audioData.length : 'N/A');
+
+        const hasAnimation = payload.showRecording && (payload.sendDelay || 0) > 0;
+        const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+        // NEW ARCHITECTURE: If animation exists, start it BEFORE delay (like overlay does)
+        if (hasAnimation && payload.chatId) {
+          document.dispatchEvent(new CustomEvent('X1FloxStartAnimation', {
+            detail: {
+              messageId,
+              chatId: payload.chatId,
+              animationType: 'recording',
+              duration: payload.sendDelay
+            }
+          }));
+          // Give page script time to process event and start animation
+          // Longer delay to handle cleanup of previous animations
+          await new Promise(resolve => setTimeout(resolve, 600));
+        }
+
+        // Process delay HERE in injector (like overlay does for full control)
+        if (payload.sendDelay && payload.sendDelay > 0) {
+          await new Promise(resolve => setTimeout(resolve, payload.sendDelay));
+        }
+
+        // CRITICAL: Stop animation BEFORE sending message
+        // When a message is sent, WhatsApp automatically stops all animations
+        // So we need to stop it manually first to prevent it from cutting the NEXT animation
+        if (hasAnimation && payload.chatId) {
+          console.log('[X1Flox] Stopping animation before sending audio:', messageId);
+          document.dispatchEvent(new CustomEvent('X1FloxStopAnimation', {
+            detail: { messageId, chatId: payload.chatId }
+          }));
+          // Wait for animation to stop completely before sending
+          await new Promise(resolve => setTimeout(resolve, 200));
+          console.log('[X1Flox] Animation stopped, now sending audio');
+        }
 
         // Generate unique request ID
         const requestId = `req_audio_${Date.now()}_${Math.random()}`;
@@ -1011,35 +1205,28 @@
         const promise = new Promise<any>((resolve, reject) => {
           this.pendingRequests.set(requestId, { resolve, reject });
 
-          // Dynamic timeout based on sendDelay + 90s buffer for upload/processing
-          // Audio files need more buffer time for upload compared to text
-          const timeout = (payload.sendDelay || 0) + 90000;
-          console.log('[X1Flox] Audio message timeout set to', timeout, 'ms (sendDelay:', payload.sendDelay, 'ms + 90s buffer)');
+          // Timeout: 90s buffer (delay already processed above)
+          const timeout = 90000;
           setTimeout(() => {
             if (this.pendingRequests.has(requestId)) {
               this.pendingRequests.delete(requestId);
-              console.error('[X1Flox] ❌ TIMEOUT: Audio send took too long (timeout:', timeout, 'ms)');
+              console.error('[X1Flox] ❌ TIMEOUT: Audio send took too long');
               reject(new Error('Timeout: Audio send took too long'));
             }
           }, timeout);
         });
 
-        // Dispatch event to page script
-        console.log('[X1Flox] Dispatching X1FloxSendAudio event...');
-        console.log('[X1Flox] Event detail:', { audioData: 'base64...', duration: payload.duration, requestId });
-
+        // Dispatch event to page script (ALWAYS with sendDelay=0 - delay already processed)
         document.dispatchEvent(new CustomEvent('X1FloxSendAudio', {
           detail: {
-            audioData: payload.audioData,  // Base64 or Blob URL
-            duration: payload.duration,     // Audio duration in seconds
+            audioData: payload.audioData,
+            duration: payload.duration,
             requestId,
-            chatId: payload.chatId,         // Optional chatId
-            showRecording: payload.showRecording,  // Optional showRecording animation
-            sendDelay: payload.sendDelay    // Optional sendDelay (used as recording duration)
+            chatId: payload.chatId,
+            showRecording: false,  // Animation already handled above
+            sendDelay: 0           // Delay already processed above
           }
         }));
-
-        console.log('[X1Flox] ✅ Event dispatched! Waiting for page script response...');
 
         // Wait for response
         return await promise;
@@ -1148,6 +1335,56 @@
       }
     }
 
+    async sendFile(payload: any): Promise<any> {
+      try {
+        const isPageScriptLoaded = document.getElementById('x1flox-marker');
+        if (!isPageScriptLoaded) {
+          console.error('[X1Flox] ❌ Page script NOT LOADED! Re-injecting...');
+          await this.injectScripts();
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+
+        console.log('[X1Flox] Sending file via page script...');
+
+        const requestId = `req_file_${Date.now()}_${Math.random()}`;
+
+        const promise = new Promise<any>((resolve, reject) => {
+          this.pendingRequests.set(requestId, { resolve, reject });
+
+          // Dynamic timeout: sendDelay + 120s buffer for upload/processing
+          // Files have no animation, but may have sendDelay configured in scripts
+          // Larger buffer (120s) because files can be very large
+          const timeout = (payload.sendDelay || 0) + 120000;
+          console.log('[X1Flox] File message timeout set to', timeout, 'ms (sendDelay:', payload.sendDelay, 'ms + 120s buffer)');
+          setTimeout(() => {
+            if (this.pendingRequests.has(requestId)) {
+              this.pendingRequests.delete(requestId);
+              reject(new Error('Timeout: File send took too long'));
+            }
+          }, timeout);
+        });
+
+        document.dispatchEvent(new CustomEvent('X1FloxSendFile', {
+          detail: {
+            fileData: payload.fileData,
+            caption: payload.caption || '',
+            fileName: payload.fileName || 'file',
+            requestId,
+            chatId: payload.chatId  // Optional chatId
+          }
+        }));
+
+        console.log('[X1Flox] ✅ File event dispatched!');
+
+        return await promise;
+
+      } catch (error: any) {
+        const errorMessage = error?.message || String(error);
+        console.error('[X1Flox] Error sending file:', errorMessage, error);
+        return { success: false, error: error.message };
+      }
+    }
+
 
     private async executeScriptWithSteps(payload: any): Promise<any> {
       const scriptId = payload.scriptId || `script-${Date.now()}`;
@@ -1242,6 +1479,14 @@
               result = await this.sendVideo({
                 videoData: message.videoData,
                 caption: message.caption || '',
+                chatId
+              });
+              break;
+            case 'file':
+              result = await this.sendFile({
+                fileData: message.fileData,
+                caption: message.caption || '',
+                fileName: message.fileName || 'file',
                 chatId
               });
               break;

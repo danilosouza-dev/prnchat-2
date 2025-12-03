@@ -5,6 +5,14 @@ export { Select, type SelectProps } from './select';
 export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, type CardProps } from './card';
 export { Badge, type BadgeProps } from './badge';
 export { Label, type LabelProps } from './label';
+export { Tabs, TabsList, TabsTrigger, TabsContent } from './tabs';
+export { Dialog, DialogPortal, DialogOverlay, DialogClose, DialogTrigger, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from './dialog';
+export { Checkbox } from './checkbox';
+export { RadioGroup, RadioGroupItem } from './radio-group';
+export { Switch } from './switch';
+export { Separator } from './separator';
+export { AlertDialog, AlertDialogPortal, AlertDialogOverlay, AlertDialogTrigger, AlertDialogContent, AlertDialogHeader, AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from './alert-dialog';
+export { Toaster } from './sonner';
 export {
   SidebarProvider,
   Sidebar,
@@ -19,16 +27,4 @@ export {
   SidebarSeparator,
   SidebarInset,
   useSidebar,
-  type SidebarProviderProps,
-  type SidebarProps,
-  type SidebarHeaderProps,
-  type SidebarContentProps,
-  type SidebarFooterProps,
-  type SidebarGroupProps,
-  type SidebarGroupLabelProps,
-  type SidebarMenuProps,
-  type SidebarMenuItemProps,
-  type SidebarMenuButtonProps,
-  type SidebarSeparatorProps,
-  type SidebarInsetProps,
 } from './sidebar';

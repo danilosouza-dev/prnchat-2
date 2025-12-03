@@ -4,7 +4,7 @@
  */
 
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
-import type { Message, Script, Trigger, Tag, Settings } from '@/types';
+import type { Message, Script, Trigger, Tag, Folder, Settings } from '@/types';
 
 interface X1FloxDB extends DBSchema {
   messages: {
@@ -26,6 +26,11 @@ interface X1FloxDB extends DBSchema {
     key: string;
     value: Tag;
   };
+  folders: {
+    key: string;
+    value: Folder;
+    indexes: { 'by-created': number };
+  };
   settings: {
     key: string;
     value: Settings;
@@ -45,12 +50,17 @@ interface X1FloxDB extends DBSchema {
     value: { messageId: string; blob: Blob; createdAt: number };
     indexes: { 'by-messageId': string };
   };
+  fileBlobs: {
+    key: string;
+    value: { messageId: string; blob: Blob; fileName: string; createdAt: number };
+    indexes: { 'by-messageId': string };
+  };
 }
 
 class DatabaseService {
   private db: IDBPDatabase<X1FloxDB> | null = null;
   private readonly DB_NAME = 'x1flox-db';
-  private readonly DB_VERSION = 2; // Updated to version 2 for image/video blob stores
+  private readonly DB_VERSION = 4; // Updated to version 4 for file support
 
   async init(): Promise<IDBPDatabase<X1FloxDB>> {
     if (this.db) return this.db;
@@ -82,6 +92,12 @@ class DatabaseService {
           db.createObjectStore('tags', { keyPath: 'id' });
         }
 
+        // Folders store
+        if (!db.objectStoreNames.contains('folders')) {
+          const folderStore = db.createObjectStore('folders', { keyPath: 'id' });
+          folderStore.createIndex('by-created', 'createdAt');
+        }
+
         // Settings store
         if (!db.objectStoreNames.contains('settings')) {
           db.createObjectStore('settings', { keyPath: 'key' });
@@ -104,6 +120,12 @@ class DatabaseService {
           const videoBlobStore = db.createObjectStore('videoBlobs', { keyPath: 'messageId' });
           videoBlobStore.createIndex('by-messageId', 'messageId');
         }
+
+        // File blobs store
+        if (!db.objectStoreNames.contains('fileBlobs')) {
+          const fileBlobStore = db.createObjectStore('fileBlobs', { keyPath: 'messageId' });
+          fileBlobStore.createIndex('by-messageId', 'messageId');
+        }
       },
     });
 
@@ -119,8 +141,7 @@ class DatabaseService {
       await this.saveSettings({
         storageType: 'local',
         autoBackup: false,
-        autoReply: false,
-        delayBetweenMessages: 2000, // 2 seconds default delay
+        defaultDelay: 2000, // 2 seconds default delay
         requireSendConfirmation: true, // Require two clicks to send messages
         showShortcuts: true, // Show shortcut bar in WhatsApp Web
         showFloatingButton: true, // Show floating action button in WhatsApp Web
@@ -159,12 +180,23 @@ class DatabaseService {
       });
     }
 
+    // If message has file data (Blob), save it separately
+    if (message.fileData && message.fileData instanceof Blob) {
+      await db.put('fileBlobs', {
+        messageId: message.id,
+        blob: message.fileData,
+        fileName: message.fileName || 'file',
+        createdAt: Date.now(),
+      });
+    }
+
     // Don't store blobs in the message object (just references)
     const messageToSave = {
       ...message,
       audioData: null,
       imageData: null,
-      videoData: null
+      videoData: null,
+      fileData: null
     };
     await db.put('messages', messageToSave);
 
@@ -204,6 +236,15 @@ class DatabaseService {
           message.videoData = videoData.blob;
         }
       }
+
+      // Retrieve file blob if exists
+      if (message.type === 'file') {
+        const fileData = await db.get('fileBlobs', id);
+        if (fileData) {
+          message.fileData = fileData.blob;
+          message.fileName = fileData.fileName;
+        }
+      }
     }
 
     return message;
@@ -237,6 +278,21 @@ class DatabaseService {
           }
         }
 
+        if (msg.type === 'file') {
+          console.log('[X1Flox DB] 🔍 Loading file for message:', msg.id);
+          const fileData = await db.get('fileBlobs', msg.id);
+          console.log('[X1Flox DB] 🔍 fileData from IndexedDB:', fileData ? 'FOUND' : 'NOT FOUND');
+          if (fileData) {
+            console.log('[X1Flox DB] 🔍 fileData.blob type:', typeof fileData.blob);
+            console.log('[X1Flox DB] 🔍 fileData.blob instanceof Blob:', fileData.blob instanceof Blob);
+            console.log('[X1Flox DB] 🔍 fileData.blob size:', fileData.blob?.size);
+            msg.fileData = fileData.blob;
+            msg.fileName = fileData.fileName;
+          } else {
+            console.warn('[X1Flox DB] ⚠️ No file blob found for message:', msg.id, msg.name);
+          }
+        }
+
         return msg;
       })
     );
@@ -251,6 +307,7 @@ class DatabaseService {
     await db.delete('audioBlobs', id);
     await db.delete('imageBlobs', id);
     await db.delete('videoBlobs', id);
+    await db.delete('fileBlobs', id);
 
     // Trigger chrome.storage change event to notify other components
     if (typeof chrome !== 'undefined' && chrome.storage) {
@@ -391,6 +448,49 @@ class DatabaseService {
     }
   }
 
+  // ==================== FOLDERS ====================
+  async saveFolder(folder: Folder): Promise<void> {
+    const db = await this.init();
+    await db.put('folders', folder);
+
+    // Trigger chrome.storage change event to notify other components
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        folders: Date.now() // Use timestamp to ensure value changes
+      });
+    }
+  }
+
+  async getFolder(id: string): Promise<Folder | undefined> {
+    const db = await this.init();
+    return db.get('folders', id);
+  }
+
+  async getAllFolders(): Promise<Folder[]> {
+    const db = await this.init();
+    return db.getAll('folders');
+  }
+
+  async deleteFolder(id: string): Promise<void> {
+    const db = await this.init();
+    await db.delete('folders', id);
+
+    // Remove folderId from all messages that were in this folder
+    const messages = await this.getAllMessages();
+    const messagesInFolder = messages.filter(msg => msg.folderId === id);
+
+    for (const msg of messagesInFolder) {
+      await this.saveMessage({ ...msg, folderId: undefined });
+    }
+
+    // Trigger chrome.storage change event to notify other components
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        folders: Date.now() // Use timestamp to ensure value changes
+      });
+    }
+  }
+
   // ==================== SETTINGS ====================
   async saveSettings(settings: Settings): Promise<void> {
     const db = await this.init();
@@ -427,6 +527,7 @@ class DatabaseService {
     await db.clear('scripts');
     await db.clear('triggers');
     await db.clear('tags');
+    await db.clear('folders');
     await db.clear('audioBlobs');
     await db.clear('imageBlobs');
     await db.clear('videoBlobs');
@@ -438,6 +539,7 @@ class DatabaseService {
     const scripts = await this.getAllScripts();
     const triggers = await this.getAllTriggers();
     const tags = await this.getAllTags();
+    const folders = await this.getAllFolders();
     const settings = await this.getSettings();
 
     // Convert blobs to base64 for export
@@ -466,6 +568,7 @@ class DatabaseService {
       scripts,
       triggers,
       tags,
+      folders,
       settings,
       exportedAt: Date.now(),
     }, null, 2);
@@ -509,6 +612,13 @@ class DatabaseService {
     if (data.tags) {
       for (const tag of data.tags) {
         await this.saveTag(tag);
+      }
+    }
+
+    // Import folders
+    if (data.folders) {
+      for (const folder of data.folders) {
+        await this.saveFolder(folder);
       }
     }
   }

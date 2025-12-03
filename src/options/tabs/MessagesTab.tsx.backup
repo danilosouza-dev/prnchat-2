@@ -4,9 +4,8 @@ import { db } from '@/storage/db';
 import { generateId, formatDate, getAudioDuration, downloadFile } from '@/utils/helpers';
 import NewMessageModal from '../components/NewMessageModal';
 import CustomAudioPlayer from '../components/CustomAudioPlayer';
-import FolderManagementModal from '../components/FolderManagementModal';
-import { Tabs, TabsList, TabsTrigger, Button, Card, AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui';
-import { Grid, Mic, MessageCircle, Camera, Video, FileText, GripVertical, Edit2, Trash2, ChevronDown, ChevronUp, Plus, Search, Folder as FolderIcon, Download, Upload } from 'lucide-react';
+import { Tabs, TabsList, TabsTrigger, Button, Badge, Card, AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui';
+import { Grid, Mic, MessageCircle, Camera, Video, Edit2, Trash2, ChevronDown, ChevronUp, Plus, Search, Folder as FolderIcon, Download, Upload, GripVertical } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface MessagesTabProps {
@@ -19,38 +18,22 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
   const [isCreating, setIsCreating] = useState(false);
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
-  const [typeFilter, setTypeFilter] = useState<MessageType | 'all' | 'folders'>('all');
+  const [typeFilter, setTypeFilter] = useState<MessageType | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [messageToDelete, setMessageToDelete] = useState<string | null>(null);
   const [blobUrls, setBlobUrls] = useState<Map<string, string>>(new Map());
-  const [showFolderManager, setShowFolderManager] = useState(false);
-  const [formData, setFormData] = useState<{
-    name: string;
-    type: MessageType;
-    content: string;
-    caption: string;
-    audioData: Blob | null;
-    imageData: Blob | null;
-    videoData: Blob | null;
-    fileData: Blob | null;
-    fileName: string;
-    folderId?: string;
-    showTyping: boolean;
-    showRecording: boolean;
-    sendDelay: number;
-  }>({
+  const [formData, setFormData] = useState({
     name: '',
-    type: 'text',
+    type: 'text' as MessageType,
     content: '',
     caption: '',
-    audioData: null,
-    imageData: null,
-    videoData: null,
-    fileData: null,
-    fileName: '',
+    audioData: null as Blob | null,
+    imageData: null as Blob | null,
+    videoData: null as Blob | null,
+    folderId: undefined as string | undefined,
     showTyping: false,
     showRecording: false,
     sendDelay: 0,
@@ -106,9 +89,9 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
       db.getAllMessages(),
       db.getAllFolders(),
     ]);
-    // Sort by order (fallback to createdAt for older messages/folders)
+    // Sort by order (fallback to createdAt for older messages)
     setMessages(messagesData.sort((a, b) => (a.order ?? a.createdAt) - (b.order ?? b.createdAt)));
-    setFolders(foldersData.sort((a, b) => (a.order ?? a.createdAt) - (b.order ?? b.createdAt)));
+    setFolders(foldersData.sort((a, b) => a.createdAt - b.createdAt));
   };
 
   const handleCreateNew = () => {
@@ -122,8 +105,6 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
       audioData: null,
       imageData: null,
       videoData: null,
-      fileData: null,
-      fileName: '',
       folderId: undefined,
       showTyping: false,
       showRecording: false,
@@ -142,8 +123,6 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
       audioData: message.audioData || null,
       imageData: message.imageData || null,
       videoData: message.videoData || null,
-      fileData: message.fileData || null,
-      fileName: message.fileName || '',
       folderId: message.folderId,
       showTyping: message.showTyping || false,
       showRecording: message.showRecording || false,
@@ -162,8 +141,6 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
       audioData: null,
       imageData: null,
       videoData: null,
-      fileData: null,
-      fileName: '',
       folderId: undefined,
       showTyping: false,
       showRecording: false,
@@ -197,11 +174,6 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
       return;
     }
 
-    if (formData.type === 'file' && !formData.fileData) {
-      toast.error('Por favor, selecione um arquivo');
-      return;
-    }
-
     try {
       let duration: number | undefined;
       if (formData.type === 'audio' && formData.audioData) {
@@ -213,18 +185,15 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
         name: formData.name.trim() || undefined,
         type: formData.type,
         content: formData.content,
-        caption: (formData.type === 'image' || formData.type === 'video' || formData.type === 'file') ? formData.caption : undefined,
+        caption: (formData.type === 'image' || formData.type === 'video') ? formData.caption : undefined,
         audioData: formData.audioData,
         imageData: formData.imageData,
         videoData: formData.videoData,
-        fileData: formData.fileData,
-        fileName: formData.fileName,
         folderId: formData.folderId,
         duration,
         showTyping: formData.type === 'text' ? formData.showTyping : undefined,
         showRecording: formData.type === 'audio' ? formData.showRecording : undefined,
         sendDelay: formData.sendDelay,
-        order: editingMessage?.order ?? messages.length,
         createdAt: editingMessage?.createdAt || Date.now(),
         updatedAt: Date.now(),
       };
@@ -264,6 +233,7 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
       setMessageToDelete(null);
     }
   };
+
 
   const handleExport = async () => {
     try {
@@ -310,30 +280,44 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
 
     if (draggedIndex === -1 || targetIndex === -1) return;
 
-    const reorderedMessages = [...messages];
-    const [removed] = reorderedMessages.splice(draggedIndex, 1);
-    reorderedMessages.splice(targetIndex, 0, removed);
+    // Reorder messages
+    const newMessages = [...messages];
+    const [removed] = newMessages.splice(draggedIndex, 1);
+    newMessages.splice(targetIndex, 0, removed);
 
-    // Update order for all messages
-    const updatedMessages = reorderedMessages.map((msg, index) => ({
+    // Update order field for all messages
+    const updatedMessages = newMessages.map((msg, index) => ({
       ...msg,
       order: index,
     }));
 
     setMessages(updatedMessages);
+    setDraggedId(null);
 
-    // Save all messages with updated order
-    try {
-      await Promise.all(updatedMessages.map(msg => db.saveMessage(msg)));
-    } catch (error) {
-      console.error('Error reordering messages:', error);
-      toast.error('Erro ao reordenar mensagens');
-      await loadData(); // Reload on error
+    // Save new order to database
+    for (const msg of updatedMessages) {
+      await db.saveMessage(msg);
     }
   };
 
   const handleDragEnd = () => {
     setDraggedId(null);
+  };
+
+  // Toggle card expansion (apenas um card expandido por vez)
+  const toggleCardExpansion = (messageId: string) => {
+    setExpandedCards(prev => {
+      const newSet = new Set<string>();
+      // Se o card clicado já está expandido, recolhe-o
+      if (prev.has(messageId)) {
+        // Retorna set vazio (todos recolhidos)
+        return newSet;
+      } else {
+        // Caso contrário, expande apenas o card clicado
+        newSet.add(messageId);
+        return newSet;
+      }
+    });
   };
 
   // Toggle folder expansion
@@ -349,25 +333,12 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
     });
   };
 
-  // Toggle card expansion
-  const toggleCardExpansion = (messageId: string) => {
-    setExpandedCards(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(messageId)) {
-        newSet.delete(messageId);
-      } else {
-        newSet.add(messageId);
-      }
-      return newSet;
-    });
-  };
-
   // Filter and organize messages
   const getOrganizedMessages = () => {
     let filtered = messages;
 
     // Filter by type
-    if (typeFilter !== 'all' && typeFilter !== 'folders') {
+    if (typeFilter !== 'all') {
       filtered = filtered.filter(m => m.type === typeFilter);
     }
 
@@ -422,179 +393,6 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
     }
   };
 
-  // Render message card (used both inside folders and standalone)
-  const renderMessageCard = (message: Message, index: number, folderColor?: string) => {
-    const isExpanded = expandedCards.has(message.id);
-
-    return (
-      <Card
-        key={message.id}
-        draggable
-        onDragStart={(e) => handleDragStart(e, message.id)}
-        onDragOver={handleDragOver}
-        onDrop={(e) => handleDrop(e, message.id)}
-        onDragEnd={handleDragEnd}
-        className={`
-          transition-all duration-200 ease-out cursor-move p-3
-          border-l-[3px] border-l-transparent
-          hover:bg-[var(--bg-tertiary)]
-          hover:shadow-[0_4px_12px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.2)]
-          ${draggedId === message.id ? 'opacity-50' : ''}
-        `}
-        style={{
-          borderLeftColor: folderColor || 'transparent',
-          '--folder-color': folderColor || '#e91e63'
-        } as React.CSSProperties & { '--folder-color': string }}
-      >
-        {/* Header do Card */}
-        <div className="flex items-center gap-2.5 group">
-          {/* Número */}
-          <span className="text-xs font-semibold text-[var(--text-secondary)] min-w-[1.5rem]">
-            {index + 1}
-          </span>
-
-          {/* Ícone do tipo */}
-          <div className="flex items-center justify-center w-7 h-7 rounded bg-[var(--bg-tertiary)] transition-colors group-hover:text-[#e91e63]">
-            {getMessageTypeIcon(message.type)}
-          </div>
-
-          {/* Nome/Descrição */}
-          <div className="flex-1 flex items-center gap-2 min-w-0">
-            <span className="text-xs text-[var(--text-primary)] overflow-hidden text-ellipsis whitespace-nowrap flex-shrink min-w-0">
-              {message.name || message.content.substring(0, 60)}{!message.name && message.content.length > 60 ? '...' : ''}
-            </span>
-          </div>
-
-          {/* Botões de Ação */}
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleCardExpansion(message.id);
-              }}
-              title={isExpanded ? "Recolher" : "Expandir"}
-              className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-[#e91e63] hover:scale-110"
-            >
-              {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-            </Button>
-
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleEdit(message);
-              }}
-              title="Editar"
-              className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-[#e91e63] hover:scale-110"
-            >
-              <Edit2 size={18} />
-            </Button>
-
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleDelete(message.id);
-              }}
-              title="Excluir"
-              className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-red-500 hover:scale-110"
-            >
-              <Trash2 size={18} />
-            </Button>
-
-            <div
-              className="cursor-grab p-0.5 text-[var(--text-secondary)] opacity-60 hover:opacity-100 transition-opacity duration-200"
-              title="Arrastar para reordenar"
-            >
-              <GripVertical size={18} />
-            </div>
-          </div>
-        </div>
-
-        {/* Conteúdo Expandido */}
-        {isExpanded && (
-          <div className="mt-2 ml-9 p-3 bg-[var(--bg-tertiary)] rounded border border-[var(--border-color)] animate-expand-smooth">
-            {message.type === 'text' && (
-              <p className="text-[var(--text-primary)] whitespace-pre-wrap text-xs">
-                {message.content}
-              </p>
-            )}
-
-            {message.type === 'audio' && (
-              <div>
-                <p className="text-[var(--text-secondary)] mb-1.5 text-xs">
-                  {message.content}
-                </p>
-                {message.audioData && blobUrls.has(`${message.id}-audio`) && (
-                  <CustomAudioPlayer
-                    src={blobUrls.get(`${message.id}-audio`)!}
-                    duration={message.duration}
-                    key={blobUrls.get(`${message.id}-audio`)}
-                  />
-                )}
-              </div>
-            )}
-
-            {message.type === 'image' && (
-              <div>
-                <p className="text-[var(--text-secondary)] mb-1.5 text-xs">
-                  {message.content}
-                </p>
-                {message.imageData && blobUrls.has(`${message.id}-image`) && (
-                  <img
-                    src={blobUrls.get(`${message.id}-image`)}
-                    alt={message.content}
-                    className="max-w-full rounded-lg mt-1.5"
-                    style={{ maxHeight: '400px', objectFit: 'contain' }}
-                    key={blobUrls.get(`${message.id}-image`)}
-                  />
-                )}
-                {message.caption && (
-                  <p className="text-[var(--text-primary)] mt-1.5 text-xs italic">
-                    Legenda: {message.caption}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {message.type === 'video' && (
-              <div>
-                <p className="text-[var(--text-secondary)] mb-1.5 text-xs">
-                  {message.content}
-                </p>
-                {message.videoData && blobUrls.has(`${message.id}-video`) && (
-                  <video
-                    controls
-                    src={blobUrls.get(`${message.id}-video`)}
-                    className="max-w-full rounded-lg mt-1.5"
-                    style={{ maxHeight: '400px', objectFit: 'contain' }}
-                    key={blobUrls.get(`${message.id}-video`)}
-                  />
-                )}
-                {message.caption && (
-                  <p className="text-[var(--text-primary)] mt-1.5 text-xs italic">
-                    Legenda: {message.caption}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {/* Informações adicionais */}
-            <div className="mt-2 pt-2 border-t border-[var(--border-color)] flex gap-3 text-[10px] text-[var(--text-secondary)]">
-              <span>Criado em: {formatDate(message.createdAt)}</span>
-              {message.duration && <span>Duração: {Math.floor(message.duration)}s</span>}
-              {(message.sendDelay ?? 0) > 0 && <span>Delay: {(message.sendDelay ?? 0) / 1000}s</span>}
-            </div>
-          </div>
-        )}
-      </Card>
-    );
-  };
-
   // Expor actions para o header global
   useEffect(() => {
     if (setHeaderActions) {
@@ -615,10 +413,6 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
             onChange={handleImport}
             style={{ display: 'none' }}
           />
-          <Button variant="ghost" size="sm" onClick={() => setShowFolderManager(true)} title="Gerenciar Pastas">
-            <FolderIcon size={16} />
-            Gerenciar Pastas
-          </Button>
           <Button variant="accent" onClick={handleCreateNew} size="sm">
             <Plus size={16} />
             Nova Mensagem
@@ -632,7 +426,7 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
         setHeaderActions(null);
       }
     };
-  }, [handleExport, handleImport, handleCreateNew, showFolderManager, setHeaderActions]);
+  }, [handleExport, handleImport, handleCreateNew, setHeaderActions]);
 
   return (
     <div className="tab-content">
@@ -653,23 +447,19 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
       <div className="messages-list-container" style={{ marginTop: '4rem' }}>
           {/* Filtros - Tabs por tipo */}
           <div style={{ marginBottom: '1rem', paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
-            <Tabs value={typeFilter} onValueChange={(value) => setTypeFilter(value as MessageType | 'all' | 'folders')}>
-              <TabsList className="w-full grid grid-cols-7">
+            <Tabs value={typeFilter} onValueChange={(value) => setTypeFilter(value as MessageType | 'all')}>
+              <TabsList className="w-full grid grid-cols-5">
                 <TabsTrigger value="all">
                   <Grid size={18} className="mr-1" />
                   Todos
                 </TabsTrigger>
-                <TabsTrigger value="folders">
-                  <FolderIcon size={18} className="mr-1" />
-                  Pastas
+                <TabsTrigger value="audio">
+                  <Mic size={18} className="mr-1" />
+                  Áudio
                 </TabsTrigger>
                 <TabsTrigger value="text">
                   <MessageCircle size={18} className="mr-1" />
                   Texto
-                </TabsTrigger>
-                <TabsTrigger value="audio">
-                  <Mic size={18} className="mr-1" />
-                  Áudio
                 </TabsTrigger>
                 <TabsTrigger value="image">
                   <Camera size={18} className="mr-1" />
@@ -678,10 +468,6 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
                 <TabsTrigger value="video">
                   <Video size={18} className="mr-1" />
                   Vídeo
-                </TabsTrigger>
-                <TabsTrigger value="file">
-                  <FileText size={18} className="mr-1" />
-                  Arquivo
                 </TabsTrigger>
               </TabsList>
             </Tabs>
@@ -707,81 +493,189 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
             </div>
           </div>
 
-          {/* Pastas */}
+          {/* Cards de Mensagens */}
           <div className="flex flex-col gap-1.5" style={{ paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
-            {folders.map((folder) => {
-              const folderMessages = messagesByFolder.get(folder.id) || [];
-              // Show empty folders only when filtering by "folders" or "all" (without search)
-              if (folderMessages.length === 0 && typeFilter !== 'folders' && (typeFilter !== 'all' || searchQuery)) return null;
-
-              // Auto-expand folders when filtering by type or searching
-              const shouldAutoExpand = (typeFilter !== 'all' && typeFilter !== 'folders' && folderMessages.length > 0) || (searchQuery && folderMessages.length > 0);
-              const isFolderExpanded = shouldAutoExpand || expandedFolders.has(folder.id);
+            {filteredMessages.map((message, index) => {
+              const isExpanded = expandedCards.has(message.id);
 
               return (
-                <div key={folder.id} className="mb-4">
-                  {/* Folder Header - Enhanced Design */}
-                  <div
-                    className="flex items-center gap-3 px-4 py-3.5 cursor-pointer rounded-lg transition-all"
-                    style={{
-                      backgroundColor: 'rgba(255, 255, 255, 0.03)',
-                    }}
-                    onClick={() => toggleFolderExpansion(folder.id)}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.03)';
-                    }}
-                  >
-                    <FolderIcon size={22} color={folder.color} className="flex-shrink-0" />
-                    <span className="text-sm font-semibold flex-1 tracking-wide">
-                      {folder.name}
+                <Card
+                  key={message.id}
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, message.id)}
+                  onDragOver={handleDragOver}
+                  onDrop={(e) => handleDrop(e, message.id)}
+                  onDragEnd={handleDragEnd}
+                  className={`
+                    transition-all duration-200 ease-out cursor-move p-3
+                    border-l-[3px] border-l-transparent
+                    hover:bg-[var(--bg-tertiary)] hover:border-l-[#e91e63]
+                    hover:shadow-[0_4px_12px_rgba(0,0,0,0.3),0_2px_4px_rgba(233,30,99,0.2)]
+                    ${draggedId === message.id ? 'opacity-50 border-l-[#e91e63]' : ''}
+                    animate-card-entry
+                  `}
+                  style={{
+                    '--card-index': index
+                  } as React.CSSProperties}
+                >
+                  {/* Header do Card */}
+                  <div className="flex items-center gap-2.5 group">
+                    {/* Número */}
+                    <span className="text-xs font-semibold text-[var(--text-secondary)] min-w-[1.5rem]">
+                      {index + 1}
                     </span>
-                    <span
-                      className="text-xs font-medium px-2.5 py-1 rounded-full"
-                      style={{
-                        backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                        color: 'var(--text-muted)'
-                      }}
-                    >
-                      {folderMessages.length}
-                    </span>
-                    {isFolderExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+
+                    {/* Ícone do tipo */}
+                    <div className="flex items-center justify-center w-7 h-7 rounded bg-[var(--bg-tertiary)] transition-colors group-hover:text-[#e91e63]">
+                      {getMessageTypeIcon(message.type)}
+                    </div>
+
+                    {/* Nome/Descrição e Tags */}
+                    <div className="flex-1 flex items-center gap-2 min-w-0">
+                      <span className="text-xs text-[var(--text-primary)] overflow-hidden text-ellipsis whitespace-nowrap flex-shrink min-w-0">
+                        {message.name || message.content.substring(0, 60)}{!message.name && message.content.length > 60 ? '...' : ''}
+                      </span>
+                    </div>
+
+                    {/* Botões de Ação */}
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleCardExpansion(message.id);
+                        }}
+                        title={isExpanded ? "Recolher" : "Expandir"}
+                        className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-[#e91e63] hover:scale-110"
+                      >
+                        {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                      </Button>
+
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEdit(message);
+                        }}
+                        title="Editar"
+                        className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-[#e91e63] hover:scale-110"
+                      >
+                        <Edit2 size={18} />
+                      </Button>
+
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDelete(message.id);
+                        }}
+                        title="Excluir"
+                        className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-red-500 hover:scale-110"
+                      >
+                        <Trash2 size={18} />
+                      </Button>
+
+                      <div
+                        className="cursor-grab p-0.5 text-[var(--text-secondary)] opacity-60 hover:opacity-100 transition-opacity duration-200"
+                        title="Arrastar para reordenar"
+                      >
+                        <GripVertical size={18} />
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Messages inside folder - Indented */}
-                  {isFolderExpanded && folderMessages.length > 0 && (
-                    <div className="flex flex-col gap-1.5 mt-2 ml-4">
-                      {folderMessages.map((message, index) => renderMessageCard(message, index, folder.color))}
+                  {/* Conteúdo Expandido */}
+                  {isExpanded && (
+                    <div className="mt-2 ml-9 p-3 bg-[var(--bg-tertiary)] rounded border border-[var(--border-color)] animate-expand-smooth">
+                      {message.type === 'text' && (
+                        <p className="text-[var(--text-primary)] whitespace-pre-wrap text-xs">
+                          {message.content}
+                        </p>
+                      )}
+
+                      {message.type === 'audio' && (
+                        <div>
+                          <p className="text-[var(--text-secondary)] mb-1.5 text-xs">
+                            {message.content}
+                          </p>
+                          {message.audioData && blobUrls.has(`${message.id}-audio`) && (
+                            <CustomAudioPlayer
+                              src={blobUrls.get(`${message.id}-audio`)!}
+                              duration={message.duration}
+                              key={blobUrls.get(`${message.id}-audio`)}
+                            />
+                          )}
+                        </div>
+                      )}
+
+                      {message.type === 'image' && (
+                        <div>
+                          <p className="text-[var(--text-secondary)] mb-1.5 text-xs">
+                            {message.content}
+                          </p>
+                          {message.imageData && blobUrls.has(`${message.id}-image`) && (
+                            <img
+                              src={blobUrls.get(`${message.id}-image`)}
+                              alt={message.content}
+                              className="max-w-full rounded-lg mt-1.5"
+                              style={{ maxHeight: '400px', objectFit: 'contain' }}
+                              key={blobUrls.get(`${message.id}-image`)}
+                            />
+                          )}
+                          {message.caption && (
+                            <p className="text-[var(--text-primary)] mt-1.5 text-xs italic">
+                              Legenda: {message.caption}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {message.type === 'video' && (
+                        <div>
+                          <p className="text-[var(--text-secondary)] mb-1.5 text-xs">
+                            {message.content}
+                          </p>
+                          {message.videoData && blobUrls.has(`${message.id}-video`) && (
+                            <video
+                              controls
+                              src={blobUrls.get(`${message.id}-video`)}
+                              className="max-w-full rounded-lg mt-1.5"
+                              style={{ maxHeight: '400px', objectFit: 'contain' }}
+                              key={blobUrls.get(`${message.id}-video`)}
+                            />
+                          )}
+                          {message.caption && (
+                            <p className="text-[var(--text-primary)] mt-1.5 text-xs italic">
+                              Legenda: {message.caption}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Informações adicionais */}
+                      <div className="mt-2 pt-2 border-t border-[var(--border-color)] flex gap-3 text-[10px] text-[var(--text-secondary)]">
+                        <span>Criado em: {formatDate(message.createdAt)}</span>
+                        {message.duration && <span>Duração: {Math.floor(message.duration)}s</span>}
+                        {(message.sendDelay ?? 0) > 0 && <span>Delay: {(message.sendDelay ?? 0) / 1000}s</span>}
+                      </div>
                     </div>
                   )}
-                </div>
+                </Card>
               );
             })}
 
-            {/* Mensagens sem pasta - Hide when filtering by folders only */}
-            {messagesWithoutFolder.length > 0 && typeFilter !== 'folders' && (
-              <div className="mb-3">
-                <h3 className="text-sm font-medium text-[var(--text-secondary)] mb-2 px-2 flex items-center gap-2">
-                  <FolderIcon size={16} className="text-gray-400" />
-                  Mensagens sem pasta
-                </h3>
-                <div className="flex flex-col gap-1.5">
-                  {messagesWithoutFolder.map((message, index) => renderMessageCard(message, index))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Empty State */}
-          <div className="flex flex-col gap-1.5" style={{ paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
-            {folders.length === 0 && messagesWithoutFolder.length === 0 && (
-              <div className="empty-state">
-                <div className="empty-icon">
-                  <MessageCircle size={48} />
-                </div>
-                <h3>
+            {/* Empty State */}
+            {filteredMessages.length === 0 && (
+              <div style={{
+                textAlign: 'center',
+                padding: '3rem 1rem',
+                color: 'var(--text-secondary)',
+              }}>
+                <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>💬</div>
+                <h3 style={{ fontSize: '1.25rem', marginBottom: '0.5rem', color: 'var(--text-primary)' }}>
                   {messages.length === 0 ? 'Nenhuma mensagem criada' : 'Nenhuma mensagem encontrada'}
                 </h3>
                 <p>
@@ -813,14 +707,6 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      {/* Folder Management Modal */}
-      <FolderManagementModal
-        open={showFolderManager}
-        onOpenChange={setShowFolderManager}
-        folders={folders}
-        onFoldersUpdate={loadData}
-      />
     </div>
   );
 };

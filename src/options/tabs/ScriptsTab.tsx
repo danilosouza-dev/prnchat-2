@@ -1,23 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { Script, ScriptStep, Message } from '@/types';
 import { db } from '@/storage/db';
-import { generateId, formatDuration } from '@/utils/helpers';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Badge } from '@/components/ui/badge';
-import { Plus, Trash2, Edit, ArrowUp, ArrowDown, Clock, FileText, MessageSquare, Mic } from 'lucide-react';
+import { generateId, formatDate, formatDuration, downloadFile } from '@/utils/helpers';
+import { Button, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, Badge, AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui';
+import { Plus, Download, Upload, Edit2, Trash2, MessageSquare, Clock, Calendar, ChevronDown, ChevronUp, Zap } from 'lucide-react';
+import NewScriptModal from '../components/NewScriptModal';
+import { toast } from 'sonner';
 
-const ScriptsTab: React.FC = () => {
+interface ScriptsTabProps {
+  setHeaderActions?: (actions: React.ReactNode) => void;
+}
+
+const ScriptsTab: React.FC<ScriptsTabProps> = ({ setHeaderActions }) => {
   const [scripts, setScripts] = useState<Script[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [editingScript, setEditingScript] = useState<Script | null>(null);
+  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [scriptToDelete, setScriptToDelete] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -38,69 +39,93 @@ const ScriptsTab: React.FC = () => {
   };
 
   const handleCreateNew = () => {
+    setIsCreating(true);
     setEditingScript(null);
     setFormData({
       name: '',
       description: '',
       steps: [],
     });
-    setIsDialogOpen(true);
   };
 
+  const handleExport = async () => {
+    try {
+      const data = await db.exportData();
+      downloadFile(data, `x1flox-backup-${Date.now()}.json`, 'application/json');
+    } catch (error) {
+      console.error('Error exporting data:', error);
+      alert('Erro ao exportar dados');
+    }
+  };
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const content = await file.text();
+      await db.importData(content);
+      await loadData();
+      alert('Dados importados com sucesso!');
+    } catch (error) {
+      console.error('Error importing data:', error);
+      alert('Erro ao importar dados');
+    }
+  };
+
+  // Expor actions para o header global
+  useEffect(() => {
+    if (setHeaderActions) {
+      setHeaderActions(
+        <>
+          <Button variant="ghost" size="sm" onClick={handleExport} title="Exportar">
+            <Download size={16} />
+            Exportar
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => document.getElementById('import-file-scripts')?.click()} title="Importar">
+            <Upload size={16} />
+            Importar
+          </Button>
+          <input
+            id="import-file-scripts"
+            type="file"
+            accept=".json"
+            onChange={handleImport}
+            style={{ display: 'none' }}
+          />
+          <Button variant="accent" onClick={handleCreateNew} size="sm">
+            <Plus size={16} />
+            Novo Script
+          </Button>
+        </>
+      );
+    }
+
+    return () => {
+      if (setHeaderActions) {
+        setHeaderActions(null);
+      }
+    };
+  }, [handleExport, handleImport, handleCreateNew, setHeaderActions]);
+
   const handleEdit = (script: Script) => {
+    setIsCreating(true);
     setEditingScript(script);
     setFormData({
       name: script.name,
       description: script.description || '',
       steps: script.steps,
     });
-    setIsDialogOpen(true);
   };
 
-  const handleCloseDialog = () => {
-    setIsDialogOpen(false);
+  const handleCancel = () => {
+    setIsCreating(false);
     setEditingScript(null);
-  };
-
-  const handleAddStep = () => {
-    if (messages.length === 0) {
-      alert('Crie pelo menos uma mensagem primeiro!');
-      return;
-    }
     setFormData({
-      ...formData,
-      steps: [
-        ...formData.steps,
-        { messageId: messages[0].id, delayAfter: 2000 },
-      ],
+      name: '',
+      description: '',
+      steps: [],
     });
-  };
-
-  const handleUpdateStep = (index: number, field: keyof ScriptStep, value: any) => {
-    const newSteps = [...formData.steps];
-    newSteps[index] = { ...newSteps[index], [field]: value };
-    setFormData({ ...formData, steps: newSteps });
-  };
-
-  const handleRemoveStep = (index: number) => {
-    setFormData({
-      ...formData,
-      steps: formData.steps.filter((_, i) => i !== index),
-    });
-  };
-
-  const handleMoveStep = (index: number, direction: 'up' | 'down') => {
-    if (
-      (direction === 'up' && index === 0) ||
-      (direction === 'down' && index === formData.steps.length - 1)
-    ) {
-      return;
-    }
-
-    const newSteps = [...formData.steps];
-    const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    [newSteps[index], newSteps[targetIndex]] = [newSteps[targetIndex], newSteps[index]];
-    setFormData({ ...formData, steps: newSteps });
   };
 
   const calculateTotalDuration = (): number => {
@@ -113,12 +138,12 @@ const ScriptsTab: React.FC = () => {
 
   const handleSave = async () => {
     if (!formData.name.trim()) {
-      alert('Por favor, preencha o nome do script');
+      toast.error('Por favor, preencha o nome do script');
       return;
     }
 
     if (formData.steps.length === 0) {
-      alert('Adicione pelo menos uma mensagem ao script');
+      toast.error('Adicione pelo menos uma mensagem ao script');
       return;
     }
 
@@ -135,22 +160,36 @@ const ScriptsTab: React.FC = () => {
 
       await db.saveScript(script);
       await loadData();
-      handleCloseDialog();
+      handleCancel();
+
+      if (editingScript) {
+        toast.success('Script atualizado com sucesso!');
+      } else {
+        toast.success('Script criado com sucesso!');
+      }
     } catch (error) {
       console.error('Error saving script:', error);
-      alert('Erro ao salvar script');
+      toast.error('Erro ao salvar script');
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (confirm('Tem certeza que deseja excluir este script?')) {
-      try {
-        await db.deleteScript(id);
-        await loadData();
-      } catch (error) {
-        console.error('Error deleting script:', error);
-        alert('Erro ao excluir script');
-      }
+  const handleDelete = (id: string) => {
+    setScriptToDelete(id);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDeleteScript = async () => {
+    if (!scriptToDelete) return;
+
+    try {
+      await db.deleteScript(scriptToDelete);
+      await loadData();
+      setDeleteDialogOpen(false);
+      setScriptToDelete(null);
+      toast.success('Script excluído com sucesso!');
+    } catch (error) {
+      console.error('Error deleting script:', error);
+      toast.error('Erro ao excluir script');
     }
   };
 
@@ -160,230 +199,171 @@ const ScriptsTab: React.FC = () => {
     return message.content.substring(0, 50) + (message.content.length > 50 ? '...' : '');
   };
 
-  return (
-    <div className="space-y-6 animate-in fade-in duration-500">
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight">Scripts</h2>
-          <p className="text-muted-foreground mt-1">
-            Crie sequências de mensagens com delays personalizados.
-          </p>
-        </div>
-        <Button onClick={handleCreateNew}>
-          <Plus className="mr-2 h-4 w-4" /> Novo Script
-        </Button>
-      </div>
+  const toggleCardExpansion = (scriptId: string) => {
+    setExpandedCards(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(scriptId)) {
+        newSet.delete(scriptId);
+      } else {
+        newSet.add(scriptId);
+      }
+      return newSet;
+    });
+  };
 
-      <div className="grid grid-cols-1 gap-4">
-        {scripts.map((script) => (
-          <Card key={script.id} className="hover:shadow-md transition-shadow">
+  return (
+    <div className="tab-content">
+      {/* Modal de criação/edição */}
+      <NewScriptModal
+        open={isCreating}
+        onOpenChange={setIsCreating}
+        editingScript={editingScript}
+        formData={formData}
+        setFormData={setFormData}
+        messages={messages}
+        onSave={handleSave}
+        onCancel={handleCancel}
+      />
+
+      {/* Lista de Scripts */}
+      <div className="scripts-list-container" style={{ marginTop: '4rem', paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
+        <div className="scripts-list">
+        {scripts.map((script) => {
+          const isExpanded = expandedCards.has(script.id);
+
+          return (
+          <Card
+            key={script.id}
+            className="hover:shadow-xl transition-all duration-200 border-border/50 animate-card-entry"
+            style={{
+              '--card-index': scripts.findIndex(s => s.id === script.id)
+            } as React.CSSProperties}
+          >
             <CardHeader className="pb-3">
               <div className="flex justify-between items-start">
-                <div>
-                  <CardTitle className="text-xl flex items-center gap-2">
-                    <FileText className="h-5 w-5 text-primary" />
+                <div className="flex-1">
+                  <CardTitle className="text-lg font-semibold text-foreground mb-1 flex items-center gap-2">
+                    <Zap size={18} className="text-[#e91e63] flex-shrink-0" />
                     {script.name}
                   </CardTitle>
                   {script.description && (
-                    <CardDescription className="mt-1">{script.description}</CardDescription>
+                    <CardDescription className="text-sm text-muted-foreground mt-1">
+                      {script.description}
+                    </CardDescription>
                   )}
                 </div>
-                <div className="flex gap-2">
-                  <Button variant="ghost" size="icon" onClick={() => handleEdit(script)}>
-                    <Edit className="h-4 w-4" />
+                <div className="flex gap-2 ml-4">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => toggleCardExpansion(script.id)}
+                    title={isExpanded ? "Recolher" : "Expandir"}
+                    className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-[#e91e63] hover:scale-110"
+                  >
+                    {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
                   </Button>
-                  <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={() => handleDelete(script.id)}>
-                    <Trash2 className="h-4 w-4" />
+
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleEdit(script)}
+                    title="Editar script"
+                    className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-[#e91e63] hover:scale-110"
+                  >
+                    <Edit2 size={18} />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleDelete(script.id)}
+                    title="Excluir script"
+                    className="h-9 w-9 opacity-60 hover:opacity-100 transition-all duration-200 hover:text-red-500 hover:scale-110"
+                  >
+                    <Trash2 size={18} />
                   </Button>
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="pb-3">
-              <div className="flex gap-4 text-sm text-muted-foreground mb-4">
-                <div className="flex items-center gap-1">
-                  <MessageSquare className="h-4 w-4" />
-                  {script.steps.length} mensagens
-                </div>
-                <div className="flex items-center gap-1">
-                  <Clock className="h-4 w-4" />
-                  {formatDuration(script.totalDuration)}
-                </div>
-              </div>
 
-              <div className="bg-muted/30 rounded-lg p-3 space-y-2">
-                {script.steps.slice(0, 3).map((step, index) => (
-                  <div key={index} className="flex items-center gap-2 text-sm">
-                    <Badge variant="outline" className="h-5 w-5 p-0 flex items-center justify-center rounded-full text-[10px]">
-                      {index + 1}
-                    </Badge>
-                    <span className="truncate flex-1">{getMessageName(step.messageId)}</span>
-                    <span className="text-xs text-muted-foreground whitespace-nowrap">+{step.delayAfter / 1000}s</span>
+            {isExpanded && (
+              <div className="animate-expand-smooth">
+                <CardContent className="pb-3 space-y-2">
+                  {script.steps.map((step, index) => (
+                    <div
+                      key={index}
+                      className="flex items-center gap-3 p-3 bg-secondary/30 rounded-lg border border-border/30 hover:border-border/60 transition-colors"
+                    >
+                      <div className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold flex-shrink-0">
+                        {index + 1}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-foreground truncate">
+                          {getMessageName(step.messageId)}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 text-xs text-muted-foreground flex-shrink-0">
+                        <Clock size={12} />
+                        <span>+{step.delayAfter / 1000}s</span>
+                      </div>
+                    </div>
+                  ))}
+                </CardContent>
+
+                <CardFooter className="pt-3 flex-wrap gap-2">
+                  <Badge variant="secondary" className="flex items-center gap-1.5 px-2.5 py-1">
+                    <MessageSquare size={13} />
+                    <span>{script.steps.length} mensagens</span>
+                  </Badge>
+                  <Badge variant="secondary" className="flex items-center gap-1.5 px-2.5 py-1">
+                    <Clock size={13} />
+                    <span>{formatDuration(script.totalDuration)}</span>
+                  </Badge>
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground ml-auto">
+                    <Calendar size={13} />
+                    <span>{formatDate(script.createdAt)}</span>
                   </div>
-                ))}
-                {script.steps.length > 3 && (
-                  <div className="text-xs text-muted-foreground pl-7">
-                    + {script.steps.length - 3} passos...
-                  </div>
-                )}
+                </CardFooter>
               </div>
-            </CardContent>
+            )}
           </Card>
-        ))}
+          );
+        })}
+        </div>
 
-        {scripts.length === 0 && (
-          <div className="flex flex-col items-center justify-center p-12 border-2 border-dashed rounded-lg text-muted-foreground bg-muted/10">
-            <FileText className="h-12 w-12 mb-4 opacity-20" />
-            <h3 className="text-lg font-medium">Nenhum script criado</h3>
-            <p className="text-sm mb-4">Crie scripts para enviar múltiplas mensagens em sequência.</p>
-            <Button onClick={handleCreateNew}>
-              <Plus className="mr-2 h-4 w-4" /> Criar Script
+        {scripts.length === 0 && !isCreating && (
+          <div className="empty-state-large">
+            <div className="empty-icon">⚡</div>
+            <h3>Nenhum script criado</h3>
+            <p>Crie scripts para enviar múltiplas mensagens em sequência</p>
+            <Button variant="accent" onClick={handleCreateNew}>
+              <Plus size={16} />
+              Criar Primeiro Script
             </Button>
           </div>
         )}
       </div>
 
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent
-          className="max-w-3xl max-h-[90vh] overflow-y-auto bg-background border border-border shadow-lg sm:rounded-xl"
-          style={{ backgroundColor: '#09090b', borderColor: '#27272a' }}
-        >
-          <DialogHeader>
-            <DialogTitle>{editingScript ? 'Editar Script' : 'Novo Script'}</DialogTitle>
-            <DialogDescription>
-              Configure a sequência de mensagens do script.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-6 py-4">
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Nome do Script</Label>
-                <Input
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="Ex: Sequência de Boas-vindas"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Descrição (Opcional)</Label>
-                <Textarea
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  placeholder="Descreva o propósito deste script..."
-                  rows={2}
-                />
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <Label>Sequência de Mensagens</Label>
-                <Button variant="outline" size="sm" onClick={handleAddStep}>
-                  <Plus className="mr-2 h-4 w-4" /> Adicionar Mensagem
-                </Button>
-              </div>
-
-              <ScrollArea className="h-[300px] border rounded-md p-4 bg-muted/10">
-                <div className="space-y-3">
-                  {formData.steps.map((step, index) => (
-                    <div key={index} className="flex items-start gap-3 p-3 bg-background border rounded-lg shadow-sm group">
-                      <div className="flex flex-col items-center gap-1 pt-2">
-                        <Badge className="h-6 w-6 rounded-full flex items-center justify-center p-0">
-                          {index + 1}
-                        </Badge>
-                        <div className="flex flex-col gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6"
-                            onClick={() => handleMoveStep(index, 'up')}
-                            disabled={index === 0}
-                          >
-                            <ArrowUp className="h-3 w-3" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6"
-                            onClick={() => handleMoveStep(index, 'down')}
-                            disabled={index === formData.steps.length - 1}
-                          >
-                            <ArrowDown className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      </div>
-
-                      <div className="flex-1 space-y-3">
-                        <div className="space-y-1">
-                          <Label className="text-xs text-muted-foreground">Mensagem</Label>
-                          <Select
-                            value={step.messageId}
-                            onValueChange={(v) => handleUpdateStep(index, 'messageId', v)}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="Selecione uma mensagem" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {messages.map((msg) => (
-                                <SelectItem key={msg.id} value={msg.id}>
-                                  <div className="flex items-center gap-2">
-                                    {msg.type === 'text' ? <MessageSquare className="h-3 w-3" /> : <Mic className="h-3 w-3" />}
-                                    <span className="truncate max-w-[200px]">{msg.content}</span>
-                                  </div>
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        <div className="space-y-1">
-                          <Label className="text-xs text-muted-foreground">Delay após envio (segundos)</Label>
-                          <Input
-                            type="number"
-                            value={step.delayAfter / 1000}
-                            onChange={(e) => handleUpdateStep(index, 'delayAfter', parseFloat(e.target.value) * 1000)}
-                            min="0"
-                            step="0.5"
-                            className="h-8"
-                          />
-                        </div>
-                      </div>
-
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="text-muted-foreground hover:text-destructive h-8 w-8"
-                        onClick={() => handleRemoveStep(index)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  ))}
-
-                  {formData.steps.length === 0 && (
-                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground opacity-50">
-                      <p>Nenhuma mensagem adicionada</p>
-                    </div>
-                  )}
-                </div>
-              </ScrollArea>
-
-              {formData.steps.length > 0 && (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/30 p-2 rounded">
-                  <Clock className="h-4 w-4" />
-                  <span>Duração total estimada: <strong>{formatDuration(calculateTotalDuration())}</strong></span>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={handleCloseDialog}>Cancelar</Button>
-            <Button onClick={handleSave}>{editingScript ? 'Atualizar' : 'Criar'}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Alert Dialog para confirmação de exclusão */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir Script</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir este script? Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel asChild>
+              <Button variant="secondary">Cancelar</Button>
+            </AlertDialogCancel>
+            <AlertDialogAction asChild>
+              <Button variant="danger" onClick={confirmDeleteScript}>
+                Excluir
+              </Button>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

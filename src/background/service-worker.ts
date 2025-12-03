@@ -215,8 +215,22 @@ class BackgroundService {
 
     // Check each trigger
     for (const trigger of enabledTriggers) {
-      if (trigger.conditions && this.messageMatchesTrigger(messageText, trigger.conditions)) {
+      if (this.messageMatchesTrigger(messageText, trigger.conditions)) {
         console.log('[X1Flox] Trigger matched:', trigger.name);
+
+        // Check if we should skip this trigger based on chat type
+        const isGroup = chatId.includes('@g.us');
+        const isContact = chatId.includes('@c.us');
+
+        if (trigger.skipGroups && isGroup) {
+          console.log('[X1Flox] Skipping trigger for group chat (skipGroups enabled)');
+          continue;
+        }
+
+        if (trigger.skipContacts && isContact) {
+          console.log('[X1Flox] Skipping trigger for contact chat (skipContacts enabled)');
+          continue;
+        }
 
         // Send to content script to execute (fire-and-forget)
         // Don't await - this allows us to respond immediately to the original message
@@ -305,7 +319,17 @@ class BackgroundService {
     // Blobs cannot be serialized and become empty objects {}
     const processedMessages = await Promise.all(
       messages.map(async (message) => {
-        const processedMessage: any = { ...message };
+        // Don't copy media fields in spread - they'll become {} if null/undefined
+        // Create clean message object without media data
+        const processedMessage: any = {
+          ...message,
+          audioData: null,
+          imageData: null,
+          videoData: null,
+          fileData: null,
+          // Ensure fileName is preserved for file type
+          fileName: message.fileName
+        };
 
         // Convert Blob data to Base64 for transmission
         if (message.type === 'audio' && message.audioData instanceof Blob) {
@@ -314,11 +338,58 @@ class BackgroundService {
           processedMessage.imageData = await this.blobToBase64(message.imageData);
         } else if (message.type === 'video' && message.videoData instanceof Blob) {
           processedMessage.videoData = await this.blobToBase64(message.videoData);
+        } else if (message.type === 'file') {
+          console.log('[X1Flox SW] 🔍 Processing file message:', message.id);
+          console.log('[X1Flox SW] 🔍 message.fileData type:', typeof message.fileData);
+          console.log('[X1Flox SW] 🔍 message.fileData instanceof Blob:', message.fileData instanceof Blob);
+          console.log('[X1Flox SW] 🔍 message.fileName:', message.fileName);
+
+          if (message.fileData instanceof Blob) {
+            console.log('[X1Flox SW] 🔍 Blob size:', message.fileData.size, 'type:', message.fileData.type);
+            processedMessage.fileData = await this.blobToBase64(message.fileData);
+            console.log('[X1Flox SW] 🔍 Converted to Base64, length:', processedMessage.fileData.length);
+            console.log('[X1Flox SW] 🔍 Base64 starts with:', processedMessage.fileData.substring(0, 50));
+            processedMessage.fileName = message.fileName || 'file';
+          } else {
+            console.warn('[X1Flox SW] ⚠️ fileData is NOT a Blob! Value:', message.fileData);
+          }
         }
 
         return processedMessage;
       })
     );
+
+    // Store large media data in chrome.storage.local temporarily
+    // chrome.runtime.sendMessage has size limits and large Base64 strings get lost
+    const tempMediaStorage: { [key: string]: string } = {};
+
+    for (const msg of processedMessages) {
+      if (msg.type === 'file' && msg.fileData && typeof msg.fileData === 'string' && msg.fileData.length > 100000) {
+        const storageKey = `temp_file_${msg.id}`;
+        tempMediaStorage[storageKey] = msg.fileData;
+        msg.fileData = `__TEMP_STORAGE__:${storageKey}`;
+      }
+      if (msg.type === 'image' && msg.imageData && typeof msg.imageData === 'string' && msg.imageData.length > 100000) {
+        const storageKey = `temp_image_${msg.id}`;
+        tempMediaStorage[storageKey] = msg.imageData;
+        msg.imageData = `__TEMP_STORAGE__:${storageKey}`;
+      }
+      if (msg.type === 'video' && msg.videoData && typeof msg.videoData === 'string' && msg.videoData.length > 100000) {
+        const storageKey = `temp_video_${msg.id}`;
+        tempMediaStorage[storageKey] = msg.videoData;
+        msg.videoData = `__TEMP_STORAGE__:${storageKey}`;
+      }
+      if (msg.type === 'audio' && msg.audioData && typeof msg.audioData === 'string' && msg.audioData.length > 100000) {
+        const storageKey = `temp_audio_${msg.id}`;
+        tempMediaStorage[storageKey] = msg.audioData;
+        msg.audioData = `__TEMP_STORAGE__:${storageKey}`;
+      }
+    }
+
+    // Store all temp media data at once
+    if (Object.keys(tempMediaStorage).length > 0) {
+      await chrome.storage.local.set(tempMediaStorage);
+    }
 
     return {
       scripts,
@@ -373,7 +444,10 @@ class BackgroundService {
         const messageData: any = {
           type: message.type,
           content: message.content,
-          caption: message.caption
+          caption: message.caption,
+          showTyping: message.showTyping,
+          showRecording: message.showRecording,
+          sendDelay: message.sendDelay
         };
 
         // Convert Blob data to Base64 for transmission
@@ -396,6 +470,13 @@ class BackgroundService {
           } else {
             messageData.videoData = message.videoData;
           }
+        } else if (message.type === 'file') {
+          if (message.fileData instanceof Blob) {
+            messageData.fileData = await this.blobToBase64(message.fileData);
+          } else if (message.fileData && typeof message.fileData === 'string') {
+            messageData.fileData = message.fileData;
+          }
+          messageData.fileName = message.fileName || 'file';
         }
 
         return {

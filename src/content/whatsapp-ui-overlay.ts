@@ -18,6 +18,8 @@ interface Message {
   duration?: number;
   imageData?: string | Blob;
   videoData?: string | Blob;
+  fileData?: string | Blob;
+  fileName?: string;
   showTyping?: boolean;
   showRecording?: boolean;
   sendDelay?: number;
@@ -25,7 +27,7 @@ interface Message {
 
 interface StatusItem {
   id: string;
-  type: 'text' | 'audio' | 'image' | 'video';
+  type: 'text' | 'audio' | 'image' | 'video' | 'file';
   status: 'sending' | 'success' | 'error';
   text: string;
   error?: string;
@@ -190,6 +192,24 @@ class WhatsAppUIOverlay {
         this.scripts = response.data.scripts || [];
         this.messages = response.data.messages || [];
 
+        // Debug: Check file messages after receiving from injector
+        console.log('[X1Flox UI] 🔍 DEBUG - Messages received in UI overlay');
+        const fileMessages = this.messages.filter((m: any) => m.type === 'file');
+        fileMessages.forEach((msg: any) => {
+          console.log('[X1Flox UI] 🔍 File message in UI overlay:', {
+            id: msg.id,
+            name: msg.name,
+            hasFileData: !!msg.fileData,
+            fileDataType: typeof msg.fileData,
+            fileDataValue: msg.fileData,
+            isString: typeof msg.fileData === 'string',
+            length: typeof msg.fileData === 'string' ? msg.fileData.length : 0
+          });
+        });
+
+        // Note: Large media restoration is now done by the injector before sending
+        // No need to restore here as the injector already handled it
+
         // Load settings
         console.log('[X1Flox UI] Loading settings...');
         const settingsResponse = await this.requestFromContentScript({ type: 'GET_SETTINGS' });
@@ -333,9 +353,9 @@ class WhatsAppUIOverlay {
     let iconSvg = '';
 
     if (type === 'script') {
-      // Script icon - filled circle (bullet)
-      iconSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-        <circle cx="12" cy="12" r="8"/>
+      // Script icon - Zap/Lightning bolt
+      iconSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
       </svg>`;
     } else {
       // Message icon based on message type
@@ -364,6 +384,7 @@ class WhatsAppUIOverlay {
             <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
           </svg>`;
           break;
+
         default:
           iconSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
             <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
@@ -433,6 +454,7 @@ class WhatsAppUIOverlay {
         return message.caption ? `🖼️ ${message.caption.substring(0, maxLength)}` : '🖼️ Imagem';
       case 'video':
         return message.caption ? `🎥 ${message.caption.substring(0, maxLength)}` : '🎥 Vídeo';
+
       default:
         return 'Mensagem';
     }
@@ -526,7 +548,7 @@ class WhatsAppUIOverlay {
       const actionBtn = element.querySelector('.x1flox-shortcut-btn-action');
       if (actionBtn) {
         const isConfirming = (type === 'message' && id === this.confirmingMessageId) ||
-                           (type === 'script' && id === this.confirmingScriptId);
+          (type === 'script' && id === this.confirmingScriptId);
         actionBtn.innerHTML = isConfirming
           ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
@@ -657,13 +679,27 @@ class WhatsAppUIOverlay {
         }
       }));
 
-      // Process delay in overlay ONLY if there's NO animation
-      // If animation exists, page script must handle delay+animation together
-      // (animation needs to happen DURING the delay, not after it)
+      // NEW ARCHITECTURE: Always process delay in overlay for full control
+      // If animation exists, start it BEFORE delay and stop it AFTER (or on cancel)
       const hasAnimation = message.showTyping || message.showRecording;
 
-      if (sendDelay > 0 && !hasAnimation) {
-        console.log('[X1Flox UI] Waiting', sendDelay, 'ms with pause/cancel support (no animation)...');
+      // If animation: start it in page script (runs in parallel with delay)
+      if (hasAnimation && sendDelay > 0) {
+        console.log('[X1Flox UI] Starting animation in page script (parallel with delay)...');
+        // Dispatch event to start animation in page script
+        document.dispatchEvent(new CustomEvent('X1FloxStartAnimation', {
+          detail: {
+            messageId,
+            chatId: targetChatId,
+            animationType: message.showTyping ? 'typing' : 'recording',
+            duration: sendDelay
+          }
+        }));
+      }
+
+      // ALWAYS process delay in overlay (allows pause/cancel for ALL messages)
+      if (sendDelay > 0) {
+        console.log('[X1Flox UI] Waiting', sendDelay, 'ms with pause/cancel support...');
 
         // Break delay into 100ms chunks (like scripts do for pause/cancel responsiveness)
         const chunks = Math.ceil(sendDelay / 100);
@@ -674,6 +710,12 @@ class WhatsAppUIOverlay {
           // Check if cancelled
           if (execution.isCancelled) {
             console.log('[X1Flox UI] Message cancelled during delay:', messageId);
+            // If animation was running, stop it
+            if (hasAnimation) {
+              document.dispatchEvent(new CustomEvent('X1FloxStopAnimation', {
+                detail: { messageId, chatId: targetChatId }
+              }));
+            }
             this.messageExecutions.delete(messageId);
             return;
           }
@@ -687,6 +729,12 @@ class WhatsAppUIOverlay {
           // Check again after pause
           if (execution.isCancelled) {
             console.log('[X1Flox UI] Message cancelled after pause:', messageId);
+            // If animation was running, stop it
+            if (hasAnimation) {
+              document.dispatchEvent(new CustomEvent('X1FloxStopAnimation', {
+                detail: { messageId, chatId: targetChatId }
+              }));
+            }
             this.messageExecutions.delete(messageId);
             return;
           }
@@ -694,9 +742,6 @@ class WhatsAppUIOverlay {
           // Sleep for chunk
           await new Promise(resolve => setTimeout(resolve, Math.min(100, sendDelay - i * 100)));
         }
-      } else if (hasAnimation) {
-        console.log('[X1Flox UI] Message has animation - page script will handle delay+animation together');
-        // Note: Animation must happen during delay, so page script processes both
       }
 
       // Check one more time before sending
@@ -709,13 +754,15 @@ class WhatsAppUIOverlay {
 
       // Send message to page script
       // IMPORTANT: Use targetChatId (captured at start), not current chat
-      console.log('[X1Flox UI] Sending message to target chat:', targetChatId);
+      // Delay already processed - animation (if any) already running
+      console.log('[X1Flox UI] Delay complete, sending message to target chat:', targetChatId);
 
       const messageToSend = {
         ...message,
-        // If animation: pass original sendDelay (page script handles delay+animation together)
-        // If no animation: pass 0 (delay already processed in overlay)
-        sendDelay: hasAnimation ? message.sendDelay : 0,
+        // ALWAYS send with sendDelay=0 (delay already processed in overlay)
+        // Animation (if exists) is already running and will be stopped by page script
+        sendDelay: 0,
+        // Keep animation flags so page script knows to stop animation
         showTyping: message.showTyping,
         showRecording: message.showRecording
       };
@@ -841,6 +888,60 @@ class WhatsAppUIOverlay {
               sendDelay: message.sendDelay
             }
           }, audioTimeout);
+          break;
+
+        case 'file':
+          console.log('[X1Flox UI] 🔍 DEBUG FILE - message object:', message);
+          console.log('[X1Flox UI] 🔍 DEBUG FILE - message.fileData type:', typeof message.fileData);
+          console.log('[X1Flox UI] 🔍 DEBUG FILE - message.fileData value:', message.fileData);
+          console.log('[X1Flox UI] 🔍 DEBUG FILE - message.fileName:', message.fileName);
+
+          // Data comes as base64 string from service worker
+          let fileData = message.fileData;
+
+          console.log('[X1Flox UI] 🔍 DEBUG FILE - fileData before Blob check:', fileData);
+          console.log('[X1Flox UI] 🔍 DEBUG FILE - fileData instanceof Blob?', fileData instanceof Blob);
+
+          if (fileData instanceof Blob) {
+            console.log('[X1Flox UI] 🔍 DEBUG FILE - Converting Blob to base64...');
+            fileData = await this.blobToBase64(fileData);
+            console.log('[X1Flox UI] 🔍 DEBUG FILE - After conversion:', typeof fileData, fileData?.substring?.(0, 100));
+          }
+
+          // Validate fileData is a string (base64 or blob URL)
+          console.log('[X1Flox UI] 🔍 DEBUG FILE - Final fileData type:', typeof fileData);
+          console.log('[X1Flox UI] 🔍 DEBUG FILE - Final fileData valid?', !!fileData && typeof fileData === 'string');
+
+          if (!fileData || typeof fileData !== 'string') {
+            console.error('[X1Flox UI] ❌ DEBUG FILE - Validation failed!');
+            console.error('[X1Flox UI] ❌ DEBUG FILE - fileData:', fileData);
+            console.error('[X1Flox UI] ❌ DEBUG FILE - Complete message:', JSON.stringify(message, null, 2));
+
+            // Provide helpful error message
+            let errorMsg = 'Arquivo não encontrado ou inválido.';
+            if (fileData === null || fileData === undefined) {
+              errorMsg = 'O arquivo desta mensagem não foi encontrado. Por favor, edite a mensagem e selecione o arquivo novamente.';
+            } else if (typeof fileData === 'object') {
+              errorMsg = 'Erro ao carregar o arquivo. Por favor, edite a mensagem e selecione o arquivo novamente.';
+            }
+
+            throw new Error(errorMsg);
+          }
+
+          console.log('[X1Flox UI] ✅ DEBUG FILE - Validation passed, sending file...');
+
+          // Dynamic timeout: sendDelay + 150s buffer (files can be large like videos)
+          const fileTimeout = (message.sendDelay || 0) + 150000;
+          response = await this.requestFromContentScript({
+            type: 'SEND_FILE',
+            payload: {
+              fileData,
+              caption: message.caption || '',
+              fileName: message.fileName || 'file',
+              chatId,
+              sendDelay: message.sendDelay
+            }
+          }, fileTimeout);
           break;
 
         default:
@@ -1286,6 +1387,11 @@ class WhatsAppUIOverlay {
           audioData = await this.blobToBase64(audioData);
         }
 
+        let fileData = message.fileData;
+        if (fileData instanceof Blob) {
+          fileData = await this.blobToBase64(fileData);
+        }
+
         return {
           message: {
             type: message.type,
@@ -1294,7 +1400,9 @@ class WhatsAppUIOverlay {
             audioData,
             duration: message.duration,
             imageData,
-            videoData
+            videoData,
+            fileData,
+            fileName: message.fileName
           },
           delayAfter: (step as any).delayAfter
         };
@@ -2089,16 +2197,25 @@ class WhatsAppUIOverlay {
     // Listen for single message requests from popup/FAB
     // This routes popup messages through sendSingleMessage() so they show execution popup
     document.addEventListener('X1FloxSendSingleMessageFromPopup', async (event: any) => {
-      const { message } = event.detail;
-      console.log('[X1Flox UI] Single message request from popup:', message);
+      const { messageId } = event.detail;
+      console.log('[X1Flox UI] Single message request from popup, messageId:', messageId);
 
-      if (!message) {
-        console.error('[X1Flox UI] No message provided in event');
+      if (!messageId) {
+        console.error('[X1Flox UI] No messageId provided in event');
         return;
       }
 
-      // Message media data (audio/image/video) comes as base64 from popup
-      // (converted before sending to survive CustomEvent serialization)
+      // Look up message from our cache (which already has restored media data)
+      // This avoids chrome.tabs.sendMessage size limits for large media files
+      const message = this.messages.find((m: any) => m.id === messageId);
+      if (!message) {
+        console.error('[X1Flox UI] Message not found in cache:', messageId);
+        return;
+      }
+
+      console.log('[X1Flox UI] Found message in cache, type:', message.type);
+
+      // Message media data is already in base64 format from GET_SCRIPTS_AND_MESSAGES restoration
       // Call sendSingleMessage() which will:
       // 1. Capture chat info
       // 2. Create execution state

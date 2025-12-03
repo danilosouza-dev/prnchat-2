@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Tag } from '@/types';
 import { db } from '@/storage/db';
 import { generateId } from '@/utils/helpers';
+import { Checkbox } from '@/components/ui/checkbox';
+import { X } from 'lucide-react';
 
 interface TagManagerProps {
   availableTags: Tag[];
@@ -91,10 +93,9 @@ const TagManager: React.FC<TagManagerProps> = ({
         {availableTags.map((tag) => (
           <div key={tag.id} className="tag-item">
             <label className="tag-checkbox-label">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={selectedTags.includes(tag.id)}
-                onChange={() => toggleTag(tag.id)}
+                onCheckedChange={() => toggleTag(tag.id)}
               />
               <span className="tag-display">
                 <TagIcon color={tag.color} size={14} />
@@ -107,7 +108,7 @@ const TagManager: React.FC<TagManagerProps> = ({
               onClick={() => handleDeleteTag(tag.id)}
               title="Excluir tag"
             >
-              ✕
+              <X size={14} />
             </button>
           </div>
         ))}

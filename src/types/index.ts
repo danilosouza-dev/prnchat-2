@@ -3,7 +3,7 @@
  * Defines the structure for Messages, Scripts, Triggers, and Storage
  */
 
-export type MessageType = 'text' | 'audio' | 'image' | 'video';
+export type MessageType = 'text' | 'audio' | 'image' | 'video' | 'file';
 
 export interface Tag {
   id: string;
@@ -11,18 +11,32 @@ export interface Tag {
   color: string; // hex color
 }
 
+export interface Folder {
+  id: string;
+  name: string;
+  color: string; // hex color
+  order?: number; // order for displaying folders
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface Message {
   id: string;
+  name?: string; // Display name for the message (optional, defaults to content preview)
   type: MessageType;
   content: string; // Text content or media description (internal only)
-  caption?: string; // Caption to send with image/video (optional)
+  caption?: string; // Caption to send with image/video/file (optional)
   audioData?: Blob | null; // Audio file data (if type is 'audio')
   audioUrl?: string; // URL to audio file (if using external storage)
   imageData?: Blob | null; // Image file data (if type is 'image')
   imageUrl?: string; // URL to image file (if using external storage)
   videoData?: Blob | null; // Video file data (if type is 'video')
   videoUrl?: string; // URL to video file (if using external storage)
-  tags: string[]; // Array of tag IDs
+  fileData?: Blob | null; // File data (if type is 'file')
+  fileUrl?: string; // URL to file (if using external storage)
+  fileName?: string; // Original file name (if type is 'file')
+  folderId?: string; // ID of the folder this message belongs to (optional - messages without folder are "unfiled")
+  tags?: string[]; // Deprecated: Array of tag IDs (kept for migration purposes)
   duration?: number; // Duration in seconds (for audio/video)
   order?: number; // Display order (for drag-and-drop sorting)
   showTyping?: boolean; // Show typing animation before sending text message (default: false)
@@ -34,7 +48,7 @@ export interface Message {
 
 export interface ScriptStep {
   messageId: string;
-  delayAfter: number; // Delay in milliseconds after sending this message
+  delayAfter: number; // Delay in milliseconds before sending this message (despite the name, it's applied before)
 }
 
 export interface Script {
@@ -57,19 +71,15 @@ export interface TriggerCondition {
 
 export interface Trigger {
   id: string;
-  keyword: string; // Palavra-chave para acionar o gatilho
-  matchType: 'exact' | 'contains' | 'startsWith' | 'endsWith';
-  actionType: 'script' | 'message';
-  actionId: string; // ID do script ou mensagem
-  isActive: boolean;
+  name: string;
+  description?: string;
+  enabled: boolean;
+  conditions: TriggerCondition[];
+  scriptId: string; // Script to execute when triggered
+  skipContacts?: boolean; // Don't trigger for individual contacts
+  skipGroups?: boolean; // Don't trigger for groups
   createdAt: number;
   updatedAt: number;
-  // Campos legados (opcionais para compatibilidade durante migração)
-  name?: string;
-  description?: string;
-  enabled?: boolean;
-  conditions?: TriggerCondition[];
-  scriptId?: string;
 }
 
 // Storage interfaces
@@ -77,28 +87,24 @@ export interface StorageData {
   messages: Record<string, Message>;
   scripts: Record<string, Script>;
   triggers: Record<string, Trigger>;
-  tags: Record<string, Tag>;
+  tags: Record<string, Tag>; // Deprecated: kept for migration
+  folders: Record<string, Folder>;
   settings: Settings;
 }
 
 export interface Settings {
-  apiKey?: string; // OpenAI / Gemini API Key
-  webhookUrl?: string; // URL para webhooks
-  autoReply: boolean; // Ativar resposta automática global
-  delayBetweenMessages: number; // Delay padrão entre mensagens (ms)
-
-  // Campos legados ou mantidos
-  storageType: 'local' | 'remote';
+  storageType: 'local' | 'remote'; // Local (IndexedDB) or Remote (Supabase/S3)
   remoteConfig?: {
     url: string;
     apiKey?: string;
   };
   autoBackup: boolean;
-  requireSendConfirmation?: boolean;
-  showShortcuts?: boolean;
-  showFloatingButton?: boolean;
-  showScriptExecutionPopup?: boolean;
-  showMessageExecutionPopup?: boolean;
+  defaultDelay: number; // Default delay between messages in milliseconds
+  requireSendConfirmation?: boolean; // Require two clicks to send messages (default: true)
+  showShortcuts?: boolean; // Show shortcut bar in WhatsApp Web (default: true)
+  showFloatingButton?: boolean; // Show floating action button in WhatsApp Web (default: false)
+  showScriptExecutionPopup?: boolean; // Show script execution progress popup (default: true)
+  showMessageExecutionPopup?: boolean; // Show message sending progress popup for delayed messages (default: true)
 }
 
 // Message for communication between popup/options and content script
@@ -107,6 +113,7 @@ export type ActionType =
   | 'SEND_AUDIO'
   | 'SEND_IMAGE'
   | 'SEND_VIDEO'
+  | 'SEND_FILE'
   | 'EXECUTE_SCRIPT'
   | 'PAUSE_SCRIPT'
   | 'RESUME_SCRIPT'

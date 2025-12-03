@@ -7,19 +7,22 @@ import {
   MessageCircle,
   Camera,
   FileText,
-  Filter,
-  Tag as LucideTag,
+  Search,
+  Folder as FolderIcon,
   Send,
-  PlayCircle,
-  Video
+  Zap,
+  Video,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
-import { Message, Script, Tag, MessageType, ScriptExecutionState } from '@/types';
+import { Message, Script, Folder, MessageType, ScriptExecutionState } from '@/types';
 import { db } from '@/storage/db';
 import { getActiveTab, sendMessageToContentScript } from '@/utils/helpers';
+import { needsMigration, migrateTagsToFolders } from '@/utils/migration';
 import ScriptExecutionModal from './components/ScriptExecutionModal';
 
 type Tab = 'messages' | 'scripts';
-type MediaFilter = 'all' | 'audio' | 'text' | 'image' | 'video' | 'file';
+type MediaFilter = 'all' | 'folders' | 'audio' | 'text' | 'image' | 'video' | 'file';
 
 interface Notification {
   id: string;
@@ -35,15 +38,15 @@ const App: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [scripts, setScripts] = useState<Script[]>([]);
   const [_isExecuting, setIsExecuting] = useState(false);
-  const [tagFilter, setTagFilter] = useState('');
-  const [tags, setTags] = useState<Tag[]>([]);
-  const [selectedTag, setSelectedTag] = useState<Tag | null>(null);
-  const [showTagDropdown, setShowTagDropdown] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [activeChat, setActiveChat] = useState<{ name: string; photo?: string } | null>(null);
   const [confirmingMessageId, setConfirmingMessageId] = useState<string | null>(null);
   const [confirmingScriptId, setConfirmingScriptId] = useState<string | null>(null);
   const [requireConfirmation, setRequireConfirmation] = useState(true);
   const [executionState, setExecutionState] = useState<ScriptExecutionState | null>(null);
+  const [expandedScripts, setExpandedScripts] = useState<Set<string>>(new Set());
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([
     {
@@ -72,9 +75,18 @@ const App: React.FC = () => {
   const notificationRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    loadData();
-    loadActiveChat();
-    loadSettings();
+    // Run migration if needed before loading data
+    const initializeApp = async () => {
+      if (await needsMigration()) {
+        console.log('[X1Flox] Running migration from tags to folders...');
+        await migrateTagsToFolders();
+      }
+      loadData();
+      loadActiveChat();
+      loadSettings();
+    };
+
+    initializeApp();
 
     // Poll active chat every 2 seconds for real-time updates
     const intervalId = setInterval(() => {
@@ -84,8 +96,8 @@ const App: React.FC = () => {
     // Listen for storage changes to reload data in real-time
     // This is especially important for FAB popup iframe
     const handleStorageChange = (changes: any, areaName: string) => {
-      // Check if messages, scripts, or tags changed
-      if (areaName === 'local' && (changes.messages || changes.scripts || changes.tags)) {
+      // Check if messages, scripts, or folders changed
+      if (areaName === 'local' && (changes.messages || changes.scripts || changes.folders)) {
         console.log('[X1Flox] Storage changed, reloading data...');
         loadData();
       }
@@ -158,14 +170,14 @@ const App: React.FC = () => {
 
   const loadData = async () => {
     try {
-      const [messagesData, scriptsData, tagsData] = await Promise.all([
+      const [messagesData, scriptsData, foldersData] = await Promise.all([
         db.getAllMessages(),
         db.getAllScripts(),
-        db.getAllTags(),
+        db.getAllFolders(),
       ]);
       setMessages(messagesData);
       setScripts(scriptsData);
-      setTags(tagsData);
+      setFolders(foldersData);
     } catch (err) {
       // Error loading data silently
     }
@@ -255,10 +267,13 @@ const App: React.FC = () => {
       // 2. Creating execution state with pause/cancel controls
       // 3. Showing execution popup
       // 4. Executing message with delay support
+      //
+      // IMPORTANT: Send only message ID to avoid chrome.tabs.sendMessage size limits
+      // The overlay already has all messages with restored media data from GET_SCRIPTS_AND_MESSAGES
       const response = await sendMessageToContentScript(tab.id, {
         type: 'SEND_SINGLE_MESSAGE',
         payload: {
-          message: processedMessage  // Pass message with base64 media data
+          messageId: message.id  // Send only ID - overlay will look up full message from its cache
         }
       });
 
@@ -433,52 +448,85 @@ const App: React.FC = () => {
     setNotifications(notifications.filter(n => n.id !== id));
   };
 
-  // Get matching tags based on filter input
-  const getMatchingTags = () => {
-    if (!tagFilter.trim()) return [];
-    const search = tagFilter.toLowerCase();
-    return tags.filter(t => t.name.toLowerCase().includes(search));
+  // Toggle folder expansion
+  const toggleFolderExpansion = (folderId: string) => {
+    setExpandedFolders(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(folderId)) {
+        newSet.delete(folderId);
+      } else {
+        newSet.add(folderId);
+      }
+      return newSet;
+    });
   };
 
-  // Handle tag selection
-  const handleTagSelect = (tag: Tag) => {
-    setSelectedTag(tag);
-    setTagFilter(tag.name);
-    setShowTagDropdown(false);
+  // Toggle script expansion
+  const toggleScriptExpansion = (scriptId: string) => {
+    setExpandedScripts(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(scriptId)) {
+        newSet.delete(scriptId);
+      } else {
+        newSet.add(scriptId);
+      }
+      return newSet;
+    });
   };
 
-  // Clear selected tag
-  const clearTagFilter = () => {
-    setSelectedTag(null);
-    setTagFilter('');
-    setShowTagDropdown(false);
-  };
-
-  // Filter messages by type and selected tag, sorted by order
-  const getFilteredMessages = () => {
+  // Filter and organize messages
+  const getOrganizedMessages = () => {
     let filtered = messages;
 
-    // Filter by media type
-    if (mediaFilter !== 'all') {
-      filtered = filtered.filter(m => m.type === mediaFilter);
+    // Filter by type
+    if (mediaFilter !== 'all' && mediaFilter !== 'folders') {
+      // Image filter includes both images and videos
+      if (mediaFilter === 'image') {
+        filtered = filtered.filter(m => m.type === 'image' || m.type === 'video');
+      } else {
+        filtered = filtered.filter(m => m.type === mediaFilter);
+      }
     }
 
-    // Filter by selected tag
-    if (selectedTag) {
-      filtered = filtered.filter(m => m.tags && m.tags.includes(selectedTag.id));
+    // Filter by search query (search in name and content)
+    if (searchQuery.trim()) {
+      const search = searchQuery.toLowerCase();
+      filtered = filtered.filter(m =>
+        (m.name?.toLowerCase().includes(search)) ||
+        m.content.toLowerCase().includes(search)
+      );
     }
 
-    // Sort by order (fallback to createdAt)
-    return filtered.sort((a, b) => (a.order ?? a.createdAt) - (b.order ?? b.createdAt));
+    // Separate messages by folder
+    const messagesByFolder = new Map<string, Message[]>();
+    const messagesWithoutFolder: Message[] = [];
+
+    filtered.forEach(msg => {
+      if (msg.folderId) {
+        if (!messagesByFolder.has(msg.folderId)) {
+          messagesByFolder.set(msg.folderId, []);
+        }
+        messagesByFolder.get(msg.folderId)!.push(msg);
+      } else {
+        messagesWithoutFolder.push(msg);
+      }
+    });
+
+    // Sort messages within each group
+    messagesByFolder.forEach((msgs) => {
+      msgs.sort((a, b) => (a.order ?? a.createdAt) - (b.order ?? b.createdAt));
+    });
+    messagesWithoutFolder.sort((a, b) => (a.order ?? a.createdAt) - (b.order ?? b.createdAt));
+
+    return { messagesByFolder, messagesWithoutFolder };
   };
 
-  // Filter scripts (no tag filter for scripts)
+  // Filter scripts (no folder filter for scripts)
   const getFilteredScripts = () => {
     return scripts;
   };
 
-  const matchingTags = getMatchingTags();
-  const filteredMessages = getFilteredMessages();
+  const { messagesByFolder, messagesWithoutFolder } = getOrganizedMessages();
   const filteredScripts = getFilteredScripts();
 
   // Message type icon component
@@ -496,14 +544,6 @@ const App: React.FC = () => {
         return <FileText size={16} />;
     }
   };
-
-  // Tag icon component (solid tag with color)
-  const TagIcon = ({ color, size = 12 }: { color: string; size?: number }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill={color} style={{ flexShrink: 0 }}>
-      <path d="M21.41 11.58l-9-9C12.05 2.22 11.55 2 11 2H4c-1.1 0-2 .9-2 2v7c0 .55.22 1.05.59 1.42l9 9c.36.36.86.58 1.41.58s1.05-.22 1.41-.59l7-7c.37-.36.59-.86.59-1.41s-.23-1.06-.59-1.42zM5.5 7C4.67 7 4 6.33 4 5.5S4.67 4 5.5 4 7 4.67 7 5.5 6.33 7 5.5 7z"/>
-    </svg>
-  );
-
 
   return (
     <div className="popup-dark">
@@ -601,6 +641,13 @@ const App: React.FC = () => {
             <Grid size={18} />
           </button>
           <button
+            className={`tool-btn ${mediaFilter === 'folders' ? 'active' : ''}`}
+            onClick={() => setMediaFilter('folders')}
+            title="Pastas"
+          >
+            <FolderIcon size={18} />
+          </button>
+          <button
             className={`tool-btn ${mediaFilter === 'audio' ? 'active' : ''}`}
             onClick={() => setMediaFilter('audio')}
             title="Áudios"
@@ -617,7 +664,7 @@ const App: React.FC = () => {
           <button
             className={`tool-btn ${mediaFilter === 'image' ? 'active' : ''}`}
             onClick={() => setMediaFilter('image')}
-            title="Fotos"
+            title="Fotos e Vídeos"
           >
             <Camera size={18} />
           </button>
@@ -631,52 +678,23 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Filter by Tag - Only show on messages tab */}
+      {/* Search Messages - Only show on messages tab */}
       {activeTab === 'messages' && (
         <div className="filter-bar-dark">
           <div className="filter-input-wrapper">
-            {selectedTag ? (
-              <div className="selected-tag">
-                <TagIcon color={selectedTag.color || '#e91e63'} size={14} />
-                <span>{selectedTag.name}</span>
-                <button className="clear-tag" onClick={clearTagFilter}>×</button>
-              </div>
-            ) : (
-              <>
-                <input
-                  ref={filterInputRef}
-                  type="text"
-                  className="filter-input"
-                  placeholder="Digite para buscar tag..."
-                  value={tagFilter}
-                  onChange={(e) => {
-                    setTagFilter(e.target.value);
-                    setShowTagDropdown(e.target.value.trim().length > 0);
-                  }}
-                  onFocus={() => tagFilter.trim() && setShowTagDropdown(true)}
-                  onBlur={() => setTimeout(() => setShowTagDropdown(false), 200)}
-                />
-                <Filter size={11} strokeWidth={2.5} />
-              </>
-            )}
-            {showTagDropdown && matchingTags.length > 0 && (
-              <div className="tag-dropdown">
-                {matchingTags.map(tag => (
-                  <div
-                    key={tag.id}
-                    className="tag-option"
-                    onClick={() => handleTagSelect(tag)}
-                  >
-                    <TagIcon color={tag.color || '#e91e63'} size={14} />
-                    <span>{tag.name}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+            <input
+              ref={filterInputRef}
+              type="text"
+              className="filter-input"
+              placeholder="Pesquisar mensagens..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            <Search size={11} strokeWidth={2.5} />
           </div>
           <span className="filter-label">
-            <LucideTag size={11} strokeWidth={2.5} />
-            Filtrar por Tag
+            <Search size={11} strokeWidth={2.5} />
+            Pesquisar
           </span>
         </div>
       )}
@@ -706,32 +724,127 @@ const App: React.FC = () => {
         <div className="scrollable-content">
           {activeTab === 'messages' && (
             <>
-              {filteredMessages.length > 0 && (
-                <div className="items-dark">
-                  {filteredMessages.map((msg) => (
+              {/* Pastas */}
+              {folders.map((folder) => {
+                const folderMessages = messagesByFolder.get(folder.id) || [];
+                // Show empty folders only when filtering by "folders" or "all" (without search)
+                if (folderMessages.length === 0 && mediaFilter !== 'folders' && (mediaFilter !== 'all' || searchQuery)) return null;
+
+                // Auto-expand folders when filtering by type or searching
+                const shouldAutoExpand = (mediaFilter !== 'all' && mediaFilter !== 'folders' && folderMessages.length > 0) || (searchQuery && folderMessages.length > 0);
+                const isFolderExpanded = shouldAutoExpand || expandedFolders.has(folder.id);
+
+                return (
+                  <div key={folder.id} style={{ marginBottom: '12px' }}>
+                    {/* Folder Header - Enhanced Design */}
                     <div
-                      key={msg.id}
-                      className={`item-dark ${confirmingMessageId === msg.id ? 'confirming' : ''}`}
-                      onClick={() => handleCardClick(msg)}
+                      style={{
+                        cursor: 'pointer',
+                        padding: '12px 14px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                        borderRadius: '6px',
+                        transition: 'all 0.2s',
+                      }}
+                      onClick={() => toggleFolderExpansion(folder.id)}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.03)';
+                      }}
                     >
-                      <div className="item-type-icon">
-                        <MessageTypeIcon type={msg.type} />
-                      </div>
-                      <span className="item-text">
-                        {msg.content.substring(0, 50)}{msg.content.length > 50 ? '...' : ''}
+                      <FolderIcon size={20} color={folder.color} style={{ flexShrink: 0 }} />
+                      <span style={{
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        flex: 1,
+                        color: 'var(--text-primary)',
+                        letterSpacing: '0.3px'
+                      }}>
+                        {folder.name}
                       </span>
-                      <button className="item-action" onClick={(e) => handleSendClick(e, msg)}>
-                        <Send size={16} />
-                      </button>
+                      <span style={{
+                        fontSize: '11px',
+                        color: 'var(--text-muted)',
+                        fontWeight: 500,
+                        backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                        padding: '2px 8px',
+                        borderRadius: '10px'
+                      }}>
+                        {folderMessages.length}
+                      </span>
+                      {isFolderExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                     </div>
-                  ))}
+
+                    {/* Messages inside folder - Indented */}
+                    {isFolderExpanded && (
+                      <div style={{ marginLeft: '12px', marginTop: '6px', marginBottom: '4px' }}>
+                        {folderMessages.map((msg) => (
+                          <div
+                            key={msg.id}
+                            className={`item-dark ${confirmingMessageId === msg.id ? 'confirming' : ''}`}
+                            onClick={() => handleCardClick(msg)}
+                            style={{
+                              marginBottom: '4px',
+                              borderLeftColor: folder.color,
+                              '--folder-color': folder.color
+                            } as React.CSSProperties & { '--folder-color': string }}
+                          >
+                            <div className="item-type-icon">
+                              <MessageTypeIcon type={msg.type} />
+                            </div>
+                            <span className="item-text">
+                              {msg.name || msg.content.substring(0, 40)}{(!msg.name && msg.content.length > 40) || (msg.name && msg.name.length > 40) ? '...' : ''}
+                            </span>
+                            <button className="item-action" onClick={(e) => handleSendClick(e, msg)}>
+                              <Send size={16} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Mensagens sem pasta - Hide when filtering by folders only */}
+              {messagesWithoutFolder.length > 0 && mediaFilter !== 'folders' && (
+                <div>
+                  {folders.length > 0 && (
+                    <div style={{ padding: '8px 16px', fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                      MENSAGENS SEM PASTA
+                    </div>
+                  )}
+                  <div className="items-dark">
+                    {messagesWithoutFolder.map((msg) => (
+                      <div
+                        key={msg.id}
+                        className={`item-dark ${confirmingMessageId === msg.id ? 'confirming' : ''}`}
+                        onClick={() => handleCardClick(msg)}
+                      >
+                        <div className="item-type-icon">
+                          <MessageTypeIcon type={msg.type} />
+                        </div>
+                        <span className="item-text">
+                          {msg.name || msg.content.substring(0, 40)}{(!msg.name && msg.content.length > 40) || (msg.name && msg.name.length > 40) ? '...' : ''}
+                        </span>
+                        <button className="item-action" onClick={(e) => handleSendClick(e, msg)}>
+                          <Send size={16} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
-              {filteredMessages.length === 0 && (
+              {/* Empty State */}
+              {folders.length === 0 && messagesWithoutFolder.length === 0 && (
                 <div className="empty-dark">
-                  <p>{selectedTag ? 'Nenhuma mensagem com esta tag' : 'Nenhuma mensagem criada'}</p>
-                  {!selectedTag && (
+                  <p>{messages.length === 0 ? 'Nenhuma mensagem criada' : 'Nenhuma mensagem encontrada'}</p>
+                  {messages.length === 0 && (
                     <button className="btn-primary-dark" onClick={openOptions}>
                       Criar primeira mensagem
                     </button>
@@ -744,30 +857,85 @@ const App: React.FC = () => {
           {activeTab === 'scripts' && (
             <section className="section-dark">
               <h3 className="section-title-dark">SCRIPTS PRONTOS</h3>
-              <div className="items-dark">
-                {filteredScripts.map((script) => (
-                  <div
-                    key={script.id}
-                    className={`item-dark ${confirmingScriptId === script.id ? 'confirming' : ''}`}
-                    onClick={() => handleScriptCardClick(script)}
-                  >
-                    <div className="item-bullet" />
-                    <span className="item-text">{script.name}</span>
-                    <button className="item-action" onClick={(e) => handleScriptExecuteClick(e, script)}>
-                      <PlayCircle size={16} />
-                    </button>
+              {filteredScripts.map((script) => {
+                const isExpanded = expandedScripts.has(script.id);
+                return (
+                  <div key={script.id} style={{ marginBottom: '12px' }}>
+                    <div
+                      className={`item-dark ${confirmingScriptId === script.id ? 'confirming' : ''}`}
+                      onClick={() => handleScriptCardClick(script)}
+                    >
+                      <div className="item-type-icon">
+                        <Zap size={16} />
+                      </div>
+                      <span className="item-text">{script.name}</span>
+                      <button
+                        className="item-action"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleScriptExpansion(script.id);
+                        }}
+                        title={isExpanded ? "Recolher" : "Expandir"}
+                      >
+                        {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                      </button>
+                      <button className="item-action" onClick={(e) => handleScriptExecuteClick(e, script)}>
+                        <Send size={16} />
+                      </button>
+                    </div>
+
+                    {/* Expanded Script Steps */}
+                    {isExpanded && (
+                      <div style={{
+                        marginLeft: '12px',
+                        marginTop: '6px',
+                        padding: '12px',
+                        backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                        borderRadius: '6px',
+                        borderLeft: '3px solid var(--accent-pink)'
+                      }}>
+                        <div style={{ marginBottom: '8px', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                          MENSAGENS ({script.steps.length})
+                        </div>
+                        {script.steps.map((step, index) => (
+                          <div
+                            key={index}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              padding: '6px 8px',
+                              marginBottom: '4px',
+                              backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                              borderRadius: '4px',
+                              fontSize: '12px'
+                            }}
+                          >
+                            <span style={{ color: 'var(--text-muted)', fontWeight: 600, minWidth: '20px' }}>
+                              {index + 1}.
+                            </span>
+                            <span style={{ flex: 1, color: 'var(--text-primary)' }}>
+                              {messages.find(m => m.id === step.messageId)?.name || 'Mensagem não encontrada'}
+                            </span>
+                            {step.delayAfter > 0 && (
+                              <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+                                {step.delayAfter / 1000}s
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                ))}
-              </div>
+                );
+              })}
 
               {filteredScripts.length === 0 && (
                 <div className="empty-dark">
-                  <p>{tagFilter ? 'Nenhum script encontrado' : 'Nenhum script criado'}</p>
-                  {!tagFilter && (
-                    <button className="btn-primary-dark" onClick={openOptions}>
-                      Criar primeiro script
-                    </button>
-                  )}
+                  <p>Nenhum script criado</p>
+                  <button className="btn-primary-dark" onClick={openOptions}>
+                    Criar primeiro script
+                  </button>
                 </div>
               )}
             </section>

@@ -135,10 +135,114 @@
   waitForStore().then(() => {
     const Store = (window as any).Store;
 
+    // Track active animations for cancellation
+    const activeAnimations = new Map<string, { stopAnimation: () => Promise<void> }>();
+    // Track active animations by chatId to prevent overlapping animations on same chat
+    const activeChatAnimations = new Map<string, string>(); // chatId -> messageId
+
+    // Listen for animation start requests (NEW ARCHITECTURE)
+    document.addEventListener('X1FloxStartAnimation', async (event: any) => {
+      try {
+        const { messageId, chatId, animationType, duration } = event.detail;
+
+        const chat = await Store.Chat.find(chatId);
+        if (!chat) {
+          console.error('[X1Flox Page] Chat not found:', chatId);
+          return;
+        }
+
+        // Start animation based on type - simplified, no complex state management
+        if (animationType === 'typing') {
+          // Start typing animation (it will run for the specified duration)
+          const animationPromise = simulateTyping(chat, duration);
+          const stopAnimation = async () => {
+            // Stop typing by sending paused state
+            if (Store.ChatState) {
+              await Store.ChatState.sendChatStatePaused(chat.id);
+            }
+          };
+
+          activeAnimations.set(messageId, { stopAnimation });
+          activeChatAnimations.set(chatId, messageId);
+
+          // Animation runs in background, don't await
+          animationPromise
+            .then(() => {
+              // Clean up when animation completes naturally
+              activeAnimations.delete(messageId);
+              if (activeChatAnimations.get(chatId) === messageId) {
+                activeChatAnimations.delete(chatId);
+              }
+            })
+            .catch((err: any) => {
+              console.error('[X1Flox Page] Animation error:', err);
+              // Clean up on error too
+              activeAnimations.delete(messageId);
+              if (activeChatAnimations.get(chatId) === messageId) {
+                activeChatAnimations.delete(chatId);
+              }
+            });
+        } else if (animationType === 'recording') {
+          // Start recording animation
+          const animationPromise = simulateRecording(chat, duration);
+          const stopAnimation = async () => {
+            // Stop recording by sending paused state
+            if (Store.ChatState) {
+              await Store.ChatState.sendChatStatePaused(chat.id);
+            }
+          };
+
+          activeAnimations.set(messageId, { stopAnimation });
+          activeChatAnimations.set(chatId, messageId);
+
+          // Animation runs in background, don't await
+          animationPromise
+            .then(() => {
+              // Clean up when animation completes naturally
+              activeAnimations.delete(messageId);
+              if (activeChatAnimations.get(chatId) === messageId) {
+                activeChatAnimations.delete(chatId);
+              }
+            })
+            .catch((err: any) => {
+              console.error('[X1Flox Page] Animation error:', err);
+              // Clean up on error too
+              activeAnimations.delete(messageId);
+              if (activeChatAnimations.get(chatId) === messageId) {
+                activeChatAnimations.delete(chatId);
+              }
+            });
+        }
+      } catch (error: any) {
+        console.error('[X1Flox Page] Error starting animation:', error);
+      }
+    });
+
+    // Listen for animation stop requests (NEW ARCHITECTURE)
+    document.addEventListener('X1FloxStopAnimation', async (event: any) => {
+      try {
+        const { messageId, chatId } = event.detail;
+        console.log('[X1Flox Page] Stopping animation for message:', messageId);
+
+        const animation = activeAnimations.get(messageId);
+        if (animation) {
+          await animation.stopAnimation();
+          activeAnimations.delete(messageId);
+
+          // Clean up chat animation tracking
+          if (chatId && activeChatAnimations.get(chatId) === messageId) {
+            activeChatAnimations.delete(chatId);
+          }
+        }
+      } catch (error: any) {
+        console.error('[X1Flox Page] Error stopping animation:', error);
+      }
+    });
+
     // Listen for message send requests
     document.addEventListener('X1FloxSendMessage', async (event: any) => {
       try {
-        const { text, requestId, chatId, showTyping, sendDelay } = event.detail;
+        const { text, requestId, chatId } = event.detail;
 
         let targetChat;
         if (chatId) {
@@ -151,16 +255,10 @@
           if (!targetChat) throw new Error('No active chat');
         }
 
-        // Simulate typing if requested (use sendDelay as animation duration)
-        // Animation must happen DURING the delay, not after
-        if (showTyping) {
-          const duration = sendDelay || 3000; // Default to 3 seconds if not specified
-          await simulateTyping(targetChat, duration);
-        } else if (sendDelay && sendDelay > 0) {
-          // No animation but has delay - just wait
-          // (Delay only comes here if overlay didn't process it)
-          await new Promise(resolve => setTimeout(resolve, sendDelay));
-        }
+        // NEW ARCHITECTURE: Animation and delay already handled by overlay
+        // Animation is running in parallel (if showTyping was true)
+        // Just send the message immediately
+        // Note: sendDelay should always be 0 here (delay processed in overlay)
 
         let currentUser = Store.Me;
         if (!currentUser && Store.UserPrefs?.getMaybeMePnUser) {
@@ -205,7 +303,7 @@
       let requestId = 'unknown';
       try {
         console.log('[X1Flox Page] Audio send request received:', event.detail);
-        const { audioData, duration, requestId: reqId, chatId, showRecording, sendDelay } = event.detail;
+        const { audioData, duration, requestId: reqId, chatId } = event.detail;
         requestId = reqId;
         console.log('[X1Flox Page] Request ID:', requestId);
 
@@ -217,11 +315,7 @@
           console.log('[X1Flox Page] Using provided chat ID:', chatId);
           // Use the chatId directly without fetching the full chat object
           targetChatId = chatId;
-          // Only fetch chat object if we need it for simulation
-          if (showRecording) {
-            targetChat = await Store.Chat.find(chatId);
-            if (!targetChat) throw new Error(`Chat ${chatId} not found`);
-          }
+          // No need to fetch chat - animation handled separately
         } else {
           // Get active chat
           targetChat = Store.Chat.getActive();
@@ -231,16 +325,10 @@
           console.log('[X1Flox Page] Using active chat ID:', targetChatId);
         }
 
-        // Simulate recording if requested (use sendDelay as animation duration)
-        // Animation must happen DURING the delay, not after
-        if (showRecording && targetChat) {
-          const recordingDuration = sendDelay || 3000; // Default to 3 seconds if not specified
-          await simulateRecording(targetChat, recordingDuration);
-        } else if (sendDelay && sendDelay > 0) {
-          // No animation but has delay - just wait
-          // (Delay only comes here if overlay didn't process it)
-          await new Promise(resolve => setTimeout(resolve, sendDelay));
-        }
+        // NEW ARCHITECTURE: Animation and delay already handled by overlay
+        // Animation is running in parallel (if showRecording was true)
+        // Just send the audio immediately
+        // Note: sendDelay should always be 0 here (delay processed in overlay)
 
         // Convert to Blob
         let audioBlob: Blob;
@@ -567,6 +655,94 @@
 
         document.dispatchEvent(new CustomEvent('X1FloxMessageSent', {
           detail: { success: true, requestId, method: 'VIDEO' }
+        }));
+      } catch (error: any) {
+        debugLog(`❌ ERROR: ${error.message}`, '#ff0000');
+        document.dispatchEvent(new CustomEvent('X1FloxMessageSent', {
+          detail: { success: false, error: error.message, requestId }
+        }));
+      }
+    });
+
+    // =========================================================================
+    // FILE SENDING
+    // =========================================================================
+    document.addEventListener('X1FloxSendFile', async (event: any) => {
+      let requestId = 'unknown';
+      try {
+        const { fileData, caption, fileName, requestId: reqId, chatId } = event.detail;
+        requestId = reqId;
+
+        let targetChat;
+        if (chatId) {
+          // Use specific chat if provided
+          targetChat = await Store.Chat.find(chatId);
+          if (!targetChat) throw new Error(`Chat ${chatId} not found`);
+        } else {
+          // Use active chat if no chatId provided
+          targetChat = Store.Chat.getActive();
+          if (!targetChat) throw new Error('No active chat');
+        }
+
+        // Convert to Blob
+        let fileBlob: Blob;
+        let detectedMimeType = 'application/octet-stream';
+
+        if (fileData instanceof Blob || fileData instanceof File) {
+          fileBlob = fileData;
+          detectedMimeType = fileBlob.type || detectedMimeType;
+        } else if (typeof fileData === 'string' && fileData.startsWith('data:')) {
+          const base64Data = fileData.split(',')[1];
+          const mimeTypeMatch = fileData.match(/data:(.*?);/);
+          detectedMimeType = mimeTypeMatch?.[1] || detectedMimeType;
+          const binaryData = atob(base64Data);
+          const arrayBuffer = new Uint8Array(binaryData.length);
+          for (let i = 0; i < binaryData.length; i++) {
+            arrayBuffer[i] = binaryData.charCodeAt(i);
+          }
+          fileBlob = new Blob([arrayBuffer], { type: detectedMimeType });
+        } else if (typeof fileData === 'string' && fileData.startsWith('blob:')) {
+          const response = await fetch(fileData);
+          fileBlob = await response.blob();
+          detectedMimeType = fileBlob.type || detectedMimeType;
+        } else {
+          throw new Error(`Invalid file data format: ${typeof fileData}`);
+        }
+
+        const file = new File([fileBlob], fileName || `file-${Date.now()}`, {
+          type: detectedMimeType,
+          lastModified: Date.now()
+        });
+
+        const fileSizeMB = file.size / 1024 / 1024;
+
+        // Validate file size (WhatsApp limit is typically 100MB for documents)
+        if (fileSizeMB > 100) {
+          throw new Error(`File too large: ${fileSizeMB.toFixed(1)}MB. WhatsApp limit is 100MB`);
+        }
+
+        // Get WPPConnect library
+        const WPP = (window as any).WPP;
+        if (!WPP?.chat?.sendFileMessage) {
+          throw new Error('WPPConnect library not available');
+        }
+
+        // Extract chat ID as a clean string to avoid circular reference issues
+        const chatIdString = typeof targetChat.id === 'string'
+          ? targetChat.id
+          : (targetChat.id._serialized || String(targetChat.id));
+
+        console.log('[X1Flox Page] Sending file to chat:', chatIdString);
+
+        // Send file as document
+        await WPP.chat.sendFileMessage(chatIdString, file, {
+          type: 'document',
+          caption: caption || '',
+          filename: fileName || file.name
+        });
+
+        document.dispatchEvent(new CustomEvent('X1FloxMessageSent', {
+          detail: { success: true, requestId, method: 'FILE' }
         }));
       } catch (error: any) {
         debugLog(`❌ ERROR: ${error.message}`, '#ff0000');

@@ -1,78 +1,103 @@
-import * as React from "react"
+import React from 'react';
 
-import { cn } from "@/lib/utils"
+export interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
+  children: React.ReactNode;
+}
 
-export interface CardProps extends React.HTMLAttributes<HTMLDivElement> { }
+const Card = React.forwardRef<HTMLDivElement, CardProps>(
+  ({ className = '', children, ...props }, ref) => {
+    return (
+      <div
+        ref={ref}
+        className={`bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-lg p-6 ${className}`}
+        {...props}
+      >
+        {children}
+      </div>
+    );
+  }
+);
 
-const Card = React.forwardRef<
-  HTMLDivElement,
-  CardProps
->(({ className, ...props }, ref) => (
-  <div
-    ref={ref}
-    className={cn(
-      "rounded-xl border bg-card text-card-foreground shadow",
-      className
-    )}
-    {...props}
-  />
-))
-Card.displayName = "Card"
+Card.displayName = 'Card';
 
-const CardHeader = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => (
-  <div
-    ref={ref}
-    className={cn("flex flex-col space-y-1.5 p-6", className)}
-    {...props}
-  />
-))
-CardHeader.displayName = "CardHeader"
+const CardHeader = React.forwardRef<HTMLDivElement, CardProps>(
+  ({ className = '', children, ...props }, ref) => {
+    return (
+      <div
+        ref={ref}
+        className={`mb-6 pb-4 border-b border-[var(--divider-color)] ${className}`}
+        {...props}
+      >
+        {children}
+      </div>
+    );
+  }
+);
 
-const CardTitle = React.forwardRef<
-  HTMLParagraphElement,
-  React.HTMLAttributes<HTMLHeadingElement>
->(({ className, ...props }, ref) => (
-  <h3
-    ref={ref}
-    className={cn("font-semibold leading-none tracking-tight", className)}
-    {...props}
-  />
-))
-CardTitle.displayName = "CardTitle"
+CardHeader.displayName = 'CardHeader';
 
-const CardDescription = React.forwardRef<
-  HTMLParagraphElement,
-  React.HTMLAttributes<HTMLParagraphElement>
->(({ className, ...props }, ref) => (
-  <p
-    ref={ref}
-    className={cn("text-sm text-muted-foreground", className)}
-    {...props}
-  />
-))
-CardDescription.displayName = "CardDescription"
+const CardTitle = React.forwardRef<HTMLHeadingElement, React.HTMLAttributes<HTMLHeadingElement>>(
+  ({ className = '', children, ...props }, ref) => {
+    return (
+      <h3
+        ref={ref}
+        className={`text-sm font-bold tracking-wider uppercase text-white mb-1 ${className}`}
+        {...props}
+      >
+        {children}
+      </h3>
+    );
+  }
+);
 
-const CardContent = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => (
-  <div ref={ref} className={cn("p-6 pt-0", className)} {...props} />
-))
-CardContent.displayName = "CardContent"
+CardTitle.displayName = 'CardTitle';
 
-const CardFooter = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => (
-  <div
-    ref={ref}
-    className={cn("flex items-center p-6 pt-0", className)}
-    {...props}
-  />
-))
-CardFooter.displayName = "CardFooter"
+const CardDescription = React.forwardRef<HTMLParagraphElement, React.HTMLAttributes<HTMLParagraphElement>>(
+  ({ className = '', children, ...props }, ref) => {
+    return (
+      <p
+        ref={ref}
+        className={`text-xs text-[var(--text-secondary)] ${className}`}
+        {...props}
+      >
+        {children}
+      </p>
+    );
+  }
+);
 
-export { Card, CardHeader, CardFooter, CardTitle, CardDescription, CardContent }
+CardDescription.displayName = 'CardDescription';
+
+const CardContent = React.forwardRef<HTMLDivElement, CardProps>(
+  ({ className = '', children, ...props }, ref) => {
+    return (
+      <div
+        ref={ref}
+        className={className}
+        {...props}
+      >
+        {children}
+      </div>
+    );
+  }
+);
+
+CardContent.displayName = 'CardContent';
+
+const CardFooter = React.forwardRef<HTMLDivElement, CardProps>(
+  ({ className = '', children, ...props }, ref) => {
+    return (
+      <div
+        ref={ref}
+        className={`flex gap-4 justify-end mt-6 pt-6 border-t border-[var(--divider-color)] ${className}`}
+        {...props}
+      >
+        {children}
+      </div>
+    );
+  }
+);
+
+CardFooter.displayName = 'CardFooter';
+
+export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter };

@@ -1,131 +1,191 @@
-@import "tailwindcss";
+/* X1Flox Options Page Styles */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
 
 @layer base {
   :root {
-    /* Default to Dark Theme colors since the extension is dark-themed */
     --background: 0 0% 10%;
-    /* #1a1a1a */
     --foreground: 0 0% 100%;
-    /* #ffffff */
-
-    --card: 0 0% 16.5%;
-    /* #2a2a2a */
+    --card: 0 0% 16%;
     --card-foreground: 0 0% 100%;
-    /* #ffffff */
-
-    --popover: 0 0% 16.5%;
-    /* #2a2a2a */
+    --popover: 0 0% 16%;
     --popover-foreground: 0 0% 100%;
-    /* #ffffff */
-
     --primary: 340 82% 52%;
-    /* #e91e63 */
     --primary-foreground: 0 0% 100%;
-    /* #ffffff */
-
     --secondary: 0 0% 20%;
-    /* #333333 */
     --secondary-foreground: 0 0% 100%;
-    /* #ffffff */
-
     --muted: 0 0% 20%;
-    /* #333333 */
     --muted-foreground: 0 0% 62%;
-    /* #9e9e9e */
-
-    --accent: 0 0% 20%;
-    /* #333333 */
+    --accent: 340 82% 52%;
     --accent-foreground: 0 0% 100%;
-    /* #ffffff */
-
-    --destructive: 0 84% 60%;
-    /* #ef4444 */
+    --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 100%;
-    /* #ffffff */
-
-    --border: 0 0% 22.7%;
-    /* #3a3a3a */
-    --input: 0 0% 22.7%;
-    /* #3a3a3a */
-
+    --border: 0 0% 23%;
+    --input: 0 0% 23%;
     --ring: 340 82% 52%;
-    /* #e91e63 */
-
     --radius: 0.5rem;
-  }
 
-  .dark {
-    --background: 0 0% 10%;
-    /* #1a1a1a */
-    --foreground: 0 0% 100%;
-    /* #ffffff */
+    /* X1Flox custom colors - tema rosa/pink do popup */
+    --primary-color: #e91e63;
+    --secondary-color: #f06292;
+    --accent-color: #c2185b;
+    --bg-primary: #1a1a1a;
+    --bg-color: #1a1a1a;
+    --bg-secondary: #2a2a2a;
+    --bg-tertiary: #333333;
+    --card-bg: #2a2a2a;
+    --text-primary: #ffffff;
+    --text-secondary: #9e9e9e;
+    --text-tertiary: #666666;
+    --text-muted: #666666;
+    --accent-pink: #e91e63;
+    --accent-pink-hover: #f06292;
+    --border-color: #3a3a3a;
+    --divider-color: #3a3a3a;
+    --error-color: #df3e3e;
+    --warning-color: #f59e0b;
+    --success-color: #10b981;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.5);
 
-    --card: 0 0% 16.5%;
-    /* #2a2a2a */
-    --card-foreground: 0 0% 100%;
-    /* #ffffff */
-
-    --popover: 0 0% 16.5%;
-    /* #2a2a2a */
-    --popover-foreground: 0 0% 100%;
-    /* #ffffff */
-
-    --primary: 340 82% 52%;
-    /* #e91e63 */
-    --primary-foreground: 0 0% 100%;
-    /* #ffffff */
-
-    --secondary: 0 0% 20%;
-    /* #333333 */
-    --secondary-foreground: 0 0% 100%;
-    /* #ffffff */
-
-    --muted: 0 0% 20%;
-    /* #333333 */
-    --muted-foreground: 0 0% 62%;
-    /* #9e9e9e */
-
-    --accent: 0 0% 20%;
-    /* #333333 */
-    --accent-foreground: 0 0% 100%;
-    /* #ffffff */
-
-    --destructive: 0 84% 60%;
-    /* #ef4444 */
-    --destructive-foreground: 0 0% 100%;
-    /* #ffffff */
-
-    --border: 0 0% 22.7%;
-    /* #3a3a3a */
-    --input: 0 0% 22.7%;
-    /* #3a3a3a */
-
-    --ring: 340 82% 52%;
-    /* #e91e63 */
+    /* Sidebar colors - dark theme com cores do popup (rosa/pink) */
+    --sidebar-background: 0 0% 10%;           /* #1a1a1a - background dark */
+    --sidebar-foreground: 0 0% 100%;          /* #ffffff - texto claro */
+    --sidebar-primary: 340 82% 52%;           /* #e91e63 - accent pink */
+    --sidebar-primary-foreground: 0 0% 100%;  /* #ffffff - texto sobre rosa */
+    --sidebar-accent: 340 82% 52%;            /* #e91e63 - rosa para hover/active */
+    --sidebar-accent-foreground: 0 0% 100%;   /* #ffffff - texto sobre rosa */
+    --sidebar-border: 0 0% 23%;               /* #3a3a3a - bordas */
+    --sidebar-ring: 340 82% 52%;              /* #e91e63 - focus ring */
   }
 }
 
-@layer base {
-  * {
-    border-color: hsl(var(--border));
+/* Estilos customizados para transições suaves da sidebar */
+@layer components {
+  /* Transições muito suaves para a sidebar */
+  [data-sidebar="sidebar"] {
+    transition: all 600ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
   }
 
-  body {
-    background-color: hsl(var(--background));
-    color: hsl(var(--foreground));
+  /* Transições suaves para os botões do menu - SEM movimento */
+  [data-sidebar="menu-button"] {
+    transition: background-color 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+                color 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+                border-left-color 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+                padding-left 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  }
+
+  /* Estado ativo com rosa/pink */
+  [data-sidebar="menu-button"][data-active="true"] {
+    background: linear-gradient(90deg, rgba(233, 30, 99, 0.15) 0%, rgba(233, 30, 99, 0.08) 100%);
+    border-left: 3px solid #e91e63;
+    padding-left: calc(1rem - 3px);
+    color: #e91e63;
+    font-weight: 600;
+  }
+
+  /* Hover suave com rosa/pink - APENAS cores, sem movimento */
+  [data-sidebar="menu-button"]:hover:not([data-active="true"]) {
+    background: rgba(233, 30, 99, 0.1);
+    color: #ffffff;
+  }
+
+  /* Trigger button com transição suave */
+  [data-sidebar="trigger"] {
+    transition: background-color 250ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+                color 250ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  }
+
+  [data-sidebar="trigger"]:hover {
+    background: rgba(233, 30, 99, 0.15);
+    color: #e91e63;
   }
 }
 
-/* Mantendo estilos específicos de conteúdo para compatibilidade */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
+  font-size: 14px;
+  color: var(--text-primary);
+  background-color: var(--bg-color);
+  line-height: 1.5;
+}
+
+/* Options Container */
+.options-container {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header */
+.options-header {
+  background: linear-gradient(135deg, var(--secondary-color), var(--accent-color));
+  color: white;
+  padding: 24px 32px;
+  box-shadow: var(--shadow);
+}
+
+.header-content h1.logo {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.subtitle {
+  font-size: 14px;
+  opacity: 0.9;
+}
+
+/* Tabs Navigation */
+.tabs-nav {
+  background: var(--card-bg);
+  border-bottom: 2px solid var(--border-color);
+  padding: 0 32px;
+  display: flex;
+  gap: 4px;
+}
+
+.tab-btn {
+  padding: 16px 24px;
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: all 0.2s;
+  margin-bottom: -2px;
+}
+
+.tab-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-color);
+}
+
+.tab-btn.active {
+  color: var(--primary-color);
+  border-bottom-color: var(--primary-color);
+}
+
+/* Options Content */
 .options-content {
-  padding: 2rem;
+  flex: 1;
+  padding: 32px;
+  max-width: 1200px;
+  margin: 0 auto;
   width: 100%;
-  max-width: 64rem;
-  margin-left: auto;
-  margin-right: auto;
 }
 
-/* Tab Content Animations */
+/* Tab Content */
 .tab-content {
   animation: fadeIn 0.3s;
 }
@@ -135,41 +195,71 @@
     opacity: 0;
     transform: translateY(10px);
   }
-
   to {
     opacity: 1;
     transform: translateY(0);
   }
 }
 
+/* Animação suave para expansão de cards */
+@keyframes expandSmooth {
+  from {
+    opacity: 0;
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 2000px;
+  }
+}
+
+.animate-expand-smooth {
+  animation: expandSmooth 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+/* Animação de entrada suave para cards - similar ao popup */
+@keyframes cardEntry {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-card-entry {
+  animation: cardEntry 0.3s ease-out;
+  animation-delay: calc(var(--card-index, 0) * 50ms);
+  animation-fill-mode: backwards;
+}
+
 .tab-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 1.5rem;
-  padding-bottom: 1rem;
-  border-bottom-width: 1px;
-  border-color: hsl(var(--border));
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 2px solid var(--border-color);
 }
 
 .tab-header h2 {
-  font-size: 1.5rem;
-  line-height: 2rem;
+  font-size: 24px;
   font-weight: 700;
-  margin-bottom: 0.25rem;
+  margin-bottom: 4px;
 }
 
 .tab-description {
-  font-size: 0.875rem;
-  line-height: 1.25rem;
-  color: hsl(var(--muted-foreground));
+  color: var(--text-secondary);
+  font-size: 14px;
 }
 
 .tab-actions {
   display: flex;
-  gap: 0.75rem;
+  gap: 12px;
 }
-
 
 /* Form Card */
 .form-card {
@@ -324,23 +414,39 @@
 
 .btn-primary-sm,
 .btn-secondary-sm {
-  padding: 6px 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 16px;
   font-size: 13px;
-  border-radius: 6px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
 }
 
 .btn-primary-sm {
-  background: var(--primary-color);
+  background: #e91e63;
   color: white;
   border: none;
-  cursor: pointer;
+}
+
+.btn-primary-sm:hover {
+  background: #c2185b;
 }
 
 .btn-secondary-sm {
-  background: var(--card-bg);
-  color: var(--text-primary);
+  background: transparent;
+  color: white;
   border: 1px solid var(--border-color);
-  cursor: pointer;
+}
+
+.btn-secondary-sm:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent-pink);
 }
 
 .icon-btn {
@@ -476,7 +582,7 @@
 
 /* Audio Recorder */
 .audio-recorder {
-  padding: 16px;
+  padding: 16px 0;
   background: var(--bg-color);
   border-radius: 8px;
   margin-bottom: 12px;
@@ -490,6 +596,10 @@
 
 .btn-record,
 .btn-stop {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   padding: 12px 20px;
   border: none;
   border-radius: 8px;
@@ -497,15 +607,16 @@
   font-size: 14px;
   font-weight: 600;
   transition: all 0.2s;
+  width: 100%;
 }
 
 .btn-record {
-  background: var(--primary-color);
+  background: #e91e63;
   color: white;
 }
 
 .btn-record:hover {
-  background: var(--secondary-color);
+  background: #c2185b;
 }
 
 .btn-stop {
@@ -541,12 +652,9 @@
 }
 
 @keyframes pulse {
-
-  0%,
-  100% {
+  0%, 100% {
     opacity: 1;
   }
-
   50% {
     opacity: 0.3;
   }
@@ -656,10 +764,19 @@
 }
 
 .tag-name-input {
-  padding: 8px 12px;
+  padding: 10px 14px;
   border: 1px solid var(--border-color);
   border-radius: 6px;
   font-size: 14px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  transition: all 0.2s;
+}
+
+.tag-name-input:focus {
+  outline: none;
+  border-color: var(--accent-pink);
+  box-shadow: 0 0 0 3px rgba(233, 30, 99, 0.1);
 }
 
 .color-picker {
@@ -669,8 +786,8 @@
 }
 
 .color-option {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 6px;
   border: 2px solid transparent;
   cursor: pointer;
@@ -682,8 +799,8 @@
 }
 
 .color-option.selected {
-  border-color: var(--text-primary);
-  box-shadow: 0 0 0 2px var(--card-bg), 0 0 0 4px var(--text-primary);
+  border-color: white;
+  box-shadow: 0 0 0 1px var(--accent-pink);
 }
 
 .tag-form-actions {
@@ -704,8 +821,8 @@
 }
 
 .btn-create-tag:hover {
-  border-color: var(--primary-color);
-  color: var(--primary-color);
+  border-color: var(--accent-pink);
+  color: var(--accent-pink);
 }
 
 /* Scripts */
@@ -897,7 +1014,6 @@
     opacity: 0;
     transform: translateX(-20px);
   }
-
   to {
     opacity: 1;
     transform: translateX(0);
@@ -905,45 +1021,16 @@
 }
 
 /* Staggered animation for triggers */
-.trigger-item:nth-child(1) {
-  animation-delay: 0.05s;
-}
-
-.trigger-item:nth-child(2) {
-  animation-delay: 0.1s;
-}
-
-.trigger-item:nth-child(3) {
-  animation-delay: 0.15s;
-}
-
-.trigger-item:nth-child(4) {
-  animation-delay: 0.2s;
-}
-
-.trigger-item:nth-child(5) {
-  animation-delay: 0.25s;
-}
-
-.trigger-item:nth-child(6) {
-  animation-delay: 0.3s;
-}
-
-.trigger-item:nth-child(7) {
-  animation-delay: 0.35s;
-}
-
-.trigger-item:nth-child(8) {
-  animation-delay: 0.4s;
-}
-
-.trigger-item:nth-child(9) {
-  animation-delay: 0.45s;
-}
-
-.trigger-item:nth-child(n+10) {
-  animation-delay: 0.5s;
-}
+.trigger-item:nth-child(1) { animation-delay: 0.05s; }
+.trigger-item:nth-child(2) { animation-delay: 0.1s; }
+.trigger-item:nth-child(3) { animation-delay: 0.15s; }
+.trigger-item:nth-child(4) { animation-delay: 0.2s; }
+.trigger-item:nth-child(5) { animation-delay: 0.25s; }
+.trigger-item:nth-child(6) { animation-delay: 0.3s; }
+.trigger-item:nth-child(7) { animation-delay: 0.35s; }
+.trigger-item:nth-child(8) { animation-delay: 0.4s; }
+.trigger-item:nth-child(9) { animation-delay: 0.45s; }
+.trigger-item:nth-child(n+10) { animation-delay: 0.5s; }
 
 .trigger-item.disabled {
   opacity: 0.6;
@@ -1366,5 +1453,185 @@
   .tab-header {
     flex-direction: column;
     gap: 16px;
+  }
+}
+
+/* Tag Filter Styles (from popup) */
+.filter-bar-dark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  background-color: var(--bg-primary);
+  gap: 8px;
+  flex-shrink: 0;
+  animation: slideDown 0.3s ease;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.filter-input-wrapper {
+  position: relative;
+  width: 165px;
+}
+
+/* Filter icon (only direct child SVG, not TagIcons inside nested elements) */
+.filter-input-wrapper > svg {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+  transition: color 0.2s;
+}
+
+.filter-input {
+  width: 100%;
+  padding: 5px 8px 5px 26px;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  color: var(--text-primary);
+  font-size: 11px;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.filter-input::placeholder {
+  color: var(--text-muted);
+}
+
+.filter-input:focus {
+  border-color: var(--accent-pink);
+  box-shadow: 0 0 0 2px rgba(233, 30, 99, 0.15);
+}
+
+.filter-input-wrapper:focus-within > svg {
+  color: var(--accent-pink);
+}
+
+/* Tag Dropdown */
+.tag-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  margin-top: 4px;
+  max-height: 150px;
+  overflow-y: auto;
+  z-index: 100;
+}
+
+.tag-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-primary);
+  transition: background 0.15s;
+  overflow: hidden;
+}
+
+.tag-option > svg {
+  flex-shrink: 0;
+}
+
+.tag-option > span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.tag-option:hover {
+  background: var(--bg-tertiary);
+}
+
+/* Selected Tag */
+.selected-tag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--text-primary);
+  font-weight: 400;
+  width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.selected-tag > svg {
+  flex-shrink: 0;
+}
+
+.selected-tag > span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.clear-tag {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  margin-left: auto;
+  transition: color 0.15s;
+}
+
+.clear-tag:hover {
+  color: var(--accent-pink);
+}
+
+.filter-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* Override Tailwind p-6 for message cards */
+.p-6 {
+  padding: 0.9rem 1.5rem !important;
+}
+
+/* Message card hover with folder color support */
+.cursor-move:hover {
+  border-left-color: var(--folder-color, #e91e63) !important;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
   }
 }

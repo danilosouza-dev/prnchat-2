@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { formatDuration } from '@/utils/helpers';
+import { Mic, Square, Trash2, Check } from 'lucide-react';
+import CustomAudioPlayer from './CustomAudioPlayer';
 
 interface AudioRecorderProps {
   onAudioRecorded: (blob: Blob) => void;
@@ -9,6 +11,7 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioRecorded }) => {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -23,8 +26,12 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioRecorded }) => {
       if (mediaRecorderRef.current && isRecording) {
         mediaRecorderRef.current.stop();
       }
+      // Clean up audio URL on unmount
+      if (audioUrl) {
+        URL.revokeObjectURL(audioUrl);
+      }
     };
-  }, [isRecording]);
+  }, [isRecording, audioUrl]);
 
   const startRecording = async () => {
     setError(null);
@@ -67,7 +74,16 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioRecorded }) => {
           type: blob.type,
           duration: recordingTime
         });
+
+        // Revoke old URL if exists
+        if (audioUrl) {
+          URL.revokeObjectURL(audioUrl);
+        }
+
+        // Create new URL for the audio blob
+        const newUrl = URL.createObjectURL(blob);
         setAudioBlob(blob);
+        setAudioUrl(newUrl);
         onAudioRecorded(blob);
 
         // Stop all tracks
@@ -102,7 +118,11 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioRecorded }) => {
   };
 
   const discardRecording = () => {
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl);
+    }
     setAudioBlob(null);
+    setAudioUrl(null);
     setRecordingTime(0);
   };
 
@@ -114,10 +134,10 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioRecorded }) => {
         {!isRecording && !audioBlob && (
           <button
             type="button"
-            className="btn-record"
+            className="w-full inline-flex items-center justify-center gap-2 font-semibold uppercase tracking-wide transition-colors rounded-lg border border-[var(--border-color)] cursor-pointer px-5 py-2.5 text-[13px] bg-transparent text-white hover:bg-[var(--bg-hover)] hover:border-[var(--accent-pink)]"
             onClick={startRecording}
           >
-            🎤 Gravar Áudio
+            <Mic size={18} /> Gravar Áudio
           </button>
         )}
 
@@ -132,27 +152,27 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioRecorded }) => {
               className="btn-stop"
               onClick={stopRecording}
             >
-              ⏹️ Parar
+              <Square size={18} /> Parar
             </button>
           </div>
         )}
 
-        {audioBlob && !isRecording && (
+        {audioBlob && !isRecording && audioUrl && (
           <div className="recording-preview">
             <div className="preview-header">
-              <span>✅ Áudio gravado ({formatDuration(recordingTime * 1000)})</span>
+              <span><Check size={16} className="inline" /> Áudio gravado ({formatDuration(recordingTime * 1000)})</span>
               <button
                 type="button"
                 className="btn-discard"
                 onClick={discardRecording}
               >
-                🗑️
+                <Trash2 size={16} />
               </button>
             </div>
-            <audio
-              controls
-              src={URL.createObjectURL(audioBlob)}
-              className="audio-player"
+            <CustomAudioPlayer
+              src={audioUrl}
+              duration={recordingTime}
+              key={audioUrl}
             />
           </div>
         )}
