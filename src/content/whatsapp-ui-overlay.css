@@ -1,9 +1,9 @@
 /* PrinChat UI Overlay Styles */
 /* Injected into WhatsApp Web to add custom UI components */
 
-/* Custom Header - Above WhatsApp Header */
+/* Custom Header - Integrated above WhatsApp interface */
 .princhat-custom-header {
-  position: fixed;
+  position: relative;
   top: 0;
   left: 0;
   right: 0;
@@ -61,9 +61,10 @@
   height: 20px;
 }
 
-/* Adjust WhatsApp content to make room for custom header */
-body.princhat-header-active {
-  padding-top: 60px;
+/* Adjust WhatsApp app container to integrate header */
+body.princhat-header-active #app {
+  margin-top: 0 !important;
+  padding-top: 0 !important;
 }
 
 /* Bottom Shortcut Bar - Inside WhatsApp Footer */
