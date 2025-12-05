@@ -61,6 +61,7 @@ interface MessageExecution {
 }
 
 class WhatsAppUIOverlay {
+  private customHeader: HTMLElement | null = null; // Custom header above WhatsApp
   private shortcutBar: HTMLElement | null = null;
   // private fab: HTMLElement | null = null; // Not used in new design
   private statusPopup: HTMLElement | null = null; // Script execution popup
@@ -115,36 +116,40 @@ class WhatsAppUIOverlay {
       console.log('[PrinChat UI] ✓ Data loaded');
 
       // Create UI components
-      console.log('[PrinChat UI] Step 3: Creating shortcut bar...');
+      console.log('[PrinChat UI] Step 3: Creating custom header...');
+      this.createCustomHeader();
+      console.log('[PrinChat UI] ✓ Custom header created');
+
+      console.log('[PrinChat UI] Step 4: Creating shortcut bar...');
       this.createShortcutBar();
       console.log('[PrinChat UI] ✓ Shortcut bar created');
 
-      console.log('[PrinChat UI] Step 4: Creating tooltip...');
+      console.log('[PrinChat UI] Step 5: Creating tooltip...');
       this.createTooltip();
       console.log('[PrinChat UI] ✓ Tooltip created');
 
       // Monitor chat changes
-      console.log('[PrinChat UI] Step 5: Setting up chat monitor...');
+      console.log('[PrinChat UI] Step 6: Setting up chat monitor...');
       this.monitorChatChanges();
       console.log('[PrinChat UI] ✓ Chat monitor active');
 
       // Listen for execution events
-      console.log('[PrinChat UI] Step 6: Setting up execution listeners...');
+      console.log('[PrinChat UI] Step 7: Setting up execution listeners...');
       this.listenForExecutionEvents();
       console.log('[PrinChat UI] ✓ Execution listeners active');
 
       // Listen for settings changes
-      console.log('[PrinChat UI] Step 7: Setting up settings change listeners...');
+      console.log('[PrinChat UI] Step 8: Setting up settings change listeners...');
       this.listenForSettingsChanges();
       console.log('[PrinChat UI] ✓ Settings change listeners active');
 
       // Listen for data changes (messages, scripts, tags)
-      console.log('[PrinChat UI] Step 8: Setting up data change listeners...');
+      console.log('[PrinChat UI] Step 9: Setting up data change listeners...');
       this.listenForDataChanges();
       console.log('[PrinChat UI] ✓ Data change listeners active');
 
       // Setup resize/scroll listeners for responsive popups
-      console.log('[PrinChat UI] Step 9: Setting up responsive popup listeners...');
+      console.log('[PrinChat UI] Step 10: Setting up responsive popup listeners...');
       this.setupResizeListeners();
       console.log('[PrinChat UI] ✓ Responsive popup listeners active');
 
@@ -1949,6 +1954,110 @@ class WhatsAppUIOverlay {
         this.statusPopup = null;
       }, 300);
     }
+  }
+
+  private createCustomHeader() {
+    console.log('[PrinChat UI] Creating custom header...');
+
+    // Remove existing header if any
+    const existing = document.querySelector('.princhat-custom-header');
+    if (existing) {
+      console.log('[PrinChat UI] Removing existing custom header');
+      existing.remove();
+    }
+
+    // Create header container
+    this.customHeader = document.createElement('div');
+    this.customHeader.className = 'princhat-custom-header';
+
+    // Left section with logo
+    const leftSection = document.createElement('div');
+    leftSection.className = 'princhat-header-left';
+
+    const logo = document.createElement('img');
+    logo.className = 'princhat-header-logo';
+    logo.src = chrome.runtime.getURL('src/assets/logo.png');
+    logo.alt = 'PrinChat';
+
+    leftSection.appendChild(logo);
+
+    // Right section with icons
+    const rightSection = document.createElement('div');
+    rightSection.className = 'princhat-header-right';
+
+    // Icon buttons configuration (lucide-react icons)
+    const iconButtons = [
+      {
+        name: 'home',
+        svg: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
+        tooltip: 'Home'
+      },
+      {
+        name: 'messages',
+        svg: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+        tooltip: 'Mensagens'
+      },
+      {
+        name: 'scripts',
+        svg: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+        tooltip: 'Scripts'
+      },
+      {
+        name: 'notifications',
+        svg: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>',
+        tooltip: 'Notificações'
+      },
+      {
+        name: 'user',
+        svg: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+        tooltip: 'Perfil'
+      },
+      {
+        name: 'settings',
+        svg: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>',
+        tooltip: 'Configurações'
+      }
+    ];
+
+    // Create icon buttons
+    iconButtons.forEach(icon => {
+      const button = document.createElement('button');
+      button.className = 'princhat-header-icon-btn';
+      button.innerHTML = icon.svg;
+      button.title = icon.tooltip;
+      button.dataset.action = icon.name;
+
+      // Add click handler
+      button.addEventListener('click', () => {
+        console.log(`[PrinChat UI] Header icon clicked: ${icon.name}`);
+
+        // Handle different actions
+        if (icon.name === 'settings') {
+          // Open options page
+          chrome.runtime.sendMessage({ action: 'OPEN_OPTIONS_PAGE' });
+        } else if (icon.name === 'messages') {
+          // Open messages tab in options
+          chrome.runtime.sendMessage({ action: 'OPEN_OPTIONS_PAGE', tab: 'messages' });
+        } else if (icon.name === 'scripts') {
+          // Open scripts tab in options
+          chrome.runtime.sendMessage({ action: 'OPEN_OPTIONS_PAGE', tab: 'scripts' });
+        } else {
+          console.log(`[PrinChat UI] Action not implemented yet: ${icon.name}`);
+        }
+      });
+
+      rightSection.appendChild(button);
+    });
+
+    // Assemble header
+    this.customHeader.appendChild(leftSection);
+    this.customHeader.appendChild(rightSection);
+
+    // Inject into page
+    document.body.appendChild(this.customHeader);
+    document.body.classList.add('princhat-header-active');
+
+    console.log('[PrinChat UI] Custom header injected');
   }
 
   private createTooltip() {

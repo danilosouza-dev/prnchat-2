@@ -1,6 +1,71 @@
 /* PrinChat UI Overlay Styles */
 /* Injected into WhatsApp Web to add custom UI components */
 
+/* Custom Header - Above WhatsApp Header */
+.princhat-custom-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  height: 60px;
+  background: #1a1a1a;
+  border-bottom: 1px solid #3a3a3a;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  z-index: 9999;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, sans-serif;
+}
+
+.princhat-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.princhat-header-logo {
+  height: 36px;
+  width: auto;
+  object-fit: contain;
+}
+
+.princhat-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.princhat-header-icon-btn {
+  width: 40px;
+  height: 40px;
+  background: transparent;
+  border: none;
+  color: #9e9e9e;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+}
+
+.princhat-header-icon-btn:hover {
+  background: #2a2a2a;
+  color: #e91e63;
+}
+
+.princhat-header-icon-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* Adjust WhatsApp content to make room for custom header */
+body.princhat-header-active {
+  padding-top: 60px;
+}
+
 /* Bottom Shortcut Bar - Inside WhatsApp Footer */
 .princhat-shortcut-bar {
   position: relative;
