@@ -814,11 +814,11 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
                       </div>
 
                       {/* Messages inside folder - Indented */}
-                      {isFolderExpanded && folderMessages.length > 0 && (
-                        <div className="flex flex-col gap-1.5 mt-2 ml-4">
+                      <div className={`folder-messages-container ${isFolderExpanded ? 'expanded' : 'collapsed'}`}>
+                        <div className="folder-messages-inner flex flex-col gap-1.5 ml-4">
                           {folderMessages.map((message, index) => renderMessageCard(message, index, folder.color))}
                         </div>
-                      )}
+                      </div>
                     </div>
                   );
                 })}

@@ -783,12 +783,12 @@ const App: React.FC = () => {
                     </div>
 
                     {/* Messages inside folder - Indented */}
-                    {isFolderExpanded && (
-                      <div style={{ marginLeft: '12px', marginTop: '6px', marginBottom: '4px' }}>
+                    <div className={`folder-messages-container ${isFolderExpanded ? 'expanded' : 'collapsed'}`}>
+                      <div className="folder-messages-inner">
                         {folderMessages.map((msg) => (
                           <div
                             key={msg.id}
-                            className={`item-dark ${confirmingMessageId === msg.id ? 'confirming' : ''}`}
+                            className={`item-dark folder-item ${confirmingMessageId === msg.id ? 'confirming' : ''}`}
                             onClick={() => handleCardClick(msg)}
                             style={{
                               marginBottom: '4px',
@@ -808,7 +808,7 @@ const App: React.FC = () => {
                           </div>
                         ))}
                       </div>
-                    )}
+                    </div>
                   </div>
                 );
               })}
