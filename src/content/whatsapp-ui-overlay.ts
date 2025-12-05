@@ -2060,11 +2060,19 @@ class WhatsAppUIOverlay {
     this.customHeader.appendChild(leftSection);
     this.customHeader.appendChild(rightSection);
 
-    // Inject into page at the beginning (before WhatsApp app container)
-    document.body.insertBefore(this.customHeader, document.body.firstChild);
-    document.body.classList.add('princhat-header-active');
-
-    console.log('[PrinChat UI] Custom header injected at top of body');
+    // Find WhatsApp #app container and inject header as first child
+    const appContainer = document.querySelector('#app');
+    if (appContainer && appContainer.firstChild) {
+      console.log('[PrinChat UI] Found #app container, injecting header as first child');
+      appContainer.insertBefore(this.customHeader, appContainer.firstChild);
+      document.body.classList.add('princhat-header-active');
+      console.log('[PrinChat UI] Custom header injected inside #app');
+    } else {
+      console.warn('[PrinChat UI] #app container not found, injecting at body start');
+      document.body.insertBefore(this.customHeader, document.body.firstChild);
+      document.body.classList.add('princhat-header-active');
+      console.log('[PrinChat UI] Custom header injected at body start (fallback)');
+    }
   }
 
   private createTooltip() {
