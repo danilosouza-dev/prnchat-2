@@ -21,6 +21,10 @@ export default defineConfig({
           dest: '.'
         },
         {
+          src: 'public/logo.png',
+          dest: '.'
+        },
+        {
           src: 'src/content/whatsapp-ui-overlay.css',
           dest: 'content'
         },
