@@ -32,12 +32,12 @@
 .princhat-header-right {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
 }
 
 .princhat-header-icon-btn {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   background: transparent;
   border: none;
   color: #9e9e9e;
@@ -47,6 +47,7 @@
   justify-content: center;
   border-radius: 50%;
   transition: all 0.2s ease;
+  flex-shrink: 0;
 }
 
 .princhat-header-icon-btn:hover {
@@ -55,8 +56,46 @@
 }
 
 .princhat-header-icon-btn svg {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
+}
+
+/* Profile button */
+.princhat-header-profile-btn {
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  margin-left: 4px;
+  padding: 0;
+}
+
+.princhat-header-profile-btn:hover {
+  background: #2a2a2a;
+}
+
+.princhat-header-profile-img {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #e91e63 0%, #f06292 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  overflow: hidden;
+}
+
+.princhat-header-profile-img svg {
+  width: 18px;
+  height: 18px;
 }
 
 /* Make #app flex column to stack header above WhatsApp */
