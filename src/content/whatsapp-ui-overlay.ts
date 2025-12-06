@@ -2078,42 +2078,73 @@ class WhatsAppUIOverlay {
 
     // Try to get user's WhatsApp profile photo from sidebar
     const getUserPhoto = async () => {
-      // Try to get logged-in user's profile photo using WPPConnect
+      // Strategy 1: Try WPP.profile.getMyProfilePicture() - Most direct method!
       try {
-        if ((window as any).WPP?.conn?.getHostDevice) {
-          console.log('[PrinChat UI] Getting logged-in user photo via WPP...');
-          const hostDevice = await (window as any).WPP.conn.getHostDevice();
-          console.log('[PrinChat UI] Host Device:', hostDevice);
+        if ((window as any).WPP?.profile?.getMyProfilePicture) {
+          console.log('[PrinChat UI] Trying WPP.profile.getMyProfilePicture()...');
+          const myProfilePic = await (window as any).WPP.profile.getMyProfilePicture();
+          console.log('[PrinChat UI] My profile pic response:', myProfilePic);
 
-          if (hostDevice?.wid) {
-            // Format the WID correctly
-            const myWid = hostDevice.wid._serialized || `${hostDevice.wid.user}@c.us`;
-            console.log('[PrinChat UI] My WID:', myWid);
-
-            // Try to get profile picture using WPP.profilePic
-            if ((window as any).WPP?.profilePic?.getProfilePicFromServer) {
-              const profilePic = await (window as any).WPP.profilePic.getProfilePicFromServer(myWid);
-              console.log('[PrinChat UI] Profile pic response:', profilePic);
-
-              if (profilePic?.imgFull || profilePic?.img) {
-                const pictureUrl = profilePic.imgFull || profilePic.img;
-                console.log('[PrinChat UI] Got logged-in user profile photo from WPP:', pictureUrl);
-                return pictureUrl;
-              }
+          if (myProfilePic) {
+            const photoUrl = myProfilePic.eurl || myProfilePic.imgFull || myProfilePic.img;
+            if (photoUrl) {
+              console.log('[PrinChat UI] ✅ Got my profile photo from WPP.profile.getMyProfilePicture:', photoUrl);
+              return photoUrl;
             }
+          }
+        }
+      } catch (profileError) {
+        console.log('[PrinChat UI] WPP.profile.getMyProfilePicture failed:', profileError);
+      }
 
-            // Fallback to contact.getProfilePictureUrl if profilePic not available
-            if ((window as any).WPP?.contact?.getProfilePictureUrl) {
-              const pictureUrl = await (window as any).WPP.contact.getProfilePictureUrl(myWid);
-              if (pictureUrl) {
-                console.log('[PrinChat UI] Got logged-in user profile photo from WPP.contact:', pictureUrl);
-                return pictureUrl;
+      // Strategy 2: Try Store.Me (fallback)
+      try {
+        const Store = (window as any).Store;
+        if (Store?.Me) {
+          console.log('[PrinChat UI] Checking Store.Me for profile photo...');
+          const currentUser = Store.Me;
+          console.log('[PrinChat UI] Store.Me:', currentUser);
+
+          // Try profilePicThumb from Store.Me
+          if (currentUser?.profilePicThumb) {
+            const photoUrl = currentUser.profilePicThumb.eurl ||
+                           currentUser.profilePicThumb.imgFull ||
+                           currentUser.profilePicThumb.img;
+            if (photoUrl) {
+              console.log('[PrinChat UI] Got profile photo from Store.Me.profilePicThumb:', photoUrl);
+              return photoUrl;
+            }
+          }
+
+          // Try img field directly
+          if (currentUser?.img) {
+            console.log('[PrinChat UI] Got profile photo from Store.Me.img:', currentUser.img);
+            return currentUser.img;
+          }
+
+          // If Store.Me exists, try to get profile pic using its ID
+          if (currentUser?.id) {
+            const myWid = currentUser.id._serialized || currentUser.id;
+            console.log('[PrinChat UI] My WID from Store.Me:', myWid);
+
+            // Try WPP methods with the correct WID
+            if ((window as any).WPP?.profilePic?.getProfilePicFromServer) {
+              try {
+                const profilePic = await (window as any).WPP.profilePic.getProfilePicFromServer(myWid);
+                console.log('[PrinChat UI] Profile pic from WPP.profilePic:', profilePic);
+                if (profilePic?.imgFull || profilePic?.img || profilePic?.eurl) {
+                  const pictureUrl = profilePic.eurl || profilePic.imgFull || profilePic.img;
+                  console.log('[PrinChat UI] Got photo from WPP.profilePic:', pictureUrl);
+                  return pictureUrl;
+                }
+              } catch (e) {
+                console.log('[PrinChat UI] WPP.profilePic failed:', e);
               }
             }
           }
         }
-      } catch (wppError) {
-        console.log('[PrinChat UI] WPP method failed, trying DOM fallback:', wppError);
+      } catch (storeError) {
+        console.log('[PrinChat UI] Store.Me method failed:', storeError);
       }
 
       // Fallback: Try to find user's profile photo in WhatsApp's sidebar header
