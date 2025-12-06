@@ -2080,67 +2080,59 @@ class WhatsAppUIOverlay {
     // Show placeholder initially
     profileImg.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
 
-    // Use continuous interval to load profile photo (keeps trying until success)
+    // Use continuous interval to load profile photo directly from WhatsApp DOM
     let attemptCount = 0;
-    const maxAttempts = 60; // Try for 60 seconds max
-    const photoLoadInterval = setInterval(async () => {
+    const maxAttempts = 60;
+    const photoLoadInterval = setInterval(() => {
       attemptCount++;
 
-      console.log(`[PrinChat UI] 🔄 Attempt ${attemptCount}/${maxAttempts}`);
+      console.log(`[PrinChat UI] 🔄 Attempt ${attemptCount}/${maxAttempts} - Searching for profile photo in DOM...`);
 
       // Check if we still have placeholder
       const hasPlaceholder = profileImg.querySelector('svg') !== null;
-      console.log(`[PrinChat UI] Has placeholder: ${hasPlaceholder}`);
       if (!hasPlaceholder) {
         console.log('[PrinChat UI] Photo already loaded, stopping interval');
         clearInterval(photoLoadInterval);
         return;
       }
 
-      // Detailed logging
-      const WPP = (window as any).WPP;
-      console.log('[PrinChat UI] WPP exists:', !!WPP);
-      console.log('[PrinChat UI] WPP.profile exists:', !!WPP?.profile);
-      console.log('[PrinChat UI] WPP.profile.getMyProfilePicture exists:', !!WPP?.profile?.getMyProfilePicture);
+      // Try to find user's profile photo in DOM
+      // The photo is in the navbar profile button (bottom-left corner)
+      const selectors = [
+        // Navbar profile button (most specific)
+        'button[aria-label="Perfil"] img._ao3e',
+        'button[data-navbar-item="true"][aria-label="Perfil"] img',
+        // Alternative selectors
+        'button[aria-label="Perfil"] img[src*=".cdn.whatsapp.net"]',
+        'header img._ao3e[src*=".cdn.whatsapp.net"]',
+        'img._ao3e[src*="/v/t61."]',
+      ];
 
-      // Try to get photo
-      try {
-        if (WPP?.profile?.getMyProfilePicture) {
-          const myProfilePic = await WPP.profile.getMyProfilePicture();
-          console.log('[PrinChat UI] 📸 myProfilePic response:', JSON.stringify(myProfilePic, null, 2));
+      for (const selector of selectors) {
+        try {
+          const imgElement = document.querySelector(selector) as HTMLImageElement;
+          if (imgElement?.src?.startsWith('https://media')) {
+            console.log(`[PrinChat UI] ✅ Found profile photo with selector: "${selector}"`);
+            console.log(`[PrinChat UI] Photo URL: ${imgElement.src}`);
 
-          if (myProfilePic) {
-            console.log('[PrinChat UI] myProfilePic.eurl:', myProfilePic.eurl);
-            console.log('[PrinChat UI] myProfilePic.imgFull:', myProfilePic.imgFull);
-            console.log('[PrinChat UI] myProfilePic.img:', myProfilePic.img);
-
-            const photoUrl = myProfilePic.eurl || myProfilePic.imgFull || myProfilePic.img;
-            console.log('[PrinChat UI] Selected photoUrl:', photoUrl);
-
-            if (photoUrl) {
-              // Success! Replace placeholder with actual photo
-              profileImg.innerHTML = '';
-              const img = document.createElement('img');
-              img.src = photoUrl;
-              img.style.width = '100%';
-              img.style.height = '100%';
-              img.style.objectFit = 'cover';
-              profileImg.appendChild(img);
-              console.log('[PrinChat UI] ✅ Profile photo loaded successfully on attempt', attemptCount);
-              clearInterval(photoLoadInterval);
-              return;
-            } else {
-              console.log('[PrinChat UI] ⚠️ photoUrl is empty/null');
-            }
-          } else {
-            console.log('[PrinChat UI] ⚠️ myProfilePic is null/undefined');
+            // Success! Replace placeholder with actual photo
+            profileImg.innerHTML = '';
+            const img = document.createElement('img');
+            img.src = imgElement.src;
+            img.style.width = '100%';
+            img.style.height = '100%';
+            img.style.objectFit = 'cover';
+            profileImg.appendChild(img);
+            console.log('[PrinChat UI] ✅ Profile photo loaded successfully on attempt', attemptCount);
+            clearInterval(photoLoadInterval);
+            return;
           }
-        } else {
-          console.log('[PrinChat UI] ⚠️ WPP.profile.getMyProfilePicture not available');
+        } catch (error) {
+          // Continue to next selector
         }
-      } catch (error) {
-        console.error(`[PrinChat UI] ❌ Attempt ${attemptCount} failed:`, error);
       }
+
+      console.log(`[PrinChat UI] ⚠️ No profile photo found in DOM yet (attempt ${attemptCount})`);
 
       // Stop after max attempts
       if (attemptCount >= maxAttempts) {
