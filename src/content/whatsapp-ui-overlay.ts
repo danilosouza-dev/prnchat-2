@@ -2077,8 +2077,27 @@ class WhatsAppUIOverlay {
     profileImg.className = 'princhat-header-profile-img';
 
     // Try to get user's WhatsApp profile photo from sidebar
-    const getUserPhoto = () => {
-      // Try to find user's profile photo in WhatsApp's sidebar header (left side)
+    const getUserPhoto = async () => {
+      // Try to get logged-in user's profile photo using WPPConnect
+      try {
+        if ((window as any).WPP?.conn?.getMyWid && (window as any).WPP?.contact?.getProfilePictureUrl) {
+          console.log('[PrinChat UI] Getting logged-in user photo via WPP...');
+          const myWid = await (window as any).WPP.conn.getMyWid();
+          console.log('[PrinChat UI] My WID:', myWid);
+
+          if (myWid) {
+            const pictureUrl = await (window as any).WPP.contact.getProfilePictureUrl(myWid);
+            if (pictureUrl) {
+              console.log('[PrinChat UI] Got logged-in user profile photo from WPP:', pictureUrl);
+              return pictureUrl;
+            }
+          }
+        }
+      } catch (wppError) {
+        console.log('[PrinChat UI] WPP method failed, trying DOM fallback:', wppError);
+      }
+
+      // Fallback: Try to find user's profile photo in WhatsApp's sidebar header
       const selectors = [
         'div[data-testid="default-user"] img',
         'header div[role="button"] img[src*="https://"]',
@@ -2091,7 +2110,7 @@ class WhatsAppUIOverlay {
         try {
           const img = document.querySelector(selector) as HTMLImageElement;
           if (img && img.src && (img.src.startsWith('https://') || img.src.startsWith('blob:'))) {
-            console.log('[PrinChat UI] Found user profile photo:', img.src);
+            console.log('[PrinChat UI] Found user profile photo via DOM:', img.src);
             return img.src;
           }
         } catch (e) {
@@ -2103,19 +2122,24 @@ class WhatsAppUIOverlay {
       return null;
     };
 
-    const photoUrl = getUserPhoto();
-    if (photoUrl) {
-      // Use actual WhatsApp profile photo
-      const img = document.createElement('img');
-      img.src = photoUrl;
-      img.style.width = '100%';
-      img.style.height = '100%';
-      img.style.objectFit = 'cover';
-      profileImg.appendChild(img);
-    } else {
-      // Use placeholder icon
-      profileImg.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
-    }
+    // Show placeholder initially
+    profileImg.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+
+    // Load profile photo asynchronously
+    getUserPhoto().then(photoUrl => {
+      if (photoUrl) {
+        // Replace placeholder with actual photo
+        profileImg.innerHTML = '';
+        const img = document.createElement('img');
+        img.src = photoUrl;
+        img.style.width = '100%';
+        img.style.height = '100%';
+        img.style.objectFit = 'cover';
+        profileImg.appendChild(img);
+      }
+    }).catch(error => {
+      console.error('[PrinChat UI] Error loading user photo:', error);
+    });
 
     profileBtn.appendChild(profileImg);
     profileBtn.addEventListener('click', () => {
