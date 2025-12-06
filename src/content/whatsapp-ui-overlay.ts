@@ -1978,14 +1978,24 @@ class WhatsAppUIOverlay {
     const marker = document.getElementById('PrinChatInjected');
     const logoUrl = marker?.getAttribute('data-logo-url');
 
+    console.log('[PrinChat UI] Marker found:', !!marker);
+    console.log('[PrinChat UI] Logo URL from marker:', logoUrl);
+
     if (logoUrl) {
       const logo = document.createElement('img');
       logo.className = 'princhat-header-logo';
       logo.src = logoUrl;
       logo.alt = 'PrinChat';
+      logo.onerror = () => {
+        console.error('[PrinChat UI] Failed to load logo from:', logoUrl);
+      };
+      logo.onload = () => {
+        console.log('[PrinChat UI] Logo loaded successfully from:', logoUrl);
+      };
       leftSection.appendChild(logo);
+      console.log('[PrinChat UI] Logo img element created and appended');
     } else {
-      console.warn('[PrinChat UI] Logo URL not found in marker, skipping logo');
+      console.warn('[PrinChat UI] Logo URL not found in marker');
     }
 
     // Right section with icons
