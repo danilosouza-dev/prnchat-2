@@ -2077,86 +2077,57 @@ class WhatsAppUIOverlay {
     profileImg.className = 'princhat-header-profile-img';
 
     // Try to get user's WhatsApp profile photo from sidebar
-    const getUserPhoto = async () => {
-      // Use ONLY WPP.profile.getMyProfilePicture() - the correct method for logged-in user
-      try {
-        if ((window as any).WPP?.profile?.getMyProfilePicture) {
-          console.log('[PrinChat UI] Getting logged-in user photo via WPP.profile.getMyProfilePicture()...');
-          const myProfilePic = await (window as any).WPP.profile.getMyProfilePicture();
-          console.log('[PrinChat UI] My profile pic response:', myProfilePic);
-
-          if (myProfilePic) {
-            const photoUrl = myProfilePic.eurl || myProfilePic.imgFull || myProfilePic.img;
-            if (photoUrl) {
-              console.log('[PrinChat UI] ✅ Got logged-in user profile photo:', photoUrl);
-              return photoUrl;
-            }
-          }
-        } else {
-          console.log('[PrinChat UI] ⚠️ WPP.profile.getMyProfilePicture not available yet');
-        }
-      } catch (error) {
-        console.error('[PrinChat UI] ❌ Error getting profile photo:', error);
-      }
-
-      return null;
-    };
-
-    const loadProfilePhotoWithRetry = async () => {
-      const maxAttempts = 30; // Increased attempts
-      let delay = 200; // Start with short delay
-
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        console.log(`[PrinChat UI] Attempt ${attempt}/${maxAttempts} to load profile photo...`);
-
-        // Check if we still have placeholder (user might have navigated away)
-        const hasPlaceholder = profileImg.querySelector('svg') !== null;
-        if (!hasPlaceholder) {
-          console.log('[PrinChat UI] Placeholder already replaced, stopping retry');
-          return;
-        }
-
-        const photoUrl = await getUserPhoto();
-
-        if (photoUrl) {
-          // Success! Replace placeholder with actual photo
-          profileImg.innerHTML = '';
-          const img = document.createElement('img');
-          img.src = photoUrl;
-          img.style.width = '100%';
-          img.style.height = '100%';
-          img.style.objectFit = 'cover';
-          profileImg.appendChild(img);
-          console.log('[PrinChat UI] ✅ Profile photo loaded successfully on attempt', attempt);
-          return;
-        }
-
-        // Wait before next attempt (except on last attempt)
-        if (attempt < maxAttempts) {
-          await new Promise(resolve => setTimeout(resolve, delay));
-          // Gradually increase delay: 200ms -> 300ms -> 500ms -> 1000ms (max)
-          if (attempt < 5) {
-            delay = 200;
-          } else if (attempt < 10) {
-            delay = 300;
-          } else if (attempt < 20) {
-            delay = 500;
-          } else {
-            delay = 1000;
-          }
-        }
-      }
-
-      console.log('[PrinChat UI] ⚠️ Could not load profile photo after', maxAttempts, 'attempts. Using placeholder.');
-    };
-
     // Show placeholder initially
     profileImg.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
 
-    // Load profile photo asynchronously with retry logic
-    loadProfilePhotoWithRetry().catch(error => {
-      console.error('[PrinChat UI] Error loading user photo:', error);
-    });
+    // Use continuous interval to load profile photo (keeps trying until success)
+    let attemptCount = 0;
+    const maxAttempts = 60; // Try for 60 seconds max
+    const photoLoadInterval = setInterval(async () => {
+      attemptCount++;
+
+      // Check if we still have placeholder
+      const hasPlaceholder = profileImg.querySelector('svg') !== null;
+      if (!hasPlaceholder) {
+        console.log('[PrinChat UI] Photo already loaded, stopping interval');
+        clearInterval(photoLoadInterval);
+        return;
+      }
+
+      // Try to get photo
+      try {
+        if ((window as any).WPP?.profile?.getMyProfilePicture) {
+          console.log(`[PrinChat UI] Attempt ${attemptCount}: Getting profile photo...`);
+          const myProfilePic = await (window as any).WPP.profile.getMyProfilePicture();
+
+          if (myProfilePic) {
+            const photoUrl = myProfilePic.eurl || myProfilePic.imgFull || myProfilePic.img;
+
+            if (photoUrl) {
+              // Success! Replace placeholder with actual photo
+              profileImg.innerHTML = '';
+              const img = document.createElement('img');
+              img.src = photoUrl;
+              img.style.width = '100%';
+              img.style.height = '100%';
+              img.style.objectFit = 'cover';
+              profileImg.appendChild(img);
+              console.log('[PrinChat UI] ✅ Profile photo loaded successfully on attempt', attemptCount);
+              clearInterval(photoLoadInterval);
+              return;
+            }
+          }
+        }
+      } catch (error) {
+        console.log(`[PrinChat UI] Attempt ${attemptCount} failed:`, error);
+      }
+
+      // Stop after max attempts
+      if (attemptCount >= maxAttempts) {
+        console.log('[PrinChat UI] ⚠️ Stopped trying after', maxAttempts, 'attempts');
+        clearInterval(photoLoadInterval);
+      }
+    }, 1000); // Try every 1 second
 
     profileBtn.appendChild(profileImg);
     profileBtn.addEventListener('click', () => {
