@@ -2078,97 +2078,28 @@ class WhatsAppUIOverlay {
 
     // Try to get user's WhatsApp profile photo from sidebar
     const getUserPhoto = async () => {
-      // Strategy 1: Try WPP.profile.getMyProfilePicture() - Most direct method!
+      // Use ONLY WPP.profile.getMyProfilePicture() - the correct method for logged-in user
       try {
         if ((window as any).WPP?.profile?.getMyProfilePicture) {
-          console.log('[PrinChat UI] Trying WPP.profile.getMyProfilePicture()...');
+          console.log('[PrinChat UI] Getting logged-in user photo via WPP.profile.getMyProfilePicture()...');
           const myProfilePic = await (window as any).WPP.profile.getMyProfilePicture();
           console.log('[PrinChat UI] My profile pic response:', myProfilePic);
 
           if (myProfilePic) {
             const photoUrl = myProfilePic.eurl || myProfilePic.imgFull || myProfilePic.img;
             if (photoUrl) {
-              console.log('[PrinChat UI] ✅ Got my profile photo from WPP.profile.getMyProfilePicture:', photoUrl);
+              console.log('[PrinChat UI] ✅ Got logged-in user profile photo:', photoUrl);
               return photoUrl;
             }
           }
+        } else {
+          console.log('[PrinChat UI] ⚠️ WPP.profile.getMyProfilePicture not available');
         }
-      } catch (profileError) {
-        console.log('[PrinChat UI] WPP.profile.getMyProfilePicture failed:', profileError);
+      } catch (error) {
+        console.error('[PrinChat UI] ❌ Error getting profile photo:', error);
       }
 
-      // Strategy 2: Try Store.Me (fallback)
-      try {
-        const Store = (window as any).Store;
-        if (Store?.Me) {
-          console.log('[PrinChat UI] Checking Store.Me for profile photo...');
-          const currentUser = Store.Me;
-          console.log('[PrinChat UI] Store.Me:', currentUser);
-
-          // Try profilePicThumb from Store.Me
-          if (currentUser?.profilePicThumb) {
-            const photoUrl = currentUser.profilePicThumb.eurl ||
-                           currentUser.profilePicThumb.imgFull ||
-                           currentUser.profilePicThumb.img;
-            if (photoUrl) {
-              console.log('[PrinChat UI] Got profile photo from Store.Me.profilePicThumb:', photoUrl);
-              return photoUrl;
-            }
-          }
-
-          // Try img field directly
-          if (currentUser?.img) {
-            console.log('[PrinChat UI] Got profile photo from Store.Me.img:', currentUser.img);
-            return currentUser.img;
-          }
-
-          // If Store.Me exists, try to get profile pic using its ID
-          if (currentUser?.id) {
-            const myWid = currentUser.id._serialized || currentUser.id;
-            console.log('[PrinChat UI] My WID from Store.Me:', myWid);
-
-            // Try WPP methods with the correct WID
-            if ((window as any).WPP?.profilePic?.getProfilePicFromServer) {
-              try {
-                const profilePic = await (window as any).WPP.profilePic.getProfilePicFromServer(myWid);
-                console.log('[PrinChat UI] Profile pic from WPP.profilePic:', profilePic);
-                if (profilePic?.imgFull || profilePic?.img || profilePic?.eurl) {
-                  const pictureUrl = profilePic.eurl || profilePic.imgFull || profilePic.img;
-                  console.log('[PrinChat UI] Got photo from WPP.profilePic:', pictureUrl);
-                  return pictureUrl;
-                }
-              } catch (e) {
-                console.log('[PrinChat UI] WPP.profilePic failed:', e);
-              }
-            }
-          }
-        }
-      } catch (storeError) {
-        console.log('[PrinChat UI] Store.Me method failed:', storeError);
-      }
-
-      // Fallback: Try to find user's profile photo in WhatsApp's sidebar header
-      const selectors = [
-        'div[data-testid="default-user"] img',
-        'header div[role="button"] img[src*="https://"]',
-        'header div[role="button"] img[src*="blob:"]',
-        'div._aou8 img',  // WhatsApp header avatar class
-        'header img[alt]'
-      ];
-
-      for (const selector of selectors) {
-        try {
-          const img = document.querySelector(selector) as HTMLImageElement;
-          if (img && img.src && (img.src.startsWith('https://') || img.src.startsWith('blob:'))) {
-            console.log('[PrinChat UI] Found user profile photo via DOM:', img.src);
-            return img.src;
-          }
-        } catch (e) {
-          // Continue trying other selectors
-        }
-      }
-
-      console.log('[PrinChat UI] User profile photo not found, using placeholder');
+      console.log('[PrinChat UI] No profile photo found, using placeholder');
       return null;
     };
 
