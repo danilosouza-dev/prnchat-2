@@ -2093,32 +2093,51 @@ class WhatsAppUIOverlay {
             }
           }
         } else {
-          console.log('[PrinChat UI] ⚠️ WPP.profile.getMyProfilePicture not available');
+          console.log('[PrinChat UI] ⚠️ WPP.profile.getMyProfilePicture not available yet');
         }
       } catch (error) {
         console.error('[PrinChat UI] ❌ Error getting profile photo:', error);
       }
 
-      console.log('[PrinChat UI] No profile photo found, using placeholder');
       return null;
+    };
+
+    const loadProfilePhotoWithRetry = async () => {
+      const maxAttempts = 10;
+      const delayMs = 500; // Wait 500ms between attempts
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        console.log(`[PrinChat UI] Attempt ${attempt}/${maxAttempts} to load profile photo...`);
+
+        const photoUrl = await getUserPhoto();
+
+        if (photoUrl) {
+          // Success! Replace placeholder with actual photo
+          profileImg.innerHTML = '';
+          const img = document.createElement('img');
+          img.src = photoUrl;
+          img.style.width = '100%';
+          img.style.height = '100%';
+          img.style.objectFit = 'cover';
+          profileImg.appendChild(img);
+          console.log('[PrinChat UI] ✅ Profile photo loaded successfully on attempt', attempt);
+          return;
+        }
+
+        // Wait before next attempt (except on last attempt)
+        if (attempt < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+      }
+
+      console.log('[PrinChat UI] ⚠️ Could not load profile photo after', maxAttempts, 'attempts. Using placeholder.');
     };
 
     // Show placeholder initially
     profileImg.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
 
-    // Load profile photo asynchronously
-    getUserPhoto().then(photoUrl => {
-      if (photoUrl) {
-        // Replace placeholder with actual photo
-        profileImg.innerHTML = '';
-        const img = document.createElement('img');
-        img.src = photoUrl;
-        img.style.width = '100%';
-        img.style.height = '100%';
-        img.style.objectFit = 'cover';
-        profileImg.appendChild(img);
-      }
-    }).catch(error => {
+    // Load profile photo asynchronously with retry logic
+    loadProfilePhotoWithRetry().catch(error => {
       console.error('[PrinChat UI] Error loading user photo:', error);
     });
 
