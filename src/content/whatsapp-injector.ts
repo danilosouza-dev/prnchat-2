@@ -811,8 +811,8 @@
       // Set logo URL in marker before injecting UI overlay
       // UI overlay runs in page context and doesn't have access to chrome.runtime
       const marker = ensureMarker(); // Ensure marker exists
-      marker.setAttribute('data-logo-url', chrome.runtime.getURL('src/assets/logo.png'));
-      console.log('[PrinChat] Logo URL set via data attribute:', chrome.runtime.getURL('src/assets/logo.png'));
+      marker.setAttribute('data-logo-url', chrome.runtime.getURL('logo.png'));
+      console.log('[PrinChat] Logo URL set via data attribute:', chrome.runtime.getURL('logo.png'));
 
       // First, inject CSS (content script has access to chrome.runtime.getURL)
       console.log('[PrinChat] Injecting UI overlay CSS...');
