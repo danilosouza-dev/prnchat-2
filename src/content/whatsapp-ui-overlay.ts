@@ -2080,16 +2080,35 @@ class WhatsAppUIOverlay {
     const getUserPhoto = async () => {
       // Try to get logged-in user's profile photo using WPPConnect
       try {
-        if ((window as any).WPP?.conn?.getMyWid && (window as any).WPP?.contact?.getProfilePictureUrl) {
+        if ((window as any).WPP?.conn?.getHostDevice) {
           console.log('[PrinChat UI] Getting logged-in user photo via WPP...');
-          const myWid = await (window as any).WPP.conn.getMyWid();
-          console.log('[PrinChat UI] My WID:', myWid);
+          const hostDevice = await (window as any).WPP.conn.getHostDevice();
+          console.log('[PrinChat UI] Host Device:', hostDevice);
 
-          if (myWid) {
-            const pictureUrl = await (window as any).WPP.contact.getProfilePictureUrl(myWid);
-            if (pictureUrl) {
-              console.log('[PrinChat UI] Got logged-in user profile photo from WPP:', pictureUrl);
-              return pictureUrl;
+          if (hostDevice?.wid) {
+            // Format the WID correctly
+            const myWid = hostDevice.wid._serialized || `${hostDevice.wid.user}@c.us`;
+            console.log('[PrinChat UI] My WID:', myWid);
+
+            // Try to get profile picture using WPP.profilePic
+            if ((window as any).WPP?.profilePic?.getProfilePicFromServer) {
+              const profilePic = await (window as any).WPP.profilePic.getProfilePicFromServer(myWid);
+              console.log('[PrinChat UI] Profile pic response:', profilePic);
+
+              if (profilePic?.imgFull || profilePic?.img) {
+                const pictureUrl = profilePic.imgFull || profilePic.img;
+                console.log('[PrinChat UI] Got logged-in user profile photo from WPP:', pictureUrl);
+                return pictureUrl;
+              }
+            }
+
+            // Fallback to contact.getProfilePictureUrl if profilePic not available
+            if ((window as any).WPP?.contact?.getProfilePictureUrl) {
+              const pictureUrl = await (window as any).WPP.contact.getProfilePictureUrl(myWid);
+              if (pictureUrl) {
+                console.log('[PrinChat UI] Got logged-in user profile photo from WPP.contact:', pictureUrl);
+                return pictureUrl;
+              }
             }
           }
         }
