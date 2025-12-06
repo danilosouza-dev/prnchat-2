@@ -2062,10 +2062,50 @@ class WhatsAppUIOverlay {
     profileBtn.className = 'princhat-header-profile-btn';
     profileBtn.title = 'Perfil';
 
-    // Create profile image (placeholder - will be replaced with actual user image)
+    // Create profile image
     const profileImg = document.createElement('div');
     profileImg.className = 'princhat-header-profile-img';
-    profileImg.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+
+    // Try to get user's WhatsApp profile photo from sidebar
+    const getUserPhoto = () => {
+      // Try to find user's profile photo in WhatsApp's sidebar header (left side)
+      const selectors = [
+        'div[data-testid="default-user"] img',
+        'header div[role="button"] img[src*="https://"]',
+        'header div[role="button"] img[src*="blob:"]',
+        'div._aou8 img',  // WhatsApp header avatar class
+        'header img[alt]'
+      ];
+
+      for (const selector of selectors) {
+        try {
+          const img = document.querySelector(selector) as HTMLImageElement;
+          if (img && img.src && (img.src.startsWith('https://') || img.src.startsWith('blob:'))) {
+            console.log('[PrinChat UI] Found user profile photo:', img.src);
+            return img.src;
+          }
+        } catch (e) {
+          // Continue trying other selectors
+        }
+      }
+
+      console.log('[PrinChat UI] User profile photo not found, using placeholder');
+      return null;
+    };
+
+    const photoUrl = getUserPhoto();
+    if (photoUrl) {
+      // Use actual WhatsApp profile photo
+      const img = document.createElement('img');
+      img.src = photoUrl;
+      img.style.width = '100%';
+      img.style.height = '100%';
+      img.style.objectFit = 'cover';
+      profileImg.appendChild(img);
+    } else {
+      // Use placeholder icon
+      profileImg.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+    }
 
     profileBtn.appendChild(profileImg);
     profileBtn.addEventListener('click', () => {
