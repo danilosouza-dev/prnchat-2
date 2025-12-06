@@ -2086,22 +2086,36 @@ class WhatsAppUIOverlay {
     const photoLoadInterval = setInterval(async () => {
       attemptCount++;
 
+      console.log(`[PrinChat UI] 🔄 Attempt ${attemptCount}/${maxAttempts}`);
+
       // Check if we still have placeholder
       const hasPlaceholder = profileImg.querySelector('svg') !== null;
+      console.log(`[PrinChat UI] Has placeholder: ${hasPlaceholder}`);
       if (!hasPlaceholder) {
         console.log('[PrinChat UI] Photo already loaded, stopping interval');
         clearInterval(photoLoadInterval);
         return;
       }
 
+      // Detailed logging
+      const WPP = (window as any).WPP;
+      console.log('[PrinChat UI] WPP exists:', !!WPP);
+      console.log('[PrinChat UI] WPP.profile exists:', !!WPP?.profile);
+      console.log('[PrinChat UI] WPP.profile.getMyProfilePicture exists:', !!WPP?.profile?.getMyProfilePicture);
+
       // Try to get photo
       try {
-        if ((window as any).WPP?.profile?.getMyProfilePicture) {
-          console.log(`[PrinChat UI] Attempt ${attemptCount}: Getting profile photo...`);
-          const myProfilePic = await (window as any).WPP.profile.getMyProfilePicture();
+        if (WPP?.profile?.getMyProfilePicture) {
+          const myProfilePic = await WPP.profile.getMyProfilePicture();
+          console.log('[PrinChat UI] 📸 myProfilePic response:', JSON.stringify(myProfilePic, null, 2));
 
           if (myProfilePic) {
+            console.log('[PrinChat UI] myProfilePic.eurl:', myProfilePic.eurl);
+            console.log('[PrinChat UI] myProfilePic.imgFull:', myProfilePic.imgFull);
+            console.log('[PrinChat UI] myProfilePic.img:', myProfilePic.img);
+
             const photoUrl = myProfilePic.eurl || myProfilePic.imgFull || myProfilePic.img;
+            console.log('[PrinChat UI] Selected photoUrl:', photoUrl);
 
             if (photoUrl) {
               // Success! Replace placeholder with actual photo
@@ -2115,11 +2129,17 @@ class WhatsAppUIOverlay {
               console.log('[PrinChat UI] ✅ Profile photo loaded successfully on attempt', attemptCount);
               clearInterval(photoLoadInterval);
               return;
+            } else {
+              console.log('[PrinChat UI] ⚠️ photoUrl is empty/null');
             }
+          } else {
+            console.log('[PrinChat UI] ⚠️ myProfilePic is null/undefined');
           }
+        } else {
+          console.log('[PrinChat UI] ⚠️ WPP.profile.getMyProfilePicture not available');
         }
       } catch (error) {
-        console.log(`[PrinChat UI] Attempt ${attemptCount} failed:`, error);
+        console.error(`[PrinChat UI] ❌ Attempt ${attemptCount} failed:`, error);
       }
 
       // Stop after max attempts
