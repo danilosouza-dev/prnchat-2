@@ -53,6 +53,7 @@
     {
       "resources": [
         "assets/*",
+        "logo.png",
         "content/whatsapp-page-script.js",
         "content/whatsapp-store-accessor.js",
         "content/script-loader.js",
