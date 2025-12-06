@@ -2080,13 +2080,13 @@ class WhatsAppUIOverlay {
     // Show placeholder initially
     profileImg.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
 
-    // Use continuous interval to load profile photo directly from WhatsApp DOM
+    // Use continuous interval with hybrid strategy: WPP API first, then DOM fallback
     let attemptCount = 0;
     const maxAttempts = 60;
-    const photoLoadInterval = setInterval(() => {
+    const photoLoadInterval = setInterval(async () => {
       attemptCount++;
 
-      console.log(`[PrinChat UI] 🔄 Attempt ${attemptCount}/${maxAttempts} - Searching for profile photo in DOM...`);
+      console.log(`[PrinChat UI] 🔄 Attempt ${attemptCount}/${maxAttempts}`);
 
       // Check if we still have placeholder
       const hasPlaceholder = profileImg.querySelector('svg') !== null;
@@ -2096,43 +2096,69 @@ class WhatsAppUIOverlay {
         return;
       }
 
-      // Try to find user's profile photo in DOM
-      // The photo is in the navbar profile button (bottom-left corner)
-      const selectors = [
-        // Navbar profile button (most specific)
-        'button[aria-label="Perfil"] img._ao3e',
-        'button[data-navbar-item="true"][aria-label="Perfil"] img',
-        // Alternative selectors
-        'button[aria-label="Perfil"] img[src*=".cdn.whatsapp.net"]',
-        'header img._ao3e[src*=".cdn.whatsapp.net"]',
-        'img._ao3e[src*="/v/t61."]',
-      ];
+      let photoUrl: string | null = null;
 
-      for (const selector of selectors) {
-        try {
-          const imgElement = document.querySelector(selector) as HTMLImageElement;
-          if (imgElement?.src?.startsWith('https://media')) {
-            console.log(`[PrinChat UI] ✅ Found profile photo with selector: "${selector}"`);
-            console.log(`[PrinChat UI] Photo URL: ${imgElement.src}`);
+      // Strategy 1: Try WPP.profile.getMyProfilePicture() first (official API)
+      try {
+        const WPP = (window as any).WPP;
+        if (WPP?.profile?.getMyProfilePicture) {
+          console.log('[PrinChat UI] Strategy 1: Trying WPP.profile.getMyProfilePicture()...');
+          const myProfilePic = await WPP.profile.getMyProfilePicture();
 
-            // Success! Replace placeholder with actual photo
-            profileImg.innerHTML = '';
-            const img = document.createElement('img');
-            img.src = imgElement.src;
-            img.style.width = '100%';
-            img.style.height = '100%';
-            img.style.objectFit = 'cover';
-            profileImg.appendChild(img);
-            console.log('[PrinChat UI] ✅ Profile photo loaded successfully on attempt', attemptCount);
-            clearInterval(photoLoadInterval);
-            return;
+          if (myProfilePic) {
+            photoUrl = myProfilePic.eurl || myProfilePic.imgFull || myProfilePic.img;
+            if (photoUrl) {
+              console.log('[PrinChat UI] ✅ Got photo from WPP API:', photoUrl);
+            }
           }
-        } catch (error) {
-          // Continue to next selector
+        }
+      } catch (error) {
+        console.log('[PrinChat UI] WPP API failed:', error);
+      }
+
+      // Strategy 2: Fallback to DOM search if WPP API didn't work
+      if (!photoUrl) {
+        console.log('[PrinChat UI] Strategy 2: Searching for photo in DOM...');
+
+        const selectors = [
+          // Navbar profile button (most specific)
+          'button[aria-label="Perfil"] img._ao3e',
+          'button[data-navbar-item="true"][aria-label="Perfil"] img',
+          // Alternative selectors
+          'button[aria-label="Perfil"] img[src*=".cdn.whatsapp.net"]',
+          'header img._ao3e[src*=".cdn.whatsapp.net"]',
+          'img._ao3e[src*="/v/t61."]',
+        ];
+
+        for (const selector of selectors) {
+          try {
+            const imgElement = document.querySelector(selector) as HTMLImageElement;
+            if (imgElement?.src?.startsWith('https://media')) {
+              photoUrl = imgElement.src;
+              console.log(`[PrinChat UI] ✅ Found photo in DOM with selector: "${selector}"`);
+              break;
+            }
+          } catch (error) {
+            // Continue to next selector
+          }
         }
       }
 
-      console.log(`[PrinChat UI] ⚠️ No profile photo found in DOM yet (attempt ${attemptCount})`);
+      // If we got a photo URL from either strategy, load it
+      if (photoUrl) {
+        profileImg.innerHTML = '';
+        const img = document.createElement('img');
+        img.src = photoUrl;
+        img.style.width = '100%';
+        img.style.height = '100%';
+        img.style.objectFit = 'cover';
+        profileImg.appendChild(img);
+        console.log('[PrinChat UI] ✅ Profile photo loaded successfully on attempt', attemptCount);
+        clearInterval(photoLoadInterval);
+        return;
+      }
+
+      console.log(`[PrinChat UI] ⚠️ No profile photo found yet (attempt ${attemptCount})`);
 
       // Stop after max attempts
       if (attemptCount >= maxAttempts) {
