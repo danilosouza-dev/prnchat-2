@@ -2103,11 +2103,18 @@ class WhatsAppUIOverlay {
     };
 
     const loadProfilePhotoWithRetry = async () => {
-      const maxAttempts = 10;
-      const delayMs = 500; // Wait 500ms between attempts
+      const maxAttempts = 30; // Increased attempts
+      let delay = 200; // Start with short delay
 
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         console.log(`[PrinChat UI] Attempt ${attempt}/${maxAttempts} to load profile photo...`);
+
+        // Check if we still have placeholder (user might have navigated away)
+        const hasPlaceholder = profileImg.querySelector('svg') !== null;
+        if (!hasPlaceholder) {
+          console.log('[PrinChat UI] Placeholder already replaced, stopping retry');
+          return;
+        }
 
         const photoUrl = await getUserPhoto();
 
@@ -2126,7 +2133,17 @@ class WhatsAppUIOverlay {
 
         // Wait before next attempt (except on last attempt)
         if (attempt < maxAttempts) {
-          await new Promise(resolve => setTimeout(resolve, delayMs));
+          await new Promise(resolve => setTimeout(resolve, delay));
+          // Gradually increase delay: 200ms -> 300ms -> 500ms -> 1000ms (max)
+          if (attempt < 5) {
+            delay = 200;
+          } else if (attempt < 10) {
+            delay = 300;
+          } else if (attempt < 20) {
+            delay = 500;
+          } else {
+            delay = 1000;
+          }
         }
       }
 
