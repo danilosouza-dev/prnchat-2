@@ -649,6 +649,29 @@
       });
       console.log('[PrinChat] ✅ UI request listener registered');
 
+      // Listen for view mode state requests from UI overlay (which can't access chrome.storage)
+      document.addEventListener('PrinChatRequestState', async () => {
+        console.log('[PrinChat] 📥 PrinChatRequestState received');
+        try {
+          const result = await chrome.storage.local.get(['princhat_view_mode']);
+          const mode = result.princhat_view_mode || 'header';
+          console.log('[PrinChat] 📤 Sending state to UI:', mode);
+
+          document.dispatchEvent(new CustomEvent('PrinChatSetState', {
+            detail: {
+              viewMode: mode
+            }
+          }));
+        } catch (error) {
+          console.error('[PrinChat] ❌ Error getting state from storage:', error);
+          // Default to header if error
+          document.dispatchEvent(new CustomEvent('PrinChatSetState', {
+            detail: { viewMode: 'header' }
+          }));
+        }
+      });
+      console.log('[PrinChat] ✅ State request listener registered');
+
       // Listen for storage changes and forward to UI overlay
       console.log('[PrinChat] Setting up storage change listener...');
       chrome.storage.onChanged.addListener((changes, areaName) => {
