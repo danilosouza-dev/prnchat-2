@@ -812,6 +812,7 @@
       // UI overlay runs in page context and doesn't have access to chrome.runtime
       const marker = ensureMarker(); // Ensure marker exists
       marker.setAttribute('data-logo-url', chrome.runtime.getURL('logo.png'));
+      marker.setAttribute('data-header-popup-url', chrome.runtime.getURL('src/fab-popup/index.html'));
       console.log('[PrinChat] Logo URL set via data attribute:', chrome.runtime.getURL('logo.png'));
 
       // First, inject CSS (content script has access to chrome.runtime.getURL)

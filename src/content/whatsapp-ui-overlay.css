@@ -111,7 +111,7 @@ body.princhat-header-active #app {
 }
 
 /* Ensure WhatsApp's main container takes remaining space */
-body.princhat-header-active #app > div:not(.princhat-custom-header) {
+body.princhat-header-active #app>div:not(.princhat-custom-header) {
   flex: 1 !important;
   min-height: 0 !important;
   overflow: hidden !important;
@@ -801,6 +801,82 @@ body[data-princhat-chat-active="true"] .princhat-shortcut-bar {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* Tooltip */
+.princhat-tooltip {
+  position: fixed;
+  padding: 6px 12px;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  border-radius: 4px;
+  font-size: 12px;
+  pointer-events: none;
+  z-index: 10000;
+  animation: tooltipFadeIn 0.2s ease;
+  white-space: nowrap;
+}
+
+@keyframes tooltipFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Header Popup */
+.princhat-header-popup {
+  position: fixed;
+  /* Top/Right set dynamically */
+  width: 400px;
+  height: 600px;
+  background: #1a1a1a;
+  border: 1px solid #3a3a3a;
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  z-index: 10001;
+  /* Above almost everything */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: headerPopupIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  /* Ensure it's above script popup if open */
+}
+
+@keyframes headerPopupIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.princhat-header-popup iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: transparent;
+}
+
+/* Backdrop for closing popup when clicking outside (optional, transparent) */
+.princhat-header-popup-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 10000;
+  /* Just below popup */
+  background: transparent;
 }
 
 .princhat-status-content {
