@@ -63,6 +63,8 @@ interface MessageExecution {
 class WhatsAppUIOverlay {
   private customHeader: HTMLElement | null = null; // Custom header above WhatsApp
   private shortcutBar: HTMLElement | null = null;
+  private headerPopup: HTMLElement | null = null; // New header popup
+  private isHeaderPopupOpen: boolean = false;
   // private fab: HTMLElement | null = null; // Not used in new design
   private statusPopup: HTMLElement | null = null; // Script execution popup
   private messageStatusPopup: HTMLElement | null = null; // Message execution popup (separate!)
@@ -214,6 +216,9 @@ class WhatsAppUIOverlay {
 
         // Note: Large media restoration is now done by the injector before sending
         // No need to restore here as the injector already handled it
+
+        // Initialize header popup - LAZY LOADED NOW
+        // this.createHeaderPopup();
 
         // Load settings
         console.log('[PrinChat UI] Loading settings...');
@@ -1956,6 +1961,117 @@ class WhatsAppUIOverlay {
     }
   }
 
+  private createHeaderPopup() {
+    console.log('[PrinChat UI] Creating header popup...');
+
+    // Remove existing if any
+    const existing = document.querySelector('.princhat-header-popup');
+    if (existing) existing.remove();
+
+    // Create container
+    this.headerPopup = document.createElement('div');
+    this.headerPopup.className = 'princhat-header-popup';
+    // Use visibility hidden instead of display none to ensure iframe loads
+    this.headerPopup.style.visibility = 'hidden';
+    this.headerPopup.style.opacity = '0';
+    this.headerPopup.style.display = 'flex'; // Ensure layout is calculated
+
+    // Get popup URL from marker
+    const marker = document.getElementById('PrinChatInjected');
+    // Try header specific URL first, fallback to generic
+    const popupUrl = marker?.getAttribute('data-header-popup-url') || marker?.getAttribute('data-popup-url') || '';
+    console.log('[PrinChat UI] Header Popup URL:', popupUrl);
+
+    if (popupUrl) {
+      // Use innerHTML to match FAB implementation exactly
+      // This ensures identical DOM structure and initialization behavior
+      this.headerPopup.innerHTML = `
+        <div style="width: 100%; height: 100%; overflow: hidden; border-radius: 8px;">
+          <iframe
+            src="${popupUrl}"
+            frameborder="0"
+            style="width: 100%; height: 100%; border: none;"
+          ></iframe>
+        </div>
+      `;
+    } else {
+      console.error('[PrinChat UI] Popup URL not found in marker');
+      this.headerPopup.innerHTML = '<div style="color:white;padding:20px;">Erro: URL do popup não encontrada</div>';
+    }
+
+    // Append to body (z-index will handle layering)
+    document.body.appendChild(this.headerPopup);
+
+    // Create backdrop for closing
+    const backdrop = document.createElement('div');
+    backdrop.className = 'princhat-header-popup-backdrop';
+    backdrop.style.display = 'none'; // Initially hidden
+    backdrop.addEventListener('click', () => this.toggleHeaderPopup(false));
+    document.body.appendChild(backdrop);
+
+    // Store reference to backdrop on the popup element for easy access
+    (this.headerPopup as any)._backdrop = backdrop;
+  }
+
+  private toggleHeaderPopup(show?: boolean) {
+    // Lazy load: Create popup if it doesn't exist and we want to show it
+    // If show is false/undefined and popup doesn't exist, do nothing (nothing to close/toggle)
+    const shouldShow = show !== undefined ? show : !this.isHeaderPopupOpen;
+
+    if (shouldShow && !this.headerPopup) {
+      console.log('[PrinChat UI] First open: creating header popup (lazy load)...');
+      this.createHeaderPopup();
+    }
+
+    if (!this.headerPopup) return;
+    const backdrop = (this.headerPopup as any)._backdrop;
+
+    this.isHeaderPopupOpen = shouldShow;
+
+    if (shouldShow) {
+      // Position relative to the messages icon
+      const messagesBtn = document.querySelector('.princhat-header-icon-btn[data-action="messages"]');
+      if (messagesBtn) {
+        const rect = messagesBtn.getBoundingClientRect();
+        // Position below the button, aligned right or center
+        this.headerPopup.style.top = `${rect.bottom + 12}px`;
+        // Align right edge with button right edge
+        const rightOffset = window.innerWidth - rect.right;
+        this.headerPopup.style.right = `${rightOffset}px`;
+        this.headerPopup.style.left = 'auto'; // Reset left
+      } else {
+        // Fallback position
+        this.headerPopup.style.top = '80px';
+        this.headerPopup.style.right = '20px';
+        this.headerPopup.style.left = 'auto';
+      }
+
+      this.headerPopup.style.visibility = 'visible';
+      // this.headerPopup.style.display = 'flex'; // Already set in create
+      if (backdrop) backdrop.style.display = 'block';
+
+      // Small delay for animation
+      requestAnimationFrame(() => {
+        if (this.headerPopup) this.headerPopup.style.opacity = '1';
+      });
+
+      console.log('[PrinChat UI] Header popup opened');
+    } else {
+      this.headerPopup.style.opacity = '0';
+      if (backdrop) backdrop.style.display = 'none';
+
+      // Wait for animation
+      setTimeout(() => {
+        if (this.headerPopup && !this.isHeaderPopupOpen) {
+          this.headerPopup.style.visibility = 'hidden';
+          // this.headerPopup.style.display = 'none'; // Keep flex to maintain iframe state
+        }
+      }, 200);
+
+      console.log('[PrinChat UI] Header popup closed');
+    }
+  }
+
   private createCustomHeader() {
     console.log('[PrinChat UI] Creating custom header...');
 
@@ -2055,7 +2171,9 @@ class WhatsAppUIOverlay {
 
         // Handle different actions
         if (icon.name === 'messages') {
-          chrome.runtime.sendMessage({ action: 'OPEN_OPTIONS_PAGE', tab: 'messages' });
+          // Changed: Toggle header popup instead of opening options page
+          this.toggleHeaderPopup();
+          // chrome.runtime.sendMessage({ action: 'OPEN_OPTIONS_PAGE', tab: 'messages' });
         } else if (icon.name === 'notifications') {
           console.log(`[PrinChat UI] Notifications clicked - to be implemented`);
           // TODO: Show notifications popup

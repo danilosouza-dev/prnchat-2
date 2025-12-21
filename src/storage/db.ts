@@ -63,10 +63,16 @@ class DatabaseService {
   private readonly DB_VERSION = 4; // Updated to version 4 for file support
 
   async init(): Promise<IDBPDatabase<PrinChatDB>> {
-    if (this.db) return this.db;
+    console.log(`[PrinChat DB] Init called. DB: ${this.DB_NAME} v${this.DB_VERSION}`);
+    if (this.db) {
+      console.log('[PrinChat DB] Returning existing instance');
+      return this.db;
+    }
 
+    console.log('[PrinChat DB] Opening Database...');
     this.db = await openDB<PrinChatDB>(this.DB_NAME, this.DB_VERSION, {
-      upgrade(db) {
+      upgrade(db, oldVersion, newVersion) {
+        console.log(`[PrinChat DB] Upgrading from ${oldVersion} to ${newVersion}`);
         // Messages store
         if (!db.objectStoreNames.contains('messages')) {
           const messageStore = db.createObjectStore('messages', { keyPath: 'id' });
@@ -252,7 +258,9 @@ class DatabaseService {
 
   async getAllMessages(): Promise<Message[]> {
     const db = await this.init();
+    console.log('[PrinChat DB] getAllMessages calling db.getAll...');
     const messages = await db.getAll('messages');
+    console.log(`[PrinChat DB] getAllMessages raw count: ${messages.length}`);
 
     // Load media blobs for all message types
     const messagesWithMedia = await Promise.all(

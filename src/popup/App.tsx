@@ -152,36 +152,58 @@ const App: React.FC = () => {
 
   const loadActiveChat = async () => {
     try {
+      console.log('[PrinChat App] loadActiveChat starting...');
       const tab = await getActiveTab();
+      console.log('[PrinChat App] Active tab found:', tab?.id, tab?.url);
+
       if (tab?.id && tab?.url?.includes('web.whatsapp.com')) {
+        console.log('[PrinChat App] Sending GET_ACTIVE_CHAT to tab:', tab.id);
         const response = await sendMessageToContentScript(tab.id, {
           type: 'GET_ACTIVE_CHAT',
           payload: {},
         });
+        console.log('[PrinChat App] GET_ACTIVE_CHAT response:', response);
+
         if (response.success && response.data?.chatName) {
+          console.log('[PrinChat App] Setting active chat:', response.data.chatName);
           setActiveChat({
             name: response.data.chatName,
             photo: response.data.chatPhoto
           });
+        } else {
+          console.warn('[PrinChat App] Invalid active chat response:', response);
         }
+      } else {
+        console.warn('[PrinChat App] Tab not valid for active chat:', tab?.url);
       }
-    } catch {
-      // No active chat
+    } catch (e) {
+      console.error('[PrinChat App] Error loading active chat:', e);
     }
   };
 
+  const [dataError, setDataError] = useState<string | null>(null);
+
   const loadData = async () => {
     try {
+      console.log('[PrinChat Popup] Loading data...');
       const [messagesData, scriptsData, foldersData] = await Promise.all([
         db.getAllMessages(),
         db.getAllScripts(),
         db.getAllFolders(),
       ]);
+      console.log('[PrinChat Popup] Data loaded:', {
+        messages: messagesData.length,
+        scripts: scriptsData.length,
+        folders: foldersData.length
+      });
       setMessages(messagesData);
       setScripts(scriptsData);
       setFolders(foldersData);
-    } catch (err) {
-      // Error loading data silently
+      setDataError(null);
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      console.error('[PrinChat Popup] Error loading data:', msg);
+      setDataError(`Erro ao carregar dados: ${msg}`);
     }
   };
 
@@ -617,6 +639,16 @@ const App: React.FC = () => {
         </div>
       </header>
 
+      {/* Error Banner */}
+      {dataError && (
+        <div style={{ backgroundColor: '#f44336', color: 'white', padding: '10px', fontSize: '12px', textAlign: 'center' }}>
+          {dataError}
+          <button onClick={() => window.location.reload()} style={{ marginLeft: '10px', textDecoration: 'underline', background: 'none', border: 'none', color: 'white', cursor: 'pointer' }}>
+            Recarregar
+          </button>
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="tabs-dark">
         <button
@@ -962,6 +994,9 @@ const App: React.FC = () => {
         onCancel={handleCancelScript}
         onCancelAll={handleCancelAllScripts}
       />
+      {/* DEBUG FOOTER - Remove after fixing */}
+      {/* Footer removed */}
+
     </div>
   );
 };
