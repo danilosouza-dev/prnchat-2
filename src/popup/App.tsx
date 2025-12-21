@@ -15,7 +15,8 @@ import {
   ChevronDown,
   ChevronUp,
   Pin,
-  PinOff
+  PinOff,
+  Move
 } from 'lucide-react';
 import { Message, Script, Folder, MessageType, ScriptExecutionState } from '@/types';
 import { db } from '@/storage/db';
@@ -85,6 +86,46 @@ const App: React.FC = () => {
     window.parent.postMessage({
       type: 'PRINCHAT_POPUP_PIN_TOGGLE',
       pinned: newPinnedState
+    }, '*');
+  };
+
+  const [isFloating, setIsFloating] = useState(false);
+
+  useEffect(() => {
+    // Load initial floating state from storage
+    chrome.storage.local.get(['princhat_view_mode'], (result) => {
+      if (result.princhat_view_mode === 'floating') {
+        setIsFloating(true);
+      }
+    });
+
+    // Listen for changes from other contexts (e.g. other popup instance)
+    const storageListener = (changes: { [key: string]: chrome.storage.StorageChange }, areaName: string) => {
+      if (areaName === 'local' && changes.princhat_view_mode) {
+        const newMode = changes.princhat_view_mode.newValue;
+        setIsFloating(newMode === 'floating');
+      }
+    };
+    chrome.storage.onChanged.addListener(storageListener);
+
+    return () => {
+      chrome.storage.onChanged.removeListener(storageListener);
+    };
+  }, []);
+
+  const toggleFloating = () => {
+    const newFloatingState = !isFloating;
+    setIsFloating(newFloatingState);
+
+    // Save to storage (source of truth)
+    chrome.storage.local.set({
+      princhat_view_mode: newFloatingState ? 'floating' : 'header'
+    });
+
+    // Send message to parent (whatsapp-ui-overlay) for immediate update
+    window.parent.postMessage({
+      type: 'PRINCHAT_TOGGLE_FAB_MODE',
+      floating: newFloatingState
     }, '*');
   };
   const notificationRef = useRef<HTMLDivElement>(null);
@@ -579,12 +620,22 @@ const App: React.FC = () => {
       <header className="header-dark">
         <img src={logo} alt="PrinChat" className="h-6 w-auto" style={{ height: '20px' }} />
         <div className="header-icons">
+          {!isFloating && (
+            <button
+              className={`icon-btn ${isPinned ? 'active' : ''}`}
+              onClick={togglePin}
+              title={isPinned ? "Desafixar popup" : "Fixar popup"}
+            >
+              {isPinned ? <PinOff size={18} /> : <Pin size={18} />}
+            </button>
+          )}
+
           <button
-            className={`icon-btn ${isPinned ? 'active' : ''}`}
-            onClick={togglePin}
-            title={isPinned ? "Desafixar popup" : "Fixar popup"}
+            className={`icon-btn ${isFloating ? 'active' : ''}`}
+            onClick={toggleFloating}
+            title={isFloating ? "Voltar ao Header" : "Usar Botão Flutuante"}
           >
-            {isPinned ? <PinOff size={18} /> : <Pin size={18} />}
+            <Move size={18} />
           </button>
 
           <div className="notification-wrapper" ref={notificationRef}>

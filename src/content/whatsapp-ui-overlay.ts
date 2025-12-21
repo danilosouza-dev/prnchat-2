@@ -160,6 +160,24 @@ class WhatsAppUIOverlay {
       this.listenForPopupMessages();
       console.log('[PrinChat UI] ✓ Popup messaging active');
 
+      // Setup state synchronization with content script
+      document.addEventListener('PrinChatSetState', (event: any) => {
+        const viewMode = event.detail.viewMode;
+        console.log('[PrinChat UI] State restored from extension:', viewMode);
+
+        // Restore mode WITHOUT auto-opening popups (false param)
+        if (viewMode === 'floating') {
+          this.setFloatingMode(true, false);
+        } else {
+          // Ensure we are in header mode
+          this.setFloatingMode(false, false);
+        }
+      });
+
+      // Request initial state from content script
+      console.log('[PrinChat UI] Requesting initial state...');
+      document.dispatchEvent(new CustomEvent('PrinChatRequestState'));
+
       console.log('[PrinChat UI] ✅ Overlay fully initialized');
     } catch (error: any) {
       const errorMessage = error?.message || String(error);
@@ -2034,22 +2052,12 @@ class WhatsAppUIOverlay {
     this.isHeaderPopupOpen = shouldShow;
 
     if (shouldShow) {
-      // Position relative to the messages icon
+      this.repositionPopupForHeader();
+
+      // Add active state to header button
       const messagesBtn = document.querySelector('.princhat-header-icon-btn[data-action="messages"]');
       if (messagesBtn) {
-        messagesBtn.classList.add('active'); // Add active state
-        const rect = messagesBtn.getBoundingClientRect();
-        // Position below the button, aligned right or center
-        this.headerPopup.style.top = `${rect.bottom + 12}px`;
-        // Align right edge with button right edge
-        const rightOffset = window.innerWidth - rect.right;
-        this.headerPopup.style.right = `${rightOffset}px`;
-        this.headerPopup.style.left = 'auto'; // Reset left
-      } else {
-        // Fallback position
-        this.headerPopup.style.top = '80px';
-        this.headerPopup.style.right = '20px';
-        this.headerPopup.style.left = 'auto';
+        messagesBtn.classList.add('active');
       }
 
       this.headerPopup.style.visibility = 'visible';
@@ -2063,7 +2071,7 @@ class WhatsAppUIOverlay {
 
       console.log('[PrinChat UI] Header popup opened');
     } else {
-      // Remove active state from button
+      // Remove active state from button (header)
       const messagesBtn = document.querySelector('.princhat-header-icon-btn[data-action="messages"]');
       if (messagesBtn) {
         messagesBtn.classList.remove('active');
@@ -2086,12 +2094,80 @@ class WhatsAppUIOverlay {
 
   private listenForPopupMessages() {
     window.addEventListener('message', (event) => {
-      if (event.data && event.data.type === 'PRINCHAT_POPUP_PIN_TOGGLE') {
+      if (!event.data) return;
+
+      if (event.data.type === 'PRINCHAT_POPUP_PIN_TOGGLE') {
         const pinned = event.data.pinned;
         console.log('[PrinChat UI] Popup pinned state changed:', pinned);
         this.setPopupPinned(pinned);
+      } else if (event.data.type === 'PRINCHAT_TOGGLE_FAB_MODE') {
+        const floating = event.data.floating;
+        console.log('[PrinChat UI] Floating mode toggled by user:', floating);
+        // User interaction -> Auto open
+        this.setFloatingMode(floating, true);
       }
     });
+
+    // Restore state if needed (e.g. from localStorage)
+    // For now defaulting to false as per property init
+  }
+
+  private setFloatingMode(floating: boolean, autoOpen: boolean = false) {
+    const marker = document.getElementById('PrinChatInjected');
+    const messagesBtn = document.querySelector('.princhat-header-icon-btn[data-action="messages"]') as HTMLElement;
+
+    if (floating) {
+      // Switch to Floating Mode
+      // 1. Hide Header Button
+      if (messagesBtn) messagesBtn.style.display = 'none';
+
+      // 2. Show DOM-based FAB (controlled by whatsapp-fab.ts)
+      if (marker) {
+        marker.setAttribute('data-show-fab', 'true');
+        console.log('[PrinChat UI] Enabled existing FAB via marker');
+
+        // Auto-open FAB popup if requested
+        if (autoOpen) {
+          marker.setAttribute('data-open-fab', 'true');
+        }
+      }
+
+      // 3. Close header popup if open
+      if (this.isHeaderPopupOpen) {
+        this.toggleHeaderPopup(false);
+      }
+    } else {
+      // Switch to Header Mode
+      // 1. Show Header Button
+      if (messagesBtn) messagesBtn.style.display = 'flex';
+
+      // 2. Hide DOM-based FAB
+      if (marker) {
+        marker.setAttribute('data-show-fab', 'false');
+        console.log('[PrinChat UI] Disabled existing FAB via marker');
+      }
+
+      // 3. Auto-open header popup if requested
+      if (autoOpen) {
+        // We use setTimeout to ensure UI is ready
+        setTimeout(() => {
+          this.toggleHeaderPopup(true);
+        }, 100);
+      }
+    }
+  }
+
+  private repositionPopupForHeader() {
+    if (!this.headerPopup) return;
+    const messagesBtn = document.querySelector('.princhat-header-icon-btn[data-action="messages"]');
+    if (messagesBtn) {
+      const rect = messagesBtn.getBoundingClientRect();
+      this.headerPopup.style.bottom = 'auto';
+      this.headerPopup.style.top = `${rect.bottom + 12}px`;
+      const rightOffset = window.innerWidth - rect.right;
+      this.headerPopup.style.right = `${rightOffset}px`;
+      this.headerPopup.style.left = 'auto';
+    }
   }
 
   private setPopupPinned(pinned: boolean) {

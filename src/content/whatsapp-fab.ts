@@ -34,14 +34,24 @@ class WhatsAppFAB {
     if (marker) {
       const observer = new MutationObserver((mutations) => {
         mutations.forEach((mutation) => {
-          if (mutation.type === 'attributes' && mutation.attributeName === 'data-show-fab') {
-            const showFAB = marker.getAttribute('data-show-fab') === 'true';
-            console.log('[PrinChat FAB] Marker attribute changed, showFAB:', showFAB);
+          if (mutation.type === 'attributes') {
+            if (mutation.attributeName === 'data-show-fab') {
+              const showFAB = marker.getAttribute('data-show-fab') === 'true';
+              console.log('[PrinChat FAB] Marker attribute changed, showFAB:', showFAB);
 
-            if (showFAB) {
-              this.show();
-            } else {
-              this.hide();
+              if (showFAB) {
+                this.show();
+              } else {
+                this.hide();
+              }
+            } else if (mutation.attributeName === 'data-open-fab') {
+              // Check if we should open the popup
+              if (marker.getAttribute('data-open-fab') === 'true') {
+                console.log('[PrinChat FAB] Remote open request received');
+                this.openPopup();
+                // Reset attribute so we can trigger it again
+                marker.setAttribute('data-open-fab', 'false');
+              }
             }
           }
         });
@@ -49,7 +59,7 @@ class WhatsAppFAB {
 
       observer.observe(marker, {
         attributes: true,
-        attributeFilter: ['data-show-fab']
+        attributeFilter: ['data-show-fab', 'data-open-fab']
       });
 
       console.log('[PrinChat FAB] ✅ Marker observer registered');
