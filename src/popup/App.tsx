@@ -13,7 +13,9 @@ import {
   Zap,
   Video,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Pin,
+  PinOff
 } from 'lucide-react';
 import { Message, Script, Folder, MessageType, ScriptExecutionState } from '@/types';
 import { db } from '@/storage/db';
@@ -73,7 +75,18 @@ const App: React.FC = () => {
       timestamp: Date.now() - 172800000, // 2 dias atrás
     },
   ]);
+  const [isPinned, setIsPinned] = useState(false);
   const filterInputRef = useRef<HTMLInputElement>(null);
+
+  const togglePin = () => {
+    const newPinnedState = !isPinned;
+    setIsPinned(newPinnedState);
+    // Send message to parent (whatsapp-ui-overlay)
+    window.parent.postMessage({
+      type: 'PRINCHAT_POPUP_PIN_TOGGLE',
+      pinned: newPinnedState
+    }, '*');
+  };
   const notificationRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -566,6 +579,14 @@ const App: React.FC = () => {
       <header className="header-dark">
         <img src={logo} alt="PrinChat" className="h-6 w-auto" style={{ height: '20px' }} />
         <div className="header-icons">
+          <button
+            className={`icon-btn ${isPinned ? 'active' : ''}`}
+            onClick={togglePin}
+            title={isPinned ? "Desafixar popup" : "Fixar popup"}
+          >
+            {isPinned ? <PinOff size={18} /> : <Pin size={18} />}
+          </button>
+
           <div className="notification-wrapper" ref={notificationRef}>
             <button
               className={`icon-btn notification-btn ${showNotifications ? 'active' : ''}`}

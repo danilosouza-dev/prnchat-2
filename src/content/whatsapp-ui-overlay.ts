@@ -65,6 +65,7 @@ class WhatsAppUIOverlay {
   private shortcutBar: HTMLElement | null = null;
   private headerPopup: HTMLElement | null = null; // New header popup
   private isHeaderPopupOpen: boolean = false;
+  private isHeaderPopupPinned: boolean = false;
   // private fab: HTMLElement | null = null; // Not used in new design
   private statusPopup: HTMLElement | null = null; // Script execution popup
   private messageStatusPopup: HTMLElement | null = null; // Message execution popup (separate!)
@@ -154,6 +155,10 @@ class WhatsAppUIOverlay {
       console.log('[PrinChat UI] Step 10: Setting up responsive popup listeners...');
       this.setupResizeListeners();
       console.log('[PrinChat UI] ✓ Responsive popup listeners active');
+
+      console.log('[PrinChat UI] Step 11: Setting up popup messaging...');
+      this.listenForPopupMessages();
+      console.log('[PrinChat UI] ✓ Popup messaging active');
 
       console.log('[PrinChat UI] ✅ Overlay fully initialized');
     } catch (error: any) {
@@ -2049,7 +2054,7 @@ class WhatsAppUIOverlay {
 
       this.headerPopup.style.visibility = 'visible';
       // this.headerPopup.style.display = 'flex'; // Already set in create
-      if (backdrop) backdrop.style.display = 'block';
+      if (backdrop && !this.isHeaderPopupPinned) backdrop.style.display = 'block';
 
       // Small delay for animation
       requestAnimationFrame(() => {
@@ -2076,6 +2081,39 @@ class WhatsAppUIOverlay {
       }, 200);
 
       console.log('[PrinChat UI] Header popup closed');
+    }
+  }
+
+  private listenForPopupMessages() {
+    window.addEventListener('message', (event) => {
+      if (event.data && event.data.type === 'PRINCHAT_POPUP_PIN_TOGGLE') {
+        const pinned = event.data.pinned;
+        console.log('[PrinChat UI] Popup pinned state changed:', pinned);
+        this.setPopupPinned(pinned);
+      }
+    });
+  }
+
+  private setPopupPinned(pinned: boolean) {
+    this.isHeaderPopupPinned = pinned;
+
+    if (!this.headerPopup) return;
+
+    const backdrop = (this.headerPopup as any)._backdrop as HTMLElement;
+    if (backdrop) {
+      if (pinned) {
+        // Hide backdrop to allow interaction with page
+        backdrop.style.display = 'none';
+        this.headerPopup.classList.add('pinned');
+        console.log('[PrinChat UI] Popup pinned: Backdrop hidden');
+      } else {
+        if (this.isHeaderPopupOpen) {
+          // Show backdrop if unpinned and currently open
+          backdrop.style.display = 'block';
+        }
+        this.headerPopup.classList.remove('pinned');
+        console.log('[PrinChat UI] Popup unpinned: Backdrop restored');
+      }
     }
   }
 

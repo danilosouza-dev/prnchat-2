@@ -85,7 +85,8 @@ body {
   transition: color 0.2s;
 }
 
-.icon-btn:hover {
+.icon-btn:hover,
+.icon-btn.active {
   color: var(--accent-pink);
 }
 
@@ -699,8 +700,8 @@ body {
 .folder-messages-container {
   overflow: hidden;
   transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.25s ease,
-              margin 0.3s ease;
+    opacity 0.25s ease,
+    margin 0.3s ease;
   margin-left: 12px;
 }
 
@@ -712,7 +713,8 @@ body {
 }
 
 .folder-messages-container.expanded {
-  max-height: 2000px; /* Large enough to fit all messages */
+  max-height: 2000px;
+  /* Large enough to fit all messages */
   opacity: 1;
   margin-top: 6px;
   margin-bottom: 4px;
@@ -724,7 +726,8 @@ body {
 
 /* Remove staggered animations from folder items */
 .item-dark.folder-item {
-  animation: none; /* Remove slideInLeft animation */
+  animation: none;
+  /* Remove slideInLeft animation */
 }
 
 @keyframes slideInLeft {
