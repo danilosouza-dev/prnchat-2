@@ -157,8 +157,21 @@ export async function sendMessageToContentScript<T = any>(
  */
 export async function getActiveTab(): Promise<chrome.tabs.Tab | null> {
   try {
+    // Strategy 1: Active tab in current window
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    return tab || null;
+
+    // If we have a tab and it's WhatsApp Web, return it
+    if (tab?.url?.includes('web.whatsapp.com')) {
+      return tab;
+    }
+
+    // Strategy 2: If we are in a popup (unfocused window maybe? or iframe), 
+    // try to find ANY tab with web.whatsapp.com
+    const whatsappTabs = await chrome.tabs.query({ url: '*://web.whatsapp.com/*' });
+    // Prefer active one if possible, otherwise first found
+    const activeWhatsApp = whatsappTabs.find(t => t.active) || whatsappTabs[0];
+
+    return activeWhatsApp || tab || null;
   } catch {
     return null;
   }

@@ -55,7 +55,8 @@
   flex-shrink: 0;
 }
 
-.princhat-header-icon-btn:hover {
+.princhat-header-icon-btn:hover,
+.princhat-header-icon-btn.active {
   background: #2a2a2a;
   color: #e91e63;
 }
