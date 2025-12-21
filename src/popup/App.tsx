@@ -152,29 +152,20 @@ const App: React.FC = () => {
 
   const loadActiveChat = async () => {
     try {
-      console.log('[PrinChat App] loadActiveChat starting...');
       const tab = await getActiveTab();
-      console.log('[PrinChat App] Active tab found:', tab?.id, tab?.url);
 
       if (tab?.id && tab?.url?.includes('web.whatsapp.com')) {
-        console.log('[PrinChat App] Sending GET_ACTIVE_CHAT to tab:', tab.id);
         const response = await sendMessageToContentScript(tab.id, {
           type: 'GET_ACTIVE_CHAT',
           payload: {},
         });
-        console.log('[PrinChat App] GET_ACTIVE_CHAT response:', response);
 
         if (response.success && response.data?.chatName) {
-          console.log('[PrinChat App] Setting active chat:', response.data.chatName);
           setActiveChat({
             name: response.data.chatName,
             photo: response.data.chatPhoto
           });
-        } else {
-          console.warn('[PrinChat App] Invalid active chat response:', response);
         }
-      } else {
-        console.warn('[PrinChat App] Tab not valid for active chat:', tab?.url);
       }
     } catch (e) {
       console.error('[PrinChat App] Error loading active chat:', e);

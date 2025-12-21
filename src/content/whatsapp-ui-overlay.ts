@@ -2032,6 +2032,7 @@ class WhatsAppUIOverlay {
       // Position relative to the messages icon
       const messagesBtn = document.querySelector('.princhat-header-icon-btn[data-action="messages"]');
       if (messagesBtn) {
+        messagesBtn.classList.add('active'); // Add active state
         const rect = messagesBtn.getBoundingClientRect();
         // Position below the button, aligned right or center
         this.headerPopup.style.top = `${rect.bottom + 12}px`;
@@ -2057,6 +2058,12 @@ class WhatsAppUIOverlay {
 
       console.log('[PrinChat UI] Header popup opened');
     } else {
+      // Remove active state from button
+      const messagesBtn = document.querySelector('.princhat-header-icon-btn[data-action="messages"]');
+      if (messagesBtn) {
+        messagesBtn.classList.remove('active');
+      }
+
       this.headerPopup.style.opacity = '0';
       if (backdrop) backdrop.style.display = 'none';
 
