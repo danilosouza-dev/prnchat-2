@@ -830,6 +830,18 @@ body[data-princhat-chat-active="true"] .princhat-shortcut-bar {
   }
 }
 
+/* FAB Popup - Matching Header Popup Style */
+.princhat-fab-popup {
+  background: #1a1a1a;
+  border: 1px solid #3a3a3a;
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  z-index: 999998;
+  display: flex;
+  flex-direction: column;
+}
+
 /* Header Popup */
 .princhat-header-popup {
   position: fixed;
