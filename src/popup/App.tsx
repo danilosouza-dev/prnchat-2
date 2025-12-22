@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Bell,
   Settings,
   Grid,
   Mic,
@@ -27,14 +26,6 @@ import ScriptExecutionModal from './components/ScriptExecutionModal';
 type Tab = 'messages' | 'scripts';
 type MediaFilter = 'all' | 'folders' | 'audio' | 'text' | 'image' | 'video' | 'file';
 
-interface Notification {
-  id: string;
-  type: 'promo' | 'alert' | 'update';
-  title: string;
-  message: string;
-  timestamp: number;
-}
-
 // State to sync between Header and FAB popups
 interface PopupState {
   activeTab: Tab;
@@ -42,7 +33,8 @@ interface PopupState {
   searchQuery: string;
   expandedFolders: string[];
   expandedScripts: string[];
-  notifications: Notification[];
+  confirmingMessageId: string | null;
+  confirmingScriptId: string | null;
 }
 
 import logo from '../assets/logo.png';
@@ -62,32 +54,10 @@ const App: React.FC = () => {
   const [requireConfirmation, setRequireConfirmation] = useState(true);
   const [executionState, setExecutionState] = useState<ScriptExecutionState | null>(null);
   const [expandedScripts, setExpandedScripts] = useState<Set<string>>(new Set());
-  const [showNotifications, setShowNotifications] = useState(false);
-  const [notifications, setNotifications] = useState<Notification[]>([
-    {
-      id: '1',
-      type: 'promo',
-      title: 'Promoção Especial!',
-      message: 'Ganhe 50% de desconto nos próximos 3 meses. Aproveite!',
-      timestamp: Date.now() - 3600000, // 1 hora atrás
-    },
-    {
-      id: '2',
-      type: 'update',
-      title: 'Nova Atualização Disponível',
-      message: 'Versão 2.1.0 com melhorias de performance e novos recursos.',
-      timestamp: Date.now() - 86400000, // 1 dia atrás
-    },
-    {
-      id: '3',
-      type: 'alert',
-      title: 'Manutenção Programada',
-      message: 'Sistema estará em manutenção dia 25/11 das 2h às 4h.',
-      timestamp: Date.now() - 172800000, // 2 dias atrás
-    },
-  ]);
   const [isPinned, setIsPinned] = useState(false);
   const filterInputRef = useRef<HTMLInputElement>(null);
+  const isInitialized = useRef(false); // Prevent auto-save before restoration
+
 
   const togglePin = () => {
     const newPinnedState = !isPinned;
@@ -138,17 +108,20 @@ const App: React.FC = () => {
       floating: newFloatingState
     }, '*');
   };
-  const notificationRef = useRef<HTMLDivElement>(null);
 
   // Save popup state to sync between Header and FAB popups
   const savePopupState = () => {
+    // Don't save during initial mount - wait for restoration to complete
+    if (!isInitialized.current) return;
+
     const state: PopupState = {
       activeTab,
       mediaFilter,
       searchQuery,
       expandedFolders: Array.from(expandedFolders),
       expandedScripts: Array.from(expandedScripts),
-      notifications
+      confirmingMessageId,
+      confirmingScriptId
     };
     chrome.storage.local.set({ popup_state: state });
   };
@@ -156,7 +129,7 @@ const App: React.FC = () => {
   // Auto-save state when it changes
   useEffect(() => {
     savePopupState();
-  }, [activeTab, mediaFilter, searchQuery, expandedFolders, expandedScripts, notifications]);
+  }, [activeTab, mediaFilter, searchQuery, expandedFolders, expandedScripts, confirmingMessageId, confirmingScriptId]);
 
   useEffect(() => {
     // Run migration if needed before loading data
@@ -176,8 +149,11 @@ const App: React.FC = () => {
           setSearchQuery(state.searchQuery);
           setExpandedFolders(new Set(state.expandedFolders));
           setExpandedScripts(new Set(state.expandedScripts));
-          setNotifications(state.notifications);
+          setConfirmingMessageId(state.confirmingMessageId);
+          setConfirmingScriptId(state.confirmingScriptId);
         }
+        // Enable auto-save AFTER restoration completes
+        isInitialized.current = true;
       });
 
       loadData();
@@ -211,7 +187,8 @@ const App: React.FC = () => {
           setSearchQuery(newState.searchQuery);
           setExpandedFolders(new Set(newState.expandedFolders));
           setExpandedScripts(new Set(newState.expandedScripts));
-          setNotifications(newState.notifications);
+          setConfirmingMessageId(newState.confirmingMessageId);
+          setConfirmingScriptId(newState.confirmingScriptId);
         }
       }
     };
@@ -235,22 +212,7 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Close notifications when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
-        setShowNotifications(false);
-      }
-    };
 
-    if (showNotifications) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [showNotifications]);
 
   const loadSettings = async () => {
     try {
@@ -567,25 +529,6 @@ const App: React.FC = () => {
     chrome.runtime.openOptionsPage();
   };
 
-  // Format relative time for notifications
-  const formatRelativeTime = (timestamp: number) => {
-    const now = Date.now();
-    const diff = now - timestamp;
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
-
-    if (minutes < 1) return 'agora';
-    if (minutes < 60) return `${minutes}m atrás`;
-    if (hours < 24) return `${hours}h atrás`;
-    return `${days}d atrás`;
-  };
-
-  // Remove notification
-  const removeNotification = (id: string) => {
-    setNotifications(notifications.filter(n => n.id !== id));
-  };
-
   // Toggle folder expansion
   const toggleFolderExpansion = (folderId: string) => {
     setExpandedFolders(prev => {
@@ -706,64 +649,6 @@ const App: React.FC = () => {
           >
             <Move size={18} />
           </button>
-
-          <div className="notification-wrapper" ref={notificationRef}>
-            <button
-              className={`icon-btn notification-btn ${showNotifications ? 'active' : ''}`}
-              onClick={() => setShowNotifications(!showNotifications)}
-              title="Notificações"
-            >
-              <Bell size={18} />
-              {notifications.length > 0 && (
-                <span className="notification-badge">{notifications.length}</span>
-              )}
-            </button>
-
-            {showNotifications && (
-              <div className="notification-dropdown">
-                <div className="notification-header">
-                  <span>Notificações</span>
-                  {notifications.length > 0 && (
-                    <button
-                      className="clear-all-btn"
-                      onClick={() => setNotifications([])}
-                    >
-                      Limpar tudo
-                    </button>
-                  )}
-                </div>
-
-                {notifications.length > 0 ? (
-                  <div className="notification-list">
-                    {notifications.map((notif) => (
-                      <div key={notif.id} className={`notification-item ${notif.type}`}>
-                        <div className="notification-icon">
-                          {notif.type === 'promo' && '🎉'}
-                          {notif.type === 'update' && '🔔'}
-                          {notif.type === 'alert' && '⚠️'}
-                        </div>
-                        <div className="notification-content">
-                          <div className="notification-title">{notif.title}</div>
-                          <div className="notification-message">{notif.message}</div>
-                          <div className="notification-time">{formatRelativeTime(notif.timestamp)}</div>
-                        </div>
-                        <button
-                          className="notification-close"
-                          onClick={() => removeNotification(notif.id)}
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="notification-empty">
-                    Nenhuma notificação no momento
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
 
           <button className="icon-btn" onClick={openOptions} title="Configurações">
             <Settings size={18} />
