@@ -26,6 +26,11 @@
   // Create marker immediately
   ensureMarker();
 
+  // Reset view mode to header on startup (User requirement: Start without floating button)
+  chrome.storage.local.set({ princhat_view_mode: 'header' }, () => {
+    console.log('[PrinChat] View mode reset to "header" on startup');
+  });
+
   // Selectors for WhatsApp Web
   const SELECTORS = {
     chatContainer: '#main'
@@ -653,9 +658,14 @@
       document.addEventListener('PrinChatRequestState', async () => {
         console.log('[PrinChat] 📥 PrinChatRequestState received');
         try {
-          const result = await chrome.storage.local.get(['princhat_view_mode']);
-          const mode = result.princhat_view_mode || 'header';
-          console.log('[PrinChat] 📤 Sending state to UI:', mode);
+          // USER REQUIREMENT: Always start with floating button HIDDEN (Header Mode)
+          // Ignore stored state on startup and force reset
+          const mode = 'header';
+
+          // Sync storage so Popup UI knows we are in header mode
+          chrome.storage.local.set({ princhat_view_mode: 'header' });
+
+          console.log('[PrinChat] 📤 Sending forced initial state to UI:', mode);
 
           document.dispatchEvent(new CustomEvent('PrinChatSetState', {
             detail: {
@@ -684,13 +694,7 @@
             console.log('[PrinChat] Old value:', changes.settings.oldValue);
             console.log('[PrinChat] New value:', changes.settings.newValue);
 
-            // Update marker attribute for FAB (page context can read this)
-            if (changes.settings.newValue) {
-              const marker = ensureMarker(); // Ensure marker exists
-              const showFloatingButton = changes.settings.newValue.showFloatingButton ?? false;
-              marker.setAttribute('data-show-fab', String(showFloatingButton));
-              console.log('[PrinChat] Updated marker data-show-fab:', showFloatingButton);
-            }
+            console.log('[PrinChat] New value:', changes.settings.newValue);
 
             // Forward to UI overlay
             console.log('[PrinChat] Dispatching PrinChatSettingsChanged event...');
@@ -714,6 +718,19 @@
               }
             }));
             console.log('[PrinChat] ✅ Data change event dispatched to UI overlay');
+          }
+
+          // Handle view mode changes (Header vs Floating)
+          if (changes.princhat_view_mode) {
+            const newMode = changes.princhat_view_mode.newValue || 'header';
+            console.log('[PrinChat] 🔄 View mode changed in storage to:', newMode);
+
+            document.dispatchEvent(new CustomEvent('PrinChatSetState', {
+              detail: {
+                viewMode: newMode
+              }
+            }));
+            console.log('[PrinChat] ✅ View mode update sent to UI overlay');
           }
         }
       });
@@ -1628,16 +1645,19 @@
     }
 
     async getActiveChat(): Promise<any> {
+      console.log('[PrinChat Injector] 🔍 getActiveChat() called');
       return new Promise((resolve) => {
         const requestId = `active-chat-${Date.now()}`;
         const timeout = setTimeout(() => {
+          console.log('[PrinChat Injector] ⏱️ getActiveChat() timeout - no response from page script');
           resolve({ success: false, error: 'Timeout' });
-        }, 3000);
+        }, 5000); // Increased from 3000ms to 5000ms
 
         const handler = (event: any) => {
           if (event.detail?.requestId === requestId) {
             clearTimeout(timeout);
             document.removeEventListener('PrinChatActiveChatResult', handler);
+            console.log('[PrinChat Injector] ✅ Received active chat result:', event.detail);
             if (event.detail.success) {
               // Use fallback getChatPhoto() if API didn't return photo
               const chatPhoto = event.detail.chatPhoto || this.getChatPhoto();
@@ -1646,12 +1666,14 @@
                 data: { active: true, chatName: event.detail.chatName, chatId: event.detail.chatId, chatPhoto }
               });
             } else {
+              console.log('[PrinChat Injector] ❌ Active chat request failed:', event.detail.error);
               resolve({ success: false, error: event.detail.error });
             }
           }
         };
 
         document.addEventListener('PrinChatActiveChatResult', handler);
+        console.log('[PrinChat Injector] 📤 Dispatching PrinChatGetActiveChat event with requestId:', requestId);
         document.dispatchEvent(new CustomEvent('PrinChatGetActiveChat', {
           detail: { requestId }
         }));

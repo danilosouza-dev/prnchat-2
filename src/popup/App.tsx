@@ -206,23 +206,35 @@ const App: React.FC = () => {
 
   const loadActiveChat = async () => {
     try {
+      console.log('[PrinChat Popup] 🔄 Loading active chat...');
       const tab = await getActiveTab();
+      console.log('[PrinChat Popup] Tab info:', { id: tab?.id, url: tab?.url });
 
       if (tab?.id && tab?.url?.includes('web.whatsapp.com')) {
+        console.log('[PrinChat Popup] 📤 Sending GET_ACTIVE_CHAT request...');
         const response = await sendMessageToContentScript(tab.id, {
           type: 'GET_ACTIVE_CHAT',
           payload: {},
         });
 
+        console.log('[PrinChat Popup] 📥 GET_ACTIVE_CHAT response:', response);
+
         if (response.success && response.data?.chatName) {
+          console.log('[PrinChat Popup] ✅ Setting active chat:', response.data.chatName);
           setActiveChat({
             name: response.data.chatName,
             photo: response.data.chatPhoto
           });
+        } else {
+          console.log('[PrinChat Popup] ⚠️ No active chat data in response');
+          setActiveChat(null);
         }
+      } else {
+        console.log('[PrinChat Popup] ❌ Not on WhatsApp Web or no tab ID');
       }
     } catch (e) {
-      console.error('[PrinChat App] Error loading active chat:', e);
+      console.error('[PrinChat Popup] ❌ Error loading active chat:', e);
+      setActiveChat(null);
     }
   };
 
