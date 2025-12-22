@@ -35,6 +35,16 @@ interface Notification {
   timestamp: number;
 }
 
+// State to sync between Header and FAB popups
+interface PopupState {
+  activeTab: Tab;
+  mediaFilter: MediaFilter;
+  searchQuery: string;
+  expandedFolders: string[];
+  expandedScripts: string[];
+  notifications: Notification[];
+}
+
 import logo from '../assets/logo.png';
 
 const App: React.FC = () => {
@@ -130,6 +140,24 @@ const App: React.FC = () => {
   };
   const notificationRef = useRef<HTMLDivElement>(null);
 
+  // Save popup state to sync between Header and FAB popups
+  const savePopupState = () => {
+    const state: PopupState = {
+      activeTab,
+      mediaFilter,
+      searchQuery,
+      expandedFolders: Array.from(expandedFolders),
+      expandedScripts: Array.from(expandedScripts),
+      notifications
+    };
+    chrome.storage.local.set({ popup_state: state });
+  };
+
+  // Auto-save state when it changes
+  useEffect(() => {
+    savePopupState();
+  }, [activeTab, mediaFilter, searchQuery, expandedFolders, expandedScripts, notifications]);
+
   useEffect(() => {
     // Run migration if needed before loading data
     const initializeApp = async () => {
@@ -137,6 +165,21 @@ const App: React.FC = () => {
         console.log('[PrinChat] Running migration from tags to folders...');
         await migrateTagsToFolders();
       }
+
+      // Restore popup state from storage (sync between Header/FAB)
+      chrome.storage.local.get(['popup_state'], (result) => {
+        if (result.popup_state) {
+          const state = result.popup_state as PopupState;
+          console.log('[PrinChat Popup] Restoring state from storage:', state);
+          setActiveTab(state.activeTab);
+          setMediaFilter(state.mediaFilter);
+          setSearchQuery(state.searchQuery);
+          setExpandedFolders(new Set(state.expandedFolders));
+          setExpandedScripts(new Set(state.expandedScripts));
+          setNotifications(state.notifications);
+        }
+      });
+
       loadData();
       loadActiveChat();
       loadSettings();
@@ -156,6 +199,20 @@ const App: React.FC = () => {
       if (areaName === 'local' && (changes.messages || changes.scripts || changes.folders)) {
         console.log('[PrinChat] Storage changed, reloading data...');
         loadData();
+      }
+
+      // Sync popup state from other popup instance (Header ↔ FAB)
+      if (areaName === 'local' && changes.popup_state) {
+        const newState = changes.popup_state.newValue as PopupState;
+        if (newState) {
+          console.log('[PrinChat Popup] Syncing state from other popup:', newState);
+          setActiveTab(newState.activeTab);
+          setMediaFilter(newState.mediaFilter);
+          setSearchQuery(newState.searchQuery);
+          setExpandedFolders(new Set(newState.expandedFolders));
+          setExpandedScripts(new Set(newState.expandedScripts));
+          setNotifications(newState.notifications);
+        }
       }
     };
 
