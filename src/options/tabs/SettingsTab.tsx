@@ -46,7 +46,6 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ setHeaderActions }) => {
     defaultDelay: 2000,
     requireSendConfirmation: true,
     showShortcuts: true,
-    showFloatingButton: true,
     showScriptExecutionPopup: true,
     showMessageExecutionPopup: true,
   });
@@ -294,31 +293,7 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ setHeaderActions }) => {
               />
             </div>
 
-            <Separator />
-
-            {/* Botão Flutuante */}
-            <div className="flex items-center justify-between">
-              <div className="space-y-1 flex-1">
-                <div className="flex items-center gap-2">
-                  <MousePointerClick className="h-4 w-4 text-[var(--text-secondary)]" />
-                  <Label htmlFor="showFloatingButton" className="cursor-pointer">
-                    Mostrar botão flutuante no WhatsApp Web
-                  </Label>
-                </div>
-                <p className="text-xs text-[var(--text-secondary)]">
-                  Exibe um botão flutuante arrastável que abre a extensão dentro do WhatsApp Web
-                </p>
-              </div>
-              <Switch
-                id="showFloatingButton"
-                checked={settings.showFloatingButton ?? false}
-                onCheckedChange={(checked) =>
-                  setSettings({ ...settings, showFloatingButton: checked })
-                }
-              />
-            </div>
-
-            <Separator />
+            {/* Popup Scripts */}
 
             {/* Popup Scripts */}
             <div className="flex items-center justify-between">
@@ -385,8 +360,8 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ setHeaderActions }) => {
               <div className="space-y-3">
                 <div
                   className={`flex items-center gap-3 p-4 rounded-lg border-2 cursor-pointer transition-all ${settings.storageType === 'local'
-                      ? 'border-[var(--accent-pink)] bg-[var(--accent-pink)]/10'
-                      : 'border-[var(--border-color)] hover:border-[var(--accent-pink)]/50'
+                    ? 'border-[var(--accent-pink)] bg-[var(--accent-pink)]/10'
+                    : 'border-[var(--border-color)] hover:border-[var(--accent-pink)]/50'
                     }`}
                   onClick={() => setSettings({ ...settings, storageType: 'local' })}
                 >

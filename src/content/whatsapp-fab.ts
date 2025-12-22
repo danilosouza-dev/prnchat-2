@@ -23,8 +23,6 @@ class WhatsAppFAB {
   }
 
   private init() {
-    console.log('[PrinChat FAB] Initializing floating action button...');
-    this.createFAB();
     this.setupSettingsListener();
   }
 
@@ -37,9 +35,13 @@ class WhatsAppFAB {
           if (mutation.type === 'attributes') {
             if (mutation.attributeName === 'data-show-fab') {
               const showFAB = marker.getAttribute('data-show-fab') === 'true';
-              console.log('[PrinChat FAB] Marker attribute changed, showFAB:', showFAB);
+              console.log('[PrinChat FAB] ⚡ data-show-fab changed to:', marker.getAttribute('data-show-fab'), '(boolean:', showFAB, ')');
 
               if (showFAB) {
+                // Lazy creation: Create FAB only when needed
+                if (!this.fab) {
+                  this.createFAB();
+                }
                 this.show();
               } else {
                 this.hide();
@@ -71,14 +73,17 @@ class WhatsAppFAB {
   private show() {
     if (this.fab) {
       console.log('[PrinChat FAB] Showing FAB');
-      this.fab.style.display = 'flex';
+      this.fab.classList.add('visible');
     }
   }
 
   private hide() {
+    console.log('[PrinChat FAB] hide() called, this.fab exists:', !!this.fab);
     if (this.fab) {
-      console.log('[PrinChat FAB] Hiding FAB');
-      this.fab.style.display = 'none';
+      console.log('[PrinChat FAB] Removing visible class from FAB');
+      console.log('[PrinChat FAB] Classes before:', this.fab.className);
+      this.fab.classList.remove('visible');
+      console.log('[PrinChat FAB] Classes after:', this.fab.className);
       // Close popup if open
       if (this.isPopupOpen) {
         this.closePopup();
@@ -116,9 +121,15 @@ class WhatsAppFAB {
     // Set initial visibility based on settings (read from marker data attributes)
     // marker is already defined above
     const showFabAttr = marker?.getAttribute('data-show-fab');
-    // Default to true if attribute is not set yet (race condition protection)
-    const showFAB = showFabAttr === null ? true : showFabAttr === 'true';
-    this.fab.style.display = showFAB ? 'flex' : 'none';
+    // Default to false to avoid flash on load (wait for explicit activation)
+    const showFAB = showFabAttr === 'true';
+    if (showFAB) {
+      this.fab.classList.add('visible');
+    } else {
+      this.fab.classList.remove('visible');
+    }
+    // Remove inline display style to let CSS class handle it
+    this.fab.style.display = '';
     console.log('[PrinChat FAB] Initial visibility:', showFAB ? 'visible' : 'hidden', '(attr:', showFabAttr, ')');
 
     // Add event listeners

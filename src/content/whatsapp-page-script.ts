@@ -843,14 +843,53 @@
     document.addEventListener('PrinChatGetActiveChat', async (event: any) => {
       try {
         const { requestId } = event.detail;
+        console.log('[PrinChat Page] 📥 Received PrinChatGetActiveChat request, requestId:', requestId);
+
         const activeChat = Store.Chat.getActive();
+        console.log('[PrinChat Page] 🔍 Store.Chat.getActive() result:', activeChat ? 'Found' : 'NULL');
 
         if (!activeChat) {
+          console.log('[PrinChat Page] ⚠️ No active chat from Store, trying DOM fallback...');
+
+          // Fallback: Try to get chat info from DOM
+          try {
+            // WhatsApp's chat header selector
+            const chatHeader = document.querySelector('header[data-testid="conversation-header"]');
+            if (chatHeader) {
+              console.log('[PrinChat Page] ✅ Found chat header in DOM');
+
+              // Try to get chat name from header
+              const chatNameElement = chatHeader.querySelector('span[dir="auto"][title]') as HTMLElement;
+              const chatName = chatNameElement?.getAttribute('title') || chatNameElement?.textContent || 'Unknown Chat';
+
+              console.log('[PrinChat Page] 📝 Chat name from DOM:', chatName);
+
+              // We don't have chatId from DOM, but we can at least show the name
+              document.dispatchEvent(new CustomEvent('PrinChatActiveChatResult', {
+                detail: {
+                  success: true,
+                  chatName,
+                  chatId: '', // Empty chatId from DOM fallback
+                  chatPhoto: undefined,
+                  requestId
+                }
+              }));
+              return;
+            } else {
+              console.log('[PrinChat Page] ❌ Chat header not found in DOM');
+            }
+          } catch (domError: any) {
+            console.error('[PrinChat Page] Error in DOM fallback:', domError);
+          }
+
+          // If DOM fallback also failed
           document.dispatchEvent(new CustomEvent('PrinChatActiveChatResult', {
             detail: { success: false, error: 'No active chat', requestId }
           }));
           return;
         }
+
+        console.log('[PrinChat Page] Processing active chat from Store...');
 
         // Get contact name from chat
         const contact = activeChat.contact;
@@ -858,53 +897,57 @@
           activeChat.formattedTitle || activeChat.name ||
           activeChat.id?.user || 'Unknown';
 
+        console.log('[PrinChat Page] 📝 Chat name:', chatName);
+
         // Get chatId for targeting
         const chatId = activeChat.id?._serialized || activeChat.id?.toString() || '';
+        console.log('[PrinChat Page] 🆔 Chat ID:', chatId);
 
         // Get profile picture URL
         let chatPhoto: string | undefined = undefined;
         try {
-          console.log('[PrinChat] Checking for chat photo...');
-          console.log('[PrinChat] Contact object:', contact);
-          console.log('[PrinChat] ActiveChat object:', activeChat);
+          console.log('[PrinChat Page] 📸 Attempting to get chat photo...');
 
           // Try multiple sources for profile picture
           if (contact?.profilePicThumb) {
-            console.log('[PrinChat] Contact profilePicThumb:', contact.profilePicThumb);
             chatPhoto = contact.profilePicThumb.eurl || contact.profilePicThumb.imgFull || contact.profilePicThumb.img;
+            if (chatPhoto) console.log('[PrinChat Page] ✅ Got photo from contact.profilePicThumb');
           }
 
           if (!chatPhoto && activeChat?.profilePicThumb) {
-            console.log('[PrinChat] ActiveChat profilePicThumb:', activeChat.profilePicThumb);
             chatPhoto = activeChat.profilePicThumb.eurl || activeChat.profilePicThumb.imgFull || activeChat.profilePicThumb.img;
+            if (chatPhoto) console.log('[PrinChat Page] ✅ Got photo from activeChat.profilePicThumb');
           }
 
           // Try contact.img field directly
           if (!chatPhoto && contact?.img) {
-            console.log('[PrinChat] Contact img:', contact.img);
             chatPhoto = contact.img;
+            if (chatPhoto) console.log('[PrinChat Page] ✅ Got photo from contact.img');
           }
 
           // Try getting from Store.ProfilePicThumb
           if (!chatPhoto && (window as any).Store?.ProfilePicThumb) {
-            console.log('[PrinChat] Trying Store.ProfilePicThumb...');
             const profilePic = await (window as any).Store.ProfilePicThumb.find(activeChat.id);
             if (profilePic) {
-              console.log('[PrinChat] ProfilePicThumb from Store:', profilePic);
               chatPhoto = profilePic.eurl || profilePic.imgFull || profilePic.img;
+              if (chatPhoto) console.log('[PrinChat Page] ✅ Got photo from Store.ProfilePicThumb');
             }
           }
 
-          console.log('[PrinChat] Final chatPhoto:', chatPhoto);
+          if (!chatPhoto) {
+            console.log('[PrinChat Page] ⚠️ No chat photo found');
+          }
         } catch (e: any) {
           const errorMessage = e?.message || String(e);
-          console.error('[PrinChat] Error getting chat photo:', errorMessage, e);
+          console.error('[PrinChat Page] ❌ Error getting chat photo:', errorMessage);
         }
 
+        console.log('[PrinChat Page] 📤 Sending success result back to injector');
         document.dispatchEvent(new CustomEvent('PrinChatActiveChatResult', {
           detail: { success: true, chatName, chatId, chatPhoto, requestId }
         }));
       } catch (error: any) {
+        console.error('[PrinChat Page] ❌ Error in PrinChatGetActiveChat handler:', error);
         document.dispatchEvent(new CustomEvent('PrinChatActiveChatResult', {
           detail: { success: false, error: error.message, requestId: event.detail?.requestId }
         }));

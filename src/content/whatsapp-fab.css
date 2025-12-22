@@ -10,13 +10,19 @@
   background: #1A1A1A;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15),
     0 2px 6px rgba(0, 0, 0, 0.1);
-  display: flex;
+  display: none;
+  /* Hidden by default */
   align-items: center;
   justify-content: center;
   cursor: move;
   user-select: none;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   z-index: 999999;
+}
+
+/* Show FAB when visible class is present */
+.princhat-fab-button.visible {
+  display: flex !important;
 }
 
 .princhat-fab-button:hover {

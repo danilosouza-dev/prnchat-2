@@ -294,12 +294,30 @@ body[data-princhat-chat-active="true"] .princhat-shortcut-bar {
   cursor: pointer;
   transition: all 0.3s ease;
   z-index: 1001;
-  display: flex;
+  display: none;
+  /* Hidden by default to prevent flash */
   align-items: center;
   gap: 8px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.princhat-fab.visible {
+  display: flex !important;
+}
+
+.princhat-fab-button {
+  display: none;
+  /* Hidden by default */
+  position: fixed;
+  z-index: 999999;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.princhat-fab-button.visible {
+  display: flex !important;
 }
 
 .princhat-fab:hover {
