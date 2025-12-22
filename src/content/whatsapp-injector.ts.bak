@@ -198,31 +198,23 @@
           } else {
             switch (message.type) {
               case 'text':
-                // Apply script delay BEFORE sending (allows pause to prevent sending)
-                if (scriptDelay > 0) {
-                  await this.delay(scriptDelay, execution);
-                }
-                // Send text message with NO delay (delay already applied)
+                // Use script delay (delayAfter) with message animation settings
                 result = await this.injector.sendTextMessage(
                   message.content,
                   execution.targetChatId,
                   message.showTyping,
-                  0  // Delay already applied above
+                  scriptDelay  // Use script delay, not message.sendDelay
                 );
                 break;
               case 'audio':
                 if (message.audioData) {
-                  // Apply script delay BEFORE sending (allows pause to prevent sending)
-                  if (scriptDelay > 0) {
-                    await this.delay(scriptDelay, execution);
-                  }
-                  // Send audio message with NO delay (delay already applied)
+                  // Use script delay (delayAfter) with message animation settings
                   result = await this.injector.sendAudio({
                     audioData: message.audioData,
                     duration: message.duration,
                     chatId: execution.targetChatId,
                     showRecording: message.showRecording,
-                    sendDelay: 0  // Delay already applied above
+                    sendDelay: scriptDelay  // Use script delay, not message.sendDelay
                   });
                 } else {
                   result = { success: false, error: 'Audio data missing' };
@@ -399,30 +391,11 @@
     }
 
     private async delay(ms: number, execution: any): Promise<void> {
-      // Break delay into 100ms chunks for pause/cancel responsiveness (like executeScriptWithSteps)
-      const chunks = Math.ceil(ms / 100);
-      for (let j = 0; j < chunks; j++) {
-        // Check if cancelled
-        if (execution.isCancelled) {
-          console.log('[PrinChat] ScriptExecutor delay cancelled');
-          break;
-        }
-
-        // Wait if paused
-        while (execution.isPaused && !execution.isCancelled) {
-          console.log('[PrinChat] ScriptExecutor paused during delay, waiting...');
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
-
-        // Check again after pause
-        if (execution.isCancelled) {
-          console.log('[PrinChat] ScriptExecutor delay cancelled after pause');
-          break;
-        }
-
-        // Sleep for chunk
-        await new Promise(resolve => setTimeout(resolve, Math.min(100, ms - j * 100)));
-      }
+      return new Promise((resolve) => {
+        execution.delayTimeout = setTimeout(() => {
+          resolve();
+        }, ms);
+      });
     }
 
     /**
@@ -1043,7 +1016,6 @@
           // 3. From trigger: { scriptId, chatId } - uses specific chat
           // Check for 'steps' FIRST because UI overlay sends both scriptId (temporary) and steps
           if (action.payload.steps) {
-            console.log('[PrinChat] ✅ Using executeScriptWithSteps (NEW - delay BEFORE send)');
             // Execute in background without waiting (to avoid message channel timeout)
             this.executeScriptWithSteps(action.payload).catch((error: any) => {
               const errorMessage = error?.message || String(error);
@@ -1052,7 +1024,6 @@
             // Return immediately - UI will track progress via events
             return { success: true, message: 'Script execution started' };
           } else if (action.payload.scriptId) {
-            console.log('[PrinChat] ⚠️ Using ScriptExecutor.executeScript (OLD - delay AFTER send)');
             // Pass chatId if provided (from trigger), otherwise undefined (uses active chat)
             // Execute in background without waiting (to avoid message channel timeout)
             this.scriptExecutor.executeScript(
@@ -1635,6 +1606,31 @@
             }));
           }
 
+          // Delay before next message (if not last step)
+          if (i < steps.length - 1 && delayAfter > 0) {
+            console.log('[PrinChat] Waiting', delayAfter, 'ms before next message');
+
+            // Break delay into smaller chunks to allow pause/cancellation during delay
+            const chunks = Math.ceil(delayAfter / 100);
+            for (let j = 0; j < chunks; j++) {
+              const delayExecution = this.directExecutions.get(scriptId);
+              if (!delayExecution) break;
+
+              // Check if cancelled
+              if (delayExecution.isCancelled) break;
+
+              // Wait if paused during delay
+              while (delayExecution.isPaused && !delayExecution.isCancelled) {
+                console.log('[PrinChat] Script paused during delay, waiting...', scriptId);
+                await new Promise(resolve => setTimeout(resolve, 100));
+              }
+
+              // Check again after pause
+              if (delayExecution.isCancelled) break;
+
+              await new Promise(resolve => setTimeout(resolve, Math.min(100, delayAfter - j * 100)));
+            }
+          }
         }
 
         // Get final execution state
