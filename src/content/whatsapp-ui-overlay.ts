@@ -2092,6 +2092,137 @@ class WhatsAppUIOverlay {
     }
   }
 
+  /**
+   * Toggle notifications dropdown (FAKE notifications for preview)
+   */
+  private toggleNotificationsDropdown(button: HTMLElement) {
+    const existingDropdown = document.querySelector('.princhat-notifications-dropdown');
+
+    if (existingDropdown) {
+      // Close dropdown
+      existingDropdown.remove();
+      button.classList.remove('active');
+      return;
+    }
+
+    // Create dropdown
+    const dropdown = document.createElement('div');
+    dropdown.className = 'princhat-notifications-dropdown';
+
+    // Fake notifications for preview
+    const fakeNotifications = [
+      {
+        id: '1',
+        type: 'promo',
+        icon: '🎉',
+        title: 'Promoção Especial!',
+        message: 'Ganhe 50% de desconto nos próximos 3 meses. Aproveite!',
+        timestamp: Date.now() - 3600000 // 1h atrás
+      },
+      {
+        id: '2',
+        type: 'update',
+        icon: '🔔',
+        title: 'Nova Atualização Disponível',
+        message: 'Versão 2.1.0 com melhorias de performance e novos recursos.',
+        timestamp: Date.now() - 86400000 // 1 dia atrás
+      },
+      {
+        id: '3',
+        type: 'alert',
+        icon: '⚠️',
+        title: 'Manutenção Programada',
+        message: 'Sistema estará em manutenção dia 25/11 das 2h às 4h.',
+        timestamp: Date.now() - 172800000 // 2 dias atrás
+      }
+    ];
+
+    // Format relative time
+    const formatRelativeTime = (timestamp: number) => {
+      const now = Date.now();
+      const diff = now - timestamp;
+      const minutes = Math.floor(diff / 60000);
+      const hours = Math.floor(diff / 3600000);
+      const days = Math.floor(diff / 86400000);
+
+      if (minutes < 1) return 'agora';
+      if (minutes < 60) return `${minutes}m atrás`;
+      if (hours < 24) return `${hours}h atrás`;
+      return `${days}d atrás`;
+    };
+
+    // Build dropdown content
+    dropdown.innerHTML = `
+      <div class="princhat-notifications-header">
+        <span>Notificações</span>
+        <button class="princhat-notifications-clear-all">Limpar tudo</button>
+      </div>
+      <div class="princhat-notifications-list">
+        ${fakeNotifications.map(notif => `
+          <div class="princhat-notification-item ${notif.type}">
+            <div class="princhat-notification-icon">${notif.icon}</div>
+            <div class="princhat-notification-content">
+              <div class="princhat-notification-title">${notif.title}</div>
+              <div class="princhat-notification-message">${notif.message}</div>
+              <div class="princhat-notification-time">${formatRelativeTime(notif.timestamp)}</div>
+            </div>
+            <button class="princhat-notification-close" data-id="${notif.id}">×</button>
+          </div>
+        `).join('')}
+      </div>
+    `;
+
+    // Position dropdown below button
+    const rect = button.getBoundingClientRect();
+    dropdown.style.position = 'fixed';
+    dropdown.style.top = `${rect.bottom + 8}px`;
+    dropdown.style.right = `${window.innerWidth - rect.right}px`;
+
+    document.body.appendChild(dropdown);
+    button.classList.add('active');
+
+    // Add event listeners
+    const clearAllBtn = dropdown.querySelector('.princhat-notifications-clear-all');
+    clearAllBtn?.addEventListener('click', () => {
+      const list = dropdown.querySelector('.princhat-notifications-list');
+      if (list) {
+        list.innerHTML = '<div class="princhat-notifications-empty">Nenhuma notificação no momento</div>';
+      }
+    });
+
+    // Close individual notification
+    dropdown.querySelectorAll('.princhat-notification-close').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const item = (e.target as HTMLElement).closest('.princhat-notification-item');
+        if (item) {
+          item.remove();
+          // Check if list is empty
+          const remainingItems = dropdown.querySelectorAll('.princhat-notification-item');
+          if (remainingItems.length === 0) {
+            const list = dropdown.querySelector('.princhat-notifications-list');
+            if (list) {
+              list.innerHTML = '<div class="princhat-notifications-empty">Nenhuma notificação no momento</div>';
+            }
+          }
+        }
+      });
+    });
+
+    // Close dropdown when clicking outside
+    const closeDropdown = (e: MouseEvent) => {
+      if (!dropdown.contains(e.target as Node) && !button.contains(e.target as Node)) {
+        dropdown.remove();
+        button.classList.remove('active');
+        document.removeEventListener('click', closeDropdown);
+      }
+    };
+
+    // Add listener after a short delay to prevent immediate closure
+    setTimeout(() => {
+      document.addEventListener('click', closeDropdown);
+    }, 100);
+  }
+
   private listenForPopupMessages() {
     window.addEventListener('message', (event) => {
       if (!event.data) return;
@@ -2286,6 +2417,14 @@ class WhatsAppUIOverlay {
       button.title = icon.tooltip;
       button.dataset.action = icon.name;
 
+      // Add notification badge for notifications button (FAKE for preview)
+      if (icon.name === 'notifications') {
+        const badge = document.createElement('span');
+        badge.className = 'princhat-notification-badge';
+        badge.textContent = '3'; // Fake count
+        button.appendChild(badge);
+      }
+
       // Add click handler
       button.addEventListener('click', () => {
         console.log(`[PrinChat UI] Header icon clicked: ${icon.name}`);
@@ -2296,8 +2435,8 @@ class WhatsAppUIOverlay {
           this.toggleHeaderPopup();
           // chrome.runtime.sendMessage({ action: 'OPEN_OPTIONS_PAGE', tab: 'messages' });
         } else if (icon.name === 'notifications') {
-          console.log(`[PrinChat UI] Notifications clicked - to be implemented`);
-          // TODO: Show notifications popup
+          console.log(`[PrinChat UI] Notifications clicked`);
+          this.toggleNotificationsDropdown(button);
         } else {
           console.log(`[PrinChat UI] Action not implemented yet: ${icon.name}`);
         }
