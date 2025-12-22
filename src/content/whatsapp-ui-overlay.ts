@@ -69,6 +69,7 @@ class WhatsAppUIOverlay {
   // private fab: HTMLElement | null = null; // Not used in new design
   private statusPopup: HTMLElement | null = null; // Script execution popup
   private messageStatusPopup: HTMLElement | null = null; // Message execution popup (separate!)
+  private executionsPopup: HTMLElement | null = null; // Unified executions popup
   private tooltip: HTMLElement | null = null;
   private scripts: Script[] = [];
   private messages: Message[] = [];
@@ -996,7 +997,9 @@ class WhatsAppUIOverlay {
 
   /**
    * Create dedicated popup for message execution (SEPARATE from scripts!)
+   * DISABLED: Now showing in header executions popup instead
    */
+  // @ts-expect-error - Keeping for potential future use
   private createMessageStatusPopup() {
     // Remove existing popup
     if (this.messageStatusPopup) this.messageStatusPopup.remove();
@@ -1047,31 +1050,89 @@ class WhatsAppUIOverlay {
    * Update message popup content
    */
   private updateMessageStatusPopup() {
-    if (!this.messageStatusPopup) return;
+    // Update both floating popup AND executions popup (either/both may be open)
 
-    // Update running messages section
-    const runningSection = this.messageStatusPopup.querySelector('[data-section="running-messages"]');
+    // SMART UPDATE: Only add/remove cards when list changes, preserve existing cards for timers
+    const runningSection = this.messageStatusPopup?.querySelector('[data-section="running-messages"]');
     if (runningSection) {
-      runningSection.innerHTML = '';
-      const runningArray = Array.from(this.runningMessages.values()).reverse();
-
-      runningArray.forEach((msgExec) => {
-        const card = this.createMessageCard(msgExec, false);
-        runningSection.appendChild(card);
-      });
+      this.updateMessageSection(runningSection, Array.from(this.runningMessages.values()).reverse(), false);
     }
 
-    // Update completed messages section
-    const completedSection = this.messageStatusPopup.querySelector('[data-section="completed-messages"]');
+    const completedSection = this.messageStatusPopup?.querySelector('[data-section="completed-messages"]');
     if (completedSection) {
-      completedSection.innerHTML = '';
-      const completedReversed = [...this.completedMessages].reverse();
-
-      completedReversed.forEach((msgExec) => {
-        const card = this.createMessageCard(msgExec, true);
-        completedSection.appendChild(card);
-      });
+      this.updateMessageSection(completedSection, [...this.completedMessages].reverse(), true);
     }
+
+    // Also update executions popup if open
+    if (this.executionsPopup) {
+      const execRunning = this.executionsPopup.querySelector('[data-section="running-messages"]');
+      if (execRunning) {
+        this.updateMessageSection(execRunning, Array.from(this.runningMessages.values()).reverse(), false);
+      }
+      const execCompleted = this.executionsPopup.querySelector('[data-section="completed-messages"]');
+      if (execCompleted) {
+        this.updateMessageSection(execCompleted, [...this.completedMessages].reverse(), true);
+      }
+    }
+
+    // Update executions badge in header
+    this.updateExecutionsBadge();
+  }
+
+  /**
+   * Smart update for message section - preserves existing cards BUT recreates when state changes
+   */
+  private updateMessageSection(section: Element, messages: MessageExecution[], isCompleted: boolean) {
+    const existingCards = Array.from(section.querySelectorAll('[data-message-id]'));
+    const existingIds = new Set(existingCards.map(card => card.getAttribute('data-message-id')!));
+    const currentIds = new Set(messages.map(m => m.id));
+
+    // Remove cards that no longer exist
+    existingCards.forEach(card => {
+      const id = card.getAttribute('data-message-id')!;
+      if (!currentIds.has(id)) {
+        card.remove();
+      }
+    });
+
+    // Add new cards OR recreate if state changed
+    messages.forEach((message, index) => {
+      const existingCard = section.querySelector(`[data-message-id="${message.id}"]`);
+
+      // Check if card needs recreation due to pause state change
+      let needsRecreation = false;
+      if (existingCard && !isCompleted) {
+        const execution = this.messageExecutions.get(message.id);
+        if (execution) {
+          // Check if pause state changed
+          const currentClass = existingCard.querySelector('.princhat-script-btn-icon')?.classList.contains('paused') ? true : false;
+          const newPauseState = execution.isPaused;
+          if (currentClass !== newPauseState) {
+            needsRecreation = true;
+            console.log(`[PrinChat UI] 🔄 Message ${message.id} state changed, recreating card`);
+          }
+        }
+      }
+
+      if (!existingIds.has(message.id) || needsRecreation) {
+        // Remove old card if recreating
+        if (needsRecreation && existingCard) {
+          existingCard.remove();
+        }
+
+        const card = this.createMessageCard(message, isCompleted);
+        if (index === 0) {
+          section.prepend(card);
+        } else {
+          const prevCard = section.querySelector(`[data-message-id="${messages[index - 1].id}"]`);
+          if (prevCard && prevCard.nextSibling) {
+            section.insertBefore(card, prevCard.nextSibling);
+          } else {
+            section.appendChild(card);
+          }
+        }
+      }
+    });
   }
 
   /**
@@ -1183,9 +1244,34 @@ class WhatsAppUIOverlay {
       console.log('[PrinChat UI] Message paused:', messageId);
     }
 
+    // Update pause/play icon directly in ALL popups without recreating card
+    this.updateMessagePausePlayIcon(messageId, execution.isPaused);
+
     // Update UI
     if (this.showMessageExecutionPopup) {
       this.updateMessageStatusPopup();
+    }
+  }
+
+  /**
+   * Update pause/play icon in all popups for a message
+   */
+  private updateMessagePausePlayIcon(id: string, isPaused: boolean) {
+    console.log(`[PrinChat UI] 🔄 updateMessagePausePlayIcon called: ${id}, isPaused=${isPaused}`);
+    const pauseIcon = `<path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>`;
+    const playIcon = `<path d="M8 5v14l11-7z"/>`;
+    const icon = isPaused ? playIcon : pauseIcon;
+
+    // Update in floating popup
+    const card = this.messageStatusPopup?.querySelector(`[data-message-id="${id}"]`);
+    const btn = card?.querySelector('[data-action="pause-play"] svg path');
+    if (btn) btn.setAttribute('d', icon);
+
+    // Update in executions popup
+    if (this.executionsPopup) {
+      const execCard = this.executionsPopup.querySelector(`[data-message-id="${id}"]`);
+      const execBtn = execCard?.querySelector('[data-action="pause-play"] svg path');
+      if (execBtn) execBtn.setAttribute('d', icon);
     }
   }
 
@@ -1623,6 +1709,7 @@ class WhatsAppUIOverlay {
     return undefined;
   }
 
+  // @ts-expect-error - Keeping for potential future use
   private createStatusPopup() {
     // Remove existing popup
     if (this.statusPopup) this.statusPopup.remove();
@@ -1688,31 +1775,87 @@ class WhatsAppUIOverlay {
   // }
 
   private updateStatusPopup() {
-    if (!this.statusPopup) return;
+    // Update both floating popup AND executions popup (either/both may be open)
 
-    // Update running scripts section
-    const runningSection = this.statusPopup.querySelector('[data-section="running"]');
+    // SMART UPDATE: Only add/remove cards when list changes, preserve existing cards for timers
+    const runningSection = this.statusPopup?.querySelector('[data-section="running"]');
     if (runningSection) {
-      runningSection.innerHTML = '';
-      // Convert Map to array and REVERSE to show newest first (at top)
-      const runningArray = Array.from(this.runningScripts.values()).reverse();
-      runningArray.forEach((scriptExec) => {
-        const card = this.createScriptCard(scriptExec, false);
-        runningSection.appendChild(card);
-      });
+      this.updateScriptSection(runningSection, Array.from(this.runningScripts.values()).reverse(), false);
     }
 
-    // Update completed scripts section
-    const completedSection = this.statusPopup.querySelector('[data-section="completed"]');
+    const completedSection = this.statusPopup?.querySelector('[data-section="completed"]');
     if (completedSection) {
-      completedSection.innerHTML = '';
-      // Show newest completed first (at top)
-      const completedReversed = [...this.completedScripts].reverse();
-      completedReversed.forEach((scriptExec) => {
-        const card = this.createScriptCard(scriptExec, true);
-        completedSection.appendChild(card);
-      });
+      this.updateScriptSection(completedSection, [...this.completedScripts].reverse(), true);
     }
+
+    // Also update executions popup if open
+    if (this.executionsPopup) {
+      const execRunning = this.executionsPopup.querySelector('[data-section="running"]');
+      if (execRunning) {
+        this.updateScriptSection(execRunning, Array.from(this.runningScripts.values()).reverse(), false);
+      }
+      const execCompleted = this.executionsPopup.querySelector('[data-section="completed"]');
+      if (execCompleted) {
+        this.updateScriptSection(execCompleted, [...this.completedScripts].reverse(), true);
+      }
+    }
+
+    // Update executions badge in header
+    this.updateExecutionsBadge();
+  }
+
+  /**
+   * Smart update for script section - preserves existing cards BUT recreates when state changes
+   */
+  private updateScriptSection(section: Element, scripts: ScriptExecution[], isCompleted: boolean) {
+    const existingCards = Array.from(section.querySelectorAll('[data-script-id]'));
+    const existingIds = new Set(existingCards.map(card => card.getAttribute('data-script-id')!));
+    const currentIds = new Set(scripts.map(s => s.id));
+
+    // Remove cards that no longer exist
+    existingCards.forEach(card => {
+      const id = card.getAttribute('data-script-id')!;
+      if (!currentIds.has(id)) {
+        card.remove();
+      }
+    });
+
+    // Add new cards OR recreate if state changed
+    scripts.forEach((script, index) => {
+      const existingCard = section.querySelector(`[data-script-id="${script.id}"]`);
+
+      // Check if card needs recreation due to state change
+      let needsRecreation = false;
+      if (existingCard && !isCompleted) {
+        // Check if status changed (running <-> paused)
+        const btn = existingCard.querySelector('.princhat-script-btn-icon');
+        const currentClass = btn?.classList.contains('paused') ? 'paused' : 'running';
+        const newClass = script.status === 'paused' ? 'paused' : 'running';
+        console.log(`[PrinChat DEBUG] Script ${script.id}: currentClass=${currentClass}, newClass=${newClass}, needsRecreation=${currentClass !== newClass}`);
+        if (currentClass !== newClass) {
+          needsRecreation = true;
+        }
+      }
+
+      if (!existingIds.has(script.id) || needsRecreation) {
+        // Remove old card if recreating
+        if (needsRecreation && existingCard) {
+          existingCard.remove();
+        }
+
+        const card = this.createScriptCard(script, isCompleted);
+        if (index === 0) {
+          section.prepend(card);
+        } else {
+          const prevCard = section.querySelector(`[data-script-id="${scripts[index - 1].id}"]`);
+          if (prevCard && prevCard.nextSibling) {
+            section.insertBefore(card, prevCard.nextSibling);
+          } else {
+            section.appendChild(card);
+          }
+        }
+      }
+    });
   }
 
   private createScriptCard(scriptExec: ScriptExecution, isCompleted: boolean): HTMLElement {
@@ -1790,6 +1933,8 @@ class WhatsAppUIOverlay {
     const scriptExec = this.runningScripts.get(scriptId);
     if (!scriptExec) return;
 
+
+
     if (scriptExec.status === 'running') {
       scriptExec.status = 'paused';
       this.stopScriptTimer(scriptId);
@@ -1810,7 +1955,31 @@ class WhatsAppUIOverlay {
       }));
     }
 
+    // Update pause/play icon directly in ALL popups without recreating card
+    this.updatePausePlayIcon(scriptId, scriptExec.status === 'paused');
+
     this.updateStatusPopup();
+  }
+
+  /**
+   * Update pause/play icon in all popups for a script/message
+   */
+  private updatePausePlayIcon(id: string, isPaused: boolean) {
+    const pauseIconPath = 'M6 4h4v16H6V4zm8 0h4v16h-4V4z';
+    const playIconPath = 'M8 5v14l11-7z';
+    const iconPath = isPaused ? playIconPath : pauseIconPath;
+
+    // Update in floating popup
+    const card = this.statusPopup?.querySelector(`[data-script-id="${id}"]`);
+    const btn = card?.querySelector('[data-action="pause-play"] svg path');
+    if (btn) btn.setAttribute('d', iconPath);
+
+    // Update in executions popup
+    if (this.executionsPopup) {
+      const execCard = this.executionsPopup.querySelector(`[data-script-id="${id}"]`);
+      const execBtn = execCard?.querySelector('[data-action="pause-play"] svg path');
+      if (execBtn) execBtn.setAttribute('d', iconPath);
+    }
   }
 
   private cancelScript(scriptId: string) {
@@ -1904,11 +2073,21 @@ class WhatsAppUIOverlay {
       const scriptExec = this.runningScripts.get(scriptId);
       if (scriptExec && scriptExec.status === 'running') {
         scriptExec.elapsedSeconds++;
-        // Update only the timer element to avoid re-rendering everything
+
+        // Update timer in floating popup (if exists)
         const card = this.statusPopup?.querySelector(`[data-script-id="${scriptId}"]`);
         const timerEl = card?.querySelector('.princhat-script-card-timer');
         if (timerEl) {
           timerEl.textContent = `${scriptExec.elapsedSeconds}s`;
+        }
+
+        // ALSO update timer in executions popup (if exists and open)
+        if (this.executionsPopup) {
+          const execCard = this.executionsPopup.querySelector(`[data-script-id="${scriptId}"]`);
+          const execTimerEl = execCard?.querySelector('.princhat-script-card-timer');
+          if (execTimerEl) {
+            execTimerEl.textContent = `${scriptExec.elapsedSeconds}s`;
+          }
         }
       }
     }, 1000);
@@ -2223,6 +2402,323 @@ class WhatsAppUIOverlay {
     }, 100);
   }
 
+  /**
+   * Toggle executions popup (contains script + message execution popups)
+   */
+  private toggleExecutionsPopup(button: HTMLElement) {
+    const existingPopup = document.querySelector('.princhat-executions-popup');
+
+    if (existingPopup) {
+      // Close popup
+      existingPopup.remove();
+      button.classList.remove('active');
+      return;
+    }
+
+    // Create popup container
+    const popup = document.createElement('div');
+    popup.className = 'princhat-executions-popup';
+
+    // Header
+    const header = document.createElement('div');
+    header.className = 'princhat-executions-header';
+    header.innerHTML = '<span>Execuções em Andamento</span>';
+    popup.appendChild(header);
+
+    // Content container for both popups
+    const content = document.createElement('div');
+    content.className = 'princhat-executions-content';
+    popup.appendChild(content);
+
+    // Check if there are any executions
+    const hasScripts = this.runningScripts.size > 0;
+    const hasMessages = this.runningMessages.size > 0;
+    const hasCompleted = this.completedScripts.length > 0 || this.completedMessages.length > 0;
+
+    if (!hasScripts && !hasMessages && !hasCompleted) {
+      // Empty state
+      const emptyState = document.createElement('div');
+      emptyState.className = 'princhat-executions-empty';
+      emptyState.textContent = 'Nenhuma execução em andamento';
+      content.appendChild(emptyState);
+    } else {
+      // Render script popup inside if there are scripts
+      if (hasScripts || this.completedScripts.length > 0) {
+        const scriptsContainer = this.renderScriptExecutions();
+        if (scriptsContainer) {
+          content.appendChild(scriptsContainer);
+        }
+      }
+
+      // Render message popup inside if there are messages
+      if (hasMessages || this.completedMessages.length > 0) {
+        const messagesContainer = this.renderMessageExecutions();
+        if (messagesContainer) {
+          content.appendChild(messagesContainer);
+        }
+      }
+    }
+
+    // Position popup below button
+    const rect = button.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.top = `${rect.bottom + 8}px`;
+    popup.style.right = `${window.innerWidth - rect.right}px`;
+
+    document.body.appendChild(popup);
+    button.classList.add('active');
+
+    // Store reference for updates
+    this.executionsPopup = popup;
+
+    // Close popup when clicking outside
+    const closePopup = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+
+      // Don't close if clicking on action buttons or their children
+      const isActionButton = target.closest('[data-action]');
+      if (isActionButton) {
+        return; // Keep popup open
+      }
+
+      if (!popup.contains(e.target as Node) && !button.contains(e.target as Node)) {
+        popup.remove();
+        button.classList.remove('active');
+        this.executionsPopup = null;
+        document.removeEventListener('click', closePopup);
+      }
+    };
+
+    // Add listener after a short delay to prevent immediate closure
+    setTimeout(() => {
+      document.addEventListener('click', closePopup);
+    }, 100);
+  }
+
+  /**
+   * Render script executions for the executions popup
+   */
+  private renderScriptExecutions(): HTMLElement | null {
+    // Create container with ORIGINAL popup structure
+    const container = document.createElement('div');
+    container.className = 'princhat-script-popup-inline'; // Special class for inline rendering
+
+    // Build HTML matching original popup structure
+    container.innerHTML = `
+      <!-- Seção EM ENVIO -->
+      <div class="princhat-script-section">
+        <div class="princhat-script-section-header">
+          <span class="princhat-script-section-title">EM ENVIO (SCRIPTS/GATILHOS)</span>
+          <button class="princhat-script-btn-discrete" data-action="cancel-all">Cancelar Todos</button>
+        </div>
+        <div class="princhat-script-section-body" data-section="running"></div>
+      </div>
+
+      <!-- Seção ENVIO CONCLUÍDO -->
+      <div class="princhat-script-section">
+        <div class="princhat-script-section-header">
+          <span class="princhat-script-section-title">ENVIO CONCLUÍDO</span>
+          <button class="princhat-script-btn-discrete" data-action="clear-all">Limpar Lista</button>
+        </div>
+        <div class="princhat-script-section-body" data-section="completed"></div>
+      </div>
+    `;
+
+    // Populate running scripts using ORIGINAL method
+    const runningSection = container.querySelector('[data-section="running"]');
+    if (runningSection) {
+      const runningArray = Array.from(this.runningScripts.values()).reverse();
+      runningArray.forEach((scriptExec) => {
+        const card = this.createScriptCard(scriptExec, false);
+        runningSection.appendChild(card);
+      });
+    }
+
+    // Populate completed scripts using ORIGINAL method  
+    const completedSection = container.querySelector('[data-section="completed"]');
+    if (completedSection) {
+      const completedReversed = [...this.completedScripts].reverse();
+      completedReversed.forEach((scriptExec) => {
+        const card = this.createScriptCard(scriptExec, true);
+        completedSection.appendChild(card);
+      });
+    }
+
+    // Add event listeners for buttons
+    const cancelAllBtn = container.querySelector('[data-action="cancel-all"]');
+    cancelAllBtn?.addEventListener('click', () => this.cancelAllScripts());
+
+    const clearAllBtn = container.querySelector('[data-action="clear-all"]');
+    clearAllBtn?.addEventListener('click', () => this.clearAllCompleted());
+
+    return container;
+  }
+
+  /**
+   * Render message executions for the executions popup
+   */
+  private renderMessageExecutions(): HTMLElement | null {
+    // Create container with ORIGINAL popup structure
+    const container = document.createElement('div');
+    container.className = 'princhat-message-popup-inline'; // Special class for inline rendering
+
+    // Build HTML matching original popup structure
+    container.innerHTML = `
+      <!-- Seção EM ENVIO -->
+      <div class="princhat-message-section">
+        <div class="princhat-message-section-header">
+          <span class="princhat-message-section-title">EM ENVIO (MENSAGENS)</span>
+          <button class="princhat-message-btn-discrete" data-action="cancel-all-messages">Cancelar Todos</button>
+        </div>
+        <div class="princhat-message-section-body" data-section="running-messages"></div>
+      </div>
+
+      <!-- Seção ENVIO CONCLUÍDO -->
+      <div class="princhat-message-section">
+        <div class="princhat-message-section-header">
+          <span class="princhat-message-section-title">ENVIO CONCLUÍDO</span>
+          <button class="princhat-message-btn-discrete" data-action="clear-all-messages">Limpar Lista</button>
+        </div>
+        <div class="princhat-message-section-body" data-section="completed-messages"></div>
+      </div>
+    `;
+
+    // Populate running messages using ORIGINAL method
+    const runningSection = container.querySelector('[data-section="running-messages"]');
+    if (runningSection) {
+      const runningArray = Array.from(this.runningMessages.values()).reverse();
+      runningArray.forEach((msgExec) => {
+        const card = this.createMessageCard(msgExec, false);
+        runningSection.appendChild(card);
+      });
+    }
+
+    // Populate completed messages using ORIGINAL method
+    const completedSection = container.querySelector('[data-section="completed-messages"]');
+    if (completedSection) {
+      const completedReversed = [...this.completedMessages].reverse();
+      completedReversed.forEach((msgExec) => {
+        const card = this.createMessageCard(msgExec, true);
+        completedSection.appendChild(card);
+      });
+    }
+
+    // Add event listeners for buttons
+    const cancelAllBtn = container.querySelector('[data-action="cancel-all-messages"]');
+    cancelAllBtn?.addEventListener('click', () => this.cancelAllMessages());
+
+    const clearAllBtn = container.querySelector('[data-action="clear-all-messages"]');
+    clearAllBtn?.addEventListener('click', () => this.clearAllCompletedMessages());
+
+    return container;
+  }
+
+  /**
+   * Create execution card for a script
+   */
+  // @ts-expect-error - Keeping for potential future use
+  private createScriptExecutionCard(scriptExec: any): HTMLElement {
+    const card = document.createElement('div');
+    card.className = 'princhat-execution-card';
+    card.innerHTML = `
+      <div class="princhat-execution-card-name">${scriptExec.scriptName || scriptExec.name || 'Script'}</div>
+      <div class="princhat-execution-card-status">${scriptExec.status || 'Executando...'}</div>
+    `;
+    return card;
+  }
+
+  /**
+   * Create execution card for a message
+   */
+  // @ts-expect-error - Keeping for potential future use
+  private createMessageExecutionCard(msgExec: any): HTMLElement {
+    const card = document.createElement('div');
+    card.className = 'princhat-execution-card';
+
+    // Safely get message preview
+    let messagePreview = 'Mensagem';
+    if (msgExec.message?.text) {
+      messagePreview = msgExec.message.text.substring(0, 30) + (msgExec.message.text.length > 30 ? '...' : '');
+    } else if (msgExec.message?.caption) {
+      messagePreview = msgExec.message.caption.substring(0, 30) + '...';
+    } else if (msgExec.messageText) {
+      messagePreview = msgExec.messageText.substring(0, 30) + (msgExec.messageText.length > 30 ? '...' : '');
+    }
+
+    card.innerHTML = `
+      <div class="princhat-execution-card-name">${messagePreview}</div>
+      <div class="princhat-execution-card-status">${msgExec.status || 'Enviando...'}</div>
+    `;
+    return card;
+  }
+
+  /**
+   * Update executions badge in header
+   */
+  private updateExecutionsBadge() {
+    const button = document.querySelector('.princhat-header-icon-btn[data-executions-badge="true"]');
+    if (!button) return;
+
+    const badge = button.querySelector('.princhat-executions-badge');
+    if (!badge) return;
+
+    // Calculate total executions
+    const totalExecutions = this.runningScripts.size + this.runningMessages.size;
+
+    // Update badge
+    badge.textContent = totalExecutions.toString();
+
+    // Show/hide based on count
+    if (totalExecutions > 0) {
+      (badge as HTMLElement).style.display = 'flex';
+    } else {
+      (badge as HTMLElement).style.display = 'none';
+    }
+  }
+
+  /**
+   * Update executions popup content (if open)
+   */
+  // @ts-expect-error - Deprecated, keeping for reference
+  private updateExecutionsPopup() {
+    if (!this.executionsPopup) return;
+
+    // Find content container
+    const content = this.executionsPopup.querySelector('.princhat-executions-content');
+    if (!content) return;
+
+    // Clear current content
+    content.innerHTML = '';
+
+    // Check if there are any executions
+    const hasScripts = this.runningScripts.size > 0 || this.completedScripts.length > 0;
+    const hasMessages = this.runningMessages.size > 0 || this.completedMessages.length > 0;
+
+    if (!hasScripts && !hasMessages) {
+      // Empty state
+      const emptyState = document.createElement('div');
+      emptyState.className = 'princhat-executions-empty';
+      emptyState.textContent = 'Nenhuma execução em andamento';
+      content.appendChild(emptyState);
+    } else {
+      // Render script popup inside if there are scripts
+      if (hasScripts) {
+        const scriptsContainer = this.renderScriptExecutions();
+        if (scriptsContainer) {
+          content.appendChild(scriptsContainer);
+        }
+      }
+
+      // Render message popup inside if there are messages  
+      if (hasMessages) {
+        const messagesContainer = this.renderMessageExecutions();
+        if (messagesContainer) {
+          content.appendChild(messagesContainer);
+        }
+      }
+    }
+  }
+
   private listenForPopupMessages() {
     window.addEventListener('message', (event) => {
       if (!event.data) return;
@@ -2425,6 +2921,17 @@ class WhatsAppUIOverlay {
         button.appendChild(badge);
       }
 
+      // Add executions badge for refresh button (dynamic count)
+      if (icon.name === 'refresh') {
+        const badge = document.createElement('span');
+        badge.className = 'princhat-executions-badge';
+        badge.textContent = '0';
+        badge.style.display = 'none'; // Hidden when 0
+        button.appendChild(badge);
+        // Store reference for updates
+        button.dataset.executionsBadge = 'true';
+      }
+
       // Add click handler
       button.addEventListener('click', () => {
         console.log(`[PrinChat UI] Header icon clicked: ${icon.name}`);
@@ -2434,6 +2941,14 @@ class WhatsAppUIOverlay {
           // Changed: Toggle header popup instead of opening options page
           this.toggleHeaderPopup();
           // chrome.runtime.sendMessage({ action: 'OPEN_OPTIONS_PAGE', tab: 'messages' });
+        } else if (icon.name === 'refresh') {
+          console.log(`[PrinChat UI] Executions clicked`);
+          console.log(`[PrinChat UI] this.toggleExecutionsPopup exists?`, typeof this.toggleExecutionsPopup);
+          try {
+            this.toggleExecutionsPopup(button);
+          } catch (error) {
+            console.error('[PrinChat UI] ❌ Error calling toggleExecutionsPopup:', error);
+          }
         } else if (icon.name === 'notifications') {
           console.log(`[PrinChat UI] Notifications clicked`);
           this.toggleNotificationsDropdown(button);
@@ -2693,17 +3208,21 @@ class WhatsAppUIOverlay {
       this.runningScripts.set(scriptExecution.id, scriptExecution);
       this.startScriptTimer(scriptExecution.id);
 
+      // DISABLED: Floating popup - now shown in header executions popup
       // Only create/show popup if enabled in settings
-      if (this.showScriptExecutionPopup) {
-        // Create popup if not exists
-        if (!this.statusPopup) {
-          this.createStatusPopup();
-        }
+      // if (this.showScriptExecutionPopup) {
+      //   // Create popup if not exists
+      //   if (!this.statusPopup) {
+      //     this.createStatusPopup();
+      //   }
+      //
+      //   this.updateStatusPopup();
+      // } else {
+      //   console.log('[PrinChat UI] Script execution popup is disabled in settings');
+      // }
 
-        this.updateStatusPopup();
-      } else {
-        console.log('[PrinChat UI] Script execution popup is disabled in settings');
-      }
+      // Update badge instead
+      this.updateStatusPopup(); // Still call to update badge
     });
 
     // Listen for script progress
@@ -2778,14 +3297,18 @@ class WhatsAppUIOverlay {
       }
 
       // Only create/show popup if enabled in settings
-      if (this.showMessageExecutionPopup) {
-        if (!this.messageStatusPopup) {
-          this.createMessageStatusPopup();
-        }
-        this.updateMessageStatusPopup();
-      } else {
-        console.log('[PrinChat UI] Message execution popup is disabled in settings');
-      }
+      // DISABLED: Floating popup - now shown in header executions popup
+      // if (this.showMessageExecutionPopup) {
+      //   if (!this.messageStatusPopup) {
+      //     this.createMessageStatusPopup();
+      //   }
+      //   this.updateMessageStatusPopup();
+      // } else {
+      //   console.log('[PrinChat UI] Message execution popup is disabled in settings');
+      // }
+
+      // Update badge instead
+      this.updateExecutionsBadge();
     });
 
     // Listen for message completion
@@ -2856,10 +3379,21 @@ class WhatsAppUIOverlay {
       // Only count if not paused
       if (msgExec && msgExec.status === 'sending' && execution && !execution.isPaused) {
         msgExec.elapsedSeconds++;
+
+        // Update timer in floating popup (if exists)
         const card = this.messageStatusPopup?.querySelector(`[data-message-id="${messageId}"]`);
         const timerEl = card?.querySelector('.princhat-script-card-timer');
         if (timerEl) {
           timerEl.textContent = `${msgExec.elapsedSeconds}s`;
+        }
+
+        // ALSO update timer in executions popup (if exists and open)
+        if (this.executionsPopup) {
+          const execCard = this.executionsPopup.querySelector(`[data-message-id="${messageId}"]`);
+          const execTimerEl = execCard?.querySelector('.princhat-script-card-timer');
+          if (execTimerEl) {
+            execTimerEl.textContent = `${msgExec.elapsedSeconds}s`;
+          }
         }
       }
     }, 1000);
@@ -2945,12 +3479,13 @@ class WhatsAppUIOverlay {
             console.log('[PrinChat UI] Hiding status popup (disabled in settings)');
             this.closeStatusPopup();
           }
+          // DISABLED: Floating popup - now shown in header executions popup
           // If popup was just enabled and there are running scripts, show it
-          else if (this.showScriptExecutionPopup && this.runningScripts.size > 0 && !this.statusPopup) {
-            console.log('[PrinChat UI] Creating status popup (enabled in settings with running scripts)');
-            this.createStatusPopup();
-            this.updateStatusPopup();
-          }
+          // else if (this.showScriptExecutionPopup && this.runningScripts.size > 0 && !this.statusPopup) {
+          //   console.log('[PrinChat UI] Creating status popup (enabled in settings with running scripts)');
+          //   this.createStatusPopup();
+          //   this.updateStatusPopup();
+          // }
         }
 
         if (settings.showMessageExecutionPopup !== undefined) {

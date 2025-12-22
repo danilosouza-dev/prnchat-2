@@ -228,6 +228,180 @@
   font-size: 13px;
 }
 
+/* Executions badge on refresh icon */
+.princhat-executions-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  background: #2196f3;
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 2px #1a1a1a;
+  pointer-events: none;
+}
+
+/* Executions popup */
+.princhat-executions-popup {
+  position: fixed;
+  width: 420px;
+  max-height: 600px;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  z-index: 10001;
+}
+
+.princhat-executions-header {
+  padding: 16px;
+  border-bottom: 1px solid #2a2a2a;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.princhat-executions-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.princhat-executions-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: #6e6e6e;
+  font-size: 13px;
+}
+
+/* Inline popup containers (scripts and messages inside executions popup) */
+.princhat-script-popup-inline,
+.princhat-message-popup-inline {
+  width: 100%;
+  padding: 0;
+  margin: 0;
+}
+
+.princhat-script-popup-inline .princhat-script-section,
+.princhat-message-popup-inline .princhat-message-section {
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.princhat-script-popup-inline .princhat-script-section:last-child,
+.princhat-message-popup-inline .princhat-message-section:last-child {
+  border-bottom: none;
+}
+
+/* Ensure sections have proper spacing */
+.princhat-message-section {
+  margin: 0;
+}
+
+.princhat-message-section-header {
+  padding: 12px 16px;
+  background: #222;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.princhat-message-section-title {
+  font-weight: 600;
+  font-size: 12px;
+  color: #9e9e9e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.princhat-message-btn-discrete {
+  background: transparent;
+  border: none;
+  color: #e91e63;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.princhat-message-btn-discrete:hover {
+  background: rgba(233, 30, 99, 0.1);
+}
+
+.princhat-message-section-body {
+  padding: 0;
+}
+
+
+.princhat-executions-section {
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.princhat-executions-section:last-child {
+  border-bottom: none;
+}
+
+.princhat-executions-section-header {
+  padding: 12px 16px;
+  background: #222;
+  font-weight: 600;
+  font-size: 12px;
+  color: #9e9e9e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.princhat-executions-subsection-header {
+  padding: 8px 16px;
+  font-size: 11px;
+  color: #6e6e6e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.princhat-execution-card {
+  padding: 12px 16px;
+  border-bottom: 1px solid #2a2a2a;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: background 0.2s;
+}
+
+.princhat-execution-card:hover {
+  background: #222;
+}
+
+.princhat-execution-card:last-child {
+  border-bottom: none;
+}
+
+.princhat-execution-card-name {
+  flex: 1;
+  color: #e0e0e0;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-right: 12px;
+}
+
+.princhat-execution-card-status {
+  color: #2196f3;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+
 /* Profile button */
 .princhat-header-profile-btn {
   width: 36px;
