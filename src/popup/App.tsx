@@ -14,7 +14,6 @@ import {
   ChevronDown,
   ChevronUp,
   Pin,
-  PinOff,
   Move
 } from 'lucide-react';
 import { Message, Script, Folder, MessageType, ScriptExecutionState } from '@/types';
@@ -638,7 +637,7 @@ const App: React.FC = () => {
               onClick={togglePin}
               title={isPinned ? "Desafixar popup" : "Fixar popup"}
             >
-              {isPinned ? <PinOff size={18} /> : <Pin size={18} />}
+              <Pin size={18} />
             </button>
           )}
 
