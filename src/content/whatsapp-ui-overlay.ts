@@ -2720,11 +2720,13 @@ class WhatsAppUIOverlay {
     // Update badge
     badge.textContent = totalExecutions.toString();
 
-    // Show/hide based on count
+    // Show/hide based on count and apply animation class
     if (totalExecutions > 0) {
       (badge as HTMLElement).style.display = 'flex';
+      button.classList.add('has-executions');
     } else {
       (badge as HTMLElement).style.display = 'none';
+      button.classList.remove('has-executions');
     }
   }
 
