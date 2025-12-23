@@ -958,31 +958,41 @@
     document.addEventListener('PrinChatOpenChat', async (event: any) => {
       try {
         const { chatId, requestId } = event.detail;
+        console.log('[PrinChat Page] PrinChatOpenChat received:', chatId);
 
         if (!chatId) {
+          console.error('[PrinChat Page] No chatId provided');
           document.dispatchEvent(new CustomEvent('PrinChatOpenChatResult', {
             detail: { success: false, error: 'No chatId provided', requestId }
           }));
           return;
         }
 
-        // Find the chat by ID
-        const chat = await Store.Chat.find(chatId);
-
-        if (!chat) {
-          document.dispatchEvent(new CustomEvent('PrinChatOpenChatResult', {
-            detail: { success: false, error: 'Chat not found', requestId }
-          }));
-          return;
+        // Try to find the chat first
+        let chat;
+        try {
+          chat = await Store.Chat.find(chatId);
+          console.log('[PrinChat Page] Chat found:', chatId);
+        } catch (findError) {
+          console.log('[PrinChat Page] Chat not found, will try to create/open:', findError);
         }
 
-        // Open the chat
-        await Store.Chat.setActiveChat(chat);
-
-        document.dispatchEvent(new CustomEvent('PrinChatOpenChatResult', {
-          detail: { success: true, requestId }
-        }));
+        if (chat) {
+          // Chat exists, just open it
+          console.log('[PrinChat Page] Opening existing chat with setActiveChat');
+          await Store.Chat.setActiveChat(chat);
+          console.log('[PrinChat Page] ✅ Chat opened successfully');
+          document.dispatchEvent(new CustomEvent('PrinChatOpenChatResult', {
+            detail: { success: true, requestId }
+          }));
+        } else {
+          // Chat doesn't exist - use WhatsApp Web URL (best practice)
+          console.log('[PrinChat Page] Chat not found, using WhatsApp Web send URL');
+          const phoneNumber = chatId.replace('@c.us', '');
+          window.location.href = `https://web.whatsapp.com/send?phone=${phoneNumber}`;
+        }
       } catch (error: any) {
+        console.error('[PrinChat Page] Error in PrinChatOpenChat:', error);
         document.dispatchEvent(new CustomEvent('PrinChatOpenChatResult', {
           detail: { success: false, error: error.message, requestId: event.detail?.requestId }
         }));

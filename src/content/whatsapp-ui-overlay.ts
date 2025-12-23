@@ -70,6 +70,7 @@ class WhatsAppUIOverlay {
   private statusPopup: HTMLElement | null = null; // Script execution popup
   private messageStatusPopup: HTMLElement | null = null; // Message execution popup (separate!)
   private executionsPopup: HTMLElement | null = null; // Unified executions popup
+  private directChatPopup: HTMLElement | null = null; // Direct chat popup
   private tooltip: HTMLElement | null = null;
   private scripts: Script[] = [];
   private messages: Message[] = [];
@@ -2403,6 +2404,222 @@ class WhatsAppUIOverlay {
   }
 
   /**
+   * Toggle direct chat popup for starting a conversation with a phone number
+   */
+  private toggleDirectChatPopup(button: HTMLElement) {
+    // Use stored reference instead of querySelector
+    if (this.directChatPopup) {
+      // Close popup
+      this.directChatPopup.remove();
+      button.classList.remove('active');
+      this.directChatPopup = null;
+      return;
+    }
+
+    // Country codes list (Brazil first)
+    const countryCodes = [
+      { name: 'Brasil', code: '+55', flag: '🇧🇷' },
+      { name: 'Estados Unidos', code: '+1', flag: '🇺🇸' },
+      { name: 'Argentina', code: '+54', flag: '🇦🇷' },
+      { name: 'Chile', code: '+56', flag: '🇨🇱' },
+      { name: 'Colômbia', code: '+57', flag: '🇨🇴' },
+      { name: 'México', code: '+52', flag: '🇲🇽' },
+      { name: 'Portugal', code: '+351', flag: '🇵🇹' },
+      { name: 'Espanha', code: '+34', flag: '🇪🇸' },
+      { name: 'Alemanha', code: '+49', flag: '🇩🇪' },
+      { name: 'França', code: '+33', flag: '🇫🇷' },
+      { name: 'Itália', code: '+39', flag: '🇮🇹' },
+      { name: 'Reino Unido', code: '+44', flag: '🇬🇧' },
+      { name: 'Canadá', code: '+1', flag: '🇨🇦' },
+      { name: 'Japão', code: '+81', flag: '🇯🇵' },
+      { name: 'China', code: '+86', flag: '🇨🇳' },
+      { name: 'Índia', code: '+91', flag: '🇮🇳' },
+      { name: 'Austrália', code: '+61', flag: '🇦🇺' }
+    ];
+
+    let selectedCountry = countryCodes[0]; // Default to Brazil
+    let isDropdownOpen = false;
+
+    // Create popup
+    const popup = document.createElement('div');
+    popup.className = 'princhat-direct-chat-popup';
+    this.directChatPopup = popup;
+
+    // Build popup content
+    popup.innerHTML = `
+      <div class="princhat-direct-chat-header">
+        Iniciar conversa
+      </div>
+      <div class="princhat-direct-chat-form">
+        <div class="princhat-direct-chat-field">
+          <label class="princhat-direct-chat-label">Código do país</label>
+          <div class="princhat-country-selector">
+            <button type="button" class="princhat-country-selector-button">
+              <span class="princhat-country-selected">
+                <span class="princhat-country-flag">${selectedCountry.flag}</span>
+                <span class="princhat-country-code">${selectedCountry.code}</span>
+                <span class="princhat-country-name">${selectedCountry.name}</span>
+              </span>
+              <svg class="princhat-country-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </button>
+            <div class="princhat-country-dropdown" style="display: none;">
+              ${countryCodes.map(country => `
+                <div class="princhat-country-option" data-code="${country.code}" data-name="${country.name}" data-flag="${country.flag}">
+                  <span class="princhat-country-flag">${country.flag}</span>
+                  <span class="princhat-country-code">${country.code}</span>
+                  <span class="princhat-country-name">${country.name}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+        <div class="princhat-direct-chat-field">
+          <label class="princhat-direct-chat-label">Número de celular (WhatsApp)</label>
+          <input 
+            type="tel" 
+            class="princhat-phone-input" 
+            placeholder="ex: 21993253978"
+            maxlength="15"
+          />
+        </div>
+        <button type="button" class="princhat-start-chat-button" disabled>
+          Iniciar conversa
+        </button>
+      </div>
+    `;
+
+    // Position popup below button
+    const rect = button.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.top = `${rect.bottom + 8}px`;
+    popup.style.right = `${window.innerWidth - rect.right}px`;
+
+    document.body.appendChild(popup);
+    button.classList.add('active');
+
+    // Get elements
+    const selectorButton = popup.querySelector('.princhat-country-selector-button') as HTMLElement;
+    const dropdown = popup.querySelector('.princhat-country-dropdown') as HTMLElement;
+    const phoneInput = popup.querySelector('.princhat-phone-input') as HTMLInputElement;
+    const startButton = popup.querySelector('.princhat-start-chat-button') as HTMLButtonElement;
+    const arrow = popup.querySelector('.princhat-country-arrow') as HTMLElement;
+
+    // Toggle dropdown
+    const toggleDropdown = (e: Event) => {
+      e.stopPropagation();
+      isDropdownOpen = !isDropdownOpen;
+      dropdown.style.display = isDropdownOpen ? 'block' : 'none';
+      arrow.style.transform = isDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)';
+
+      // Position dropdown when opening (fixed positioning)
+      if (isDropdownOpen) {
+        const selectorRect = selectorButton.getBoundingClientRect();
+        dropdown.style.top = `${selectorRect.bottom + 4}px`;
+        dropdown.style.left = `${selectorRect.left}px`;
+        dropdown.style.width = `${selectorRect.width}px`;
+      }
+    };
+
+    selectorButton.addEventListener('click', toggleDropdown);
+
+    // Select country
+    dropdown.querySelectorAll('.princhat-country-option').forEach(option => {
+      option.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const target = e.currentTarget as HTMLElement;
+        const code = target.dataset.code!;
+        const name = target.dataset.name!;
+        const flag = target.dataset.flag!;
+
+        selectedCountry = { name, code, flag };
+
+        // Update button text
+        const selectedSpan = selectorButton.querySelector('.princhat-country-selected');
+        if (selectedSpan) {
+          selectedSpan.innerHTML = `
+            <span class="princhat-country-flag">${flag}</span>
+            <span class="princhat-country-code">${code}</span>
+            <span class="princhat-country-name">${name}</span>
+          `;
+        }
+
+        // Close dropdown
+        isDropdownOpen = false;
+        dropdown.style.display = 'none';
+        arrow.style.transform = 'rotate(0deg)';
+      });
+    });
+
+    // Validate phone input
+    const validateAndEnableButton = () => {
+      const phone = phoneInput.value.trim();
+      // Remove any non-digit characters for validation
+      const digitsOnly = phone.replace(/\D/g, '');
+
+      // Enable button if we have at least 10 digits
+      if (digitsOnly.length >= 10) {
+        startButton.disabled = false;
+      } else {
+        startButton.disabled = true;
+      }
+    };
+
+    phoneInput.addEventListener('input', (e) => {
+      // Allow only numbers
+      const target = e.target as HTMLInputElement;
+      target.value = target.value.replace(/\D/g, '');
+      validateAndEnableButton();
+    });
+
+    // Start chat
+    startButton.addEventListener('click', async () => {
+      const phone = phoneInput.value.trim().replace(/\D/g, '');
+
+      if (phone.length >= 10) {
+        console.log('[PrinChat UI] Starting chat with:', selectedCountry.code, phone);
+
+        // Remove + from country code and combine with phone number
+        const countryCodeDigits = selectedCountry.code.replace(/\D/g, '');
+        const fullNumber = `${countryCodeDigits}${phone}`;
+
+        // Close popup
+        popup.remove();
+        button.classList.remove('active');
+        this.directChatPopup = null;
+
+        // Use page script to open chat (has access to WPP.js and Store)
+        console.log('[PrinChat UI] Opening chat via page script event');
+        const chatId = `${fullNumber}@c.us`;
+
+        // Dispatch event to page script
+        const eventId = `open-chat-${Date.now()}`;
+        document.dispatchEvent(new CustomEvent('PrinChatOpenChat', {
+          detail: { chatId, requestId: eventId }
+        }));
+
+        console.log('[PrinChat UI] ✅ Open chat event dispatched for:', chatId);
+      }
+    });
+
+    // Close popup when clicking outside
+    const closePopup = (e: MouseEvent) => {
+      if (!popup.contains(e.target as Node) && !button.contains(e.target as Node)) {
+        popup.remove();
+        button.classList.remove('active');
+        this.directChatPopup = null;
+        document.removeEventListener('click', closePopup);
+      }
+    };
+
+    // Add listener after a short delay to prevent immediate closure
+    setTimeout(() => {
+      document.addEventListener('click', closePopup);
+    }, 100);
+  }
+
+  /**
    * Toggle executions popup (contains script + message execution popups)
    */
   private toggleExecutionsPopup(button: HTMLElement) {
@@ -3006,6 +3223,9 @@ class WhatsAppUIOverlay {
         } else if (icon.name === 'notifications') {
           console.log(`[PrinChat UI] Notifications clicked`);
           this.toggleNotificationsDropdown(button);
+        } else if (icon.name === 'new-message') {
+          console.log(`[PrinChat UI] New message clicked`);
+          this.toggleDirectChatPopup(button);
         } else {
           console.log(`[PrinChat UI] Action not implemented yet: ${icon.name}`);
         }
