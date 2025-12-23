@@ -126,6 +126,12 @@ class BackgroundService {
           .catch((error) => sendResponse({ success: false, error: error.message }));
         return true; // Keep channel open for async response
 
+      case 'OPEN_OPTIONS':
+        // Open options page (from profile dropdown)
+        chrome.runtime.openOptionsPage();
+        sendResponse({ success: true });
+        break;
+
       default:
         sendResponse({ success: false, error: 'Unknown message type' });
     }
