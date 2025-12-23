@@ -2419,10 +2419,30 @@ class WhatsAppUIOverlay {
     const popup = document.createElement('div');
     popup.className = 'princhat-executions-popup';
 
-    // Header
+    // Header with title and action icons
     const header = document.createElement('div');
     header.className = 'princhat-executions-header';
-    header.innerHTML = '<span>Execuções em Andamento</span>';
+    header.innerHTML = `
+      <h3>Execuções</h3>
+      <div class="princhat-executions-actions">
+        <button class="princhat-executions-pin" title="Fixar popup">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" x2="12" y1="17" y2="22"/>
+            <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>
+          </svg>
+        </button>
+        <button class="princhat-executions-detach" title="Desprender para tela">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+          </svg>
+        </button>
+        <button class="princhat-executions-close" title="Fechar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+    `;
     popup.appendChild(header);
 
     // Content container for both popups
@@ -2471,7 +2491,36 @@ class WhatsAppUIOverlay {
     // Store reference for updates
     this.executionsPopup = popup;
 
-    // Close popup when clicking outside
+    // Action buttons event listeners
+    const pinBtn = header.querySelector('.princhat-executions-pin');
+    const detachBtn = header.querySelector('.princhat-executions-detach');
+    const closeBtn = header.querySelector('.princhat-executions-close');
+
+    let isPinned = false;
+
+    pinBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      isPinned = !isPinned;
+      pinBtn.classList.toggle('active', isPinned);
+      console.log('[PrinChat UI] Executions popup pinned:', isPinned);
+    });
+
+    detachBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      console.log('[PrinChat UI] Detaching executions popup to floating mode');
+      // TODO: Implement detach functionality
+      alert('Funcionalidade "desprender" será implementada em breve!');
+    });
+
+    closeBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      popup.remove();
+      button.classList.remove('active');
+      this.executionsPopup = null;
+      document.removeEventListener('click', closePopup);
+    });
+
+    // Close popup when clicking outside (unless pinned)
     const closePopup = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
 
@@ -2479,6 +2528,11 @@ class WhatsAppUIOverlay {
       const isActionButton = target.closest('[data-action]');
       if (isActionButton) {
         return; // Keep popup open
+      }
+
+      // Don't close if pinned
+      if (isPinned) {
+        return;
       }
 
       if (!popup.contains(e.target as Node) && !button.contains(e.target as Node)) {

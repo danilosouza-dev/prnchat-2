@@ -202,6 +202,11 @@
                 if (scriptDelay > 0) {
                   await this.delay(scriptDelay, execution);
                 }
+                // Check if cancelled after delay
+                if (execution.isCancelled) {
+                  console.log('[PrinChat] Script cancelled after text delay');
+                  break;
+                }
                 // Send text message with NO delay (delay already applied)
                 result = await this.injector.sendTextMessage(
                   message.content,
@@ -215,6 +220,11 @@
                   // Apply script delay BEFORE sending (allows pause to prevent sending)
                   if (scriptDelay > 0) {
                     await this.delay(scriptDelay, execution);
+                  }
+                  // Check if cancelled after delay
+                  if (execution.isCancelled) {
+                    console.log('[PrinChat] Script cancelled after audio delay');
+                    break;
                   }
                   // Send audio message with NO delay (delay already applied)
                   result = await this.injector.sendAudio({
@@ -234,6 +244,11 @@
                   if (scriptDelay > 0) {
                     await this.delay(scriptDelay, execution);
                   }
+                  // Check if cancelled after delay
+                  if (execution.isCancelled) {
+                    console.log('[PrinChat] Script cancelled after image delay');
+                    break;
+                  }
                   result = await this.injector.sendImage({
                     imageData: message.imageData,
                     caption: message.caption || '',
@@ -249,6 +264,11 @@
                   if (scriptDelay > 0) {
                     await this.delay(scriptDelay, execution);
                   }
+                  // Check if cancelled after delay
+                  if (execution.isCancelled) {
+                    console.log('[PrinChat] Script cancelled after video delay');
+                    break;
+                  }
                   result = await this.injector.sendVideo({
                     videoData: message.videoData,
                     caption: message.caption || '',
@@ -263,6 +283,11 @@
                   // For file: apply script delay before sending (no animation)
                   if (scriptDelay > 0) {
                     await this.delay(scriptDelay, execution);
+                  }
+                  // Check if cancelled after delay
+                  if (execution.isCancelled) {
+                    console.log('[PrinChat] Script cancelled after file delay');
+                    break;
                   }
                   result = await this.injector.sendFile({
                     fileData: message.fileData,

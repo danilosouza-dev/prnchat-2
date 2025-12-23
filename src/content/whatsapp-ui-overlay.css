@@ -250,8 +250,8 @@
 /* Executions popup */
 .princhat-executions-popup {
   position: fixed;
-  width: 420px;
-  max-height: 600px;
+  width: 480px;
+  max-height: 650px;
   background: #1a1a1a;
   border: 1px solid #2a2a2a;
   border-radius: 8px;
@@ -263,16 +263,25 @@
 }
 
 .princhat-executions-header {
-  padding: 16px;
+  padding: 16px 20px;
   border-bottom: 1px solid #2a2a2a;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.princhat-executions-header h3 {
+  font-size: 18px;
   font-weight: 600;
   color: #e0e0e0;
+  margin: 0;
 }
 
 .princhat-executions-content {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
+  padding: 8px 0;
 }
 
 .princhat-executions-empty {
@@ -347,6 +356,48 @@
 
 .princhat-executions-section:last-child {
   border-bottom: none;
+}
+
+/* Executions popup action icons - exact match with popup icon-btn */
+.princhat-executions-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.princhat-executions-actions button {
+  background: none;
+  border: none;
+  color: #666666;
+  /* --text-muted */
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s;
+}
+
+.princhat-executions-actions button:hover,
+.princhat-executions-actions button.active {
+  color: #e91e63;
+  /* --accent-pink */
+}
+
+.princhat-executions-actions button svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Better spacing for cards */
+.princhat-script-card,
+.princhat-message-card {
+  padding: 16px 20px !important;
+  margin: 8px 12px !important;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  transition: background 0.2s ease;
 }
 
 .princhat-executions-section-header {
@@ -826,9 +877,10 @@ body[data-princhat-chat-active="true"] .princhat-shortcut-bar {
 .princhat-script-card {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   padding: 6px;
-  background: #1a1a1a;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 6px;
   margin-bottom: 4px;
   transition: all 0.2s ease;
@@ -944,7 +996,7 @@ body[data-princhat-chat-active="true"] .princhat-shortcut-bar {
 .princhat-script-card-status {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
   font-size: 11px;
   color: #00a884;
   font-weight: 500;
