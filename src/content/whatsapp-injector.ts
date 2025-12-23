@@ -1848,5 +1848,14 @@
   // Initialize
   new WhatsAppInjector();
 
+  // Listen for PRINCHAT_OPEN_OPTIONS event from UI overlay (profile dropdown)
+  document.addEventListener('PRINCHAT_OPEN_OPTIONS', () => {
+    console.log('[PrinChat Content] PRINCHAT_OPEN_OPTIONS event received');
+    // Send message to service worker to open options page
+    chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS' }).catch(error => {
+      console.error('[PrinChat Content] Error opening options:', error);
+    });
+  });
+
   console.log('[PrinChat] Content script initialization complete');
 })();

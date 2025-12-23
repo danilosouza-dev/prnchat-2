@@ -71,6 +71,7 @@ class WhatsAppUIOverlay {
   private messageStatusPopup: HTMLElement | null = null; // Message execution popup (separate!)
   private executionsPopup: HTMLElement | null = null; // Unified executions popup
   private directChatPopup: HTMLElement | null = null; // Direct chat popup
+  private profileDropdown: HTMLElement | null = null; // Profile dropdown menu
   private tooltip: HTMLElement | null = null;
   private scripts: Script[] = [];
   private messages: Message[] = [];
@@ -2186,8 +2187,7 @@ class WhatsAppUIOverlay {
     console.log('[PrinChat UI] Header Popup URL:', popupUrl);
 
     if (popupUrl) {
-      // Use innerHTML to match FAB implementation exactly
-      // This ensures identical DOM structure and initialization behavior
+      // Simple iframe structure - close button is now inside the iframe
       this.headerPopup.innerHTML = `
         <div style="width: 100%; height: 100%; overflow: hidden; border-radius: 8px;">
           <iframe
@@ -2197,6 +2197,13 @@ class WhatsAppUIOverlay {
           ></iframe>
         </div>
       `;
+
+      // Add close button handler
+      const closeBtn = this.headerPopup.querySelector('.princhat-popup-close-btn');
+      closeBtn?.addEventListener('click', () => {
+        console.log('[PrinChat UI] Close button clicked');
+        this.toggleHeaderPopup(false);
+      });
     } else {
       console.error('[PrinChat UI] Popup URL not found in marker');
       this.headerPopup.innerHTML = '<div style="color:white;padding:20px;">Erro: URL do popup não encontrada</div>';
@@ -2335,7 +2342,14 @@ class WhatsAppUIOverlay {
     dropdown.innerHTML = `
       <div class="princhat-notifications-header">
         <span>Notificações</span>
-        <button class="princhat-notifications-clear-all">Limpar tudo</button>
+        <div class="princhat-notifications-header-actions">
+          <button class="princhat-notifications-clear-all">Limpar tudo</button>
+          <button class="princhat-popup-close-btn" title="Fechar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
       </div>
       <div class="princhat-notifications-list">
         ${fakeNotifications.map(notif => `
@@ -2368,6 +2382,13 @@ class WhatsAppUIOverlay {
       if (list) {
         list.innerHTML = '<div class="princhat-notifications-empty">Nenhuma notificação no momento</div>';
       }
+    });
+
+    // Close button handler
+    const closeBtn = dropdown.querySelector('.princhat-popup-close-btn');
+    closeBtn?.addEventListener('click', () => {
+      dropdown.remove();
+      button.classList.remove('active');
     });
 
     // Close individual notification
@@ -2448,7 +2469,12 @@ class WhatsAppUIOverlay {
     // Build popup content
     popup.innerHTML = `
       <div class="princhat-direct-chat-header">
-        Iniciar conversa
+        <h3>Iniciar conversa</h3>
+        <button class="princhat-popup-close-btn" title="Fechar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
       </div>
       <div class="princhat-direct-chat-form">
         <div class="princhat-direct-chat-field">
@@ -2505,6 +2531,14 @@ class WhatsAppUIOverlay {
     const phoneInput = popup.querySelector('.princhat-phone-input') as HTMLInputElement;
     const startButton = popup.querySelector('.princhat-start-chat-button') as HTMLButtonElement;
     const arrow = popup.querySelector('.princhat-country-arrow') as HTMLElement;
+
+    // Close button handler
+    const closeBtn = popup.querySelector('.princhat-popup-close-btn');
+    closeBtn?.addEventListener('click', () => {
+      popup.remove();
+      button.classList.remove('active');
+      this.directChatPopup = null;
+    });
 
     // Toggle dropdown
     const toggleDropdown = (e: Event) => {
@@ -2620,6 +2654,102 @@ class WhatsAppUIOverlay {
   }
 
   /**
+   * Toggle profile dropdown menu
+   */
+  private toggleProfileDropdown(button: HTMLElement) {
+    // Close if already open
+    if (this.profileDropdown) {
+      this.profileDropdown.remove();
+      button.classList.remove('active');
+      this.profileDropdown = null;
+      return;
+    }
+
+    // Create dropdown
+    const dropdown = document.createElement('div');
+    dropdown.className = 'princhat-profile-dropdown';
+    this.profileDropdown = dropdown;
+
+    // Menu items with Lucide icons
+    const menuItems = [
+      {
+        label: 'Configuração',
+        icon: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`,
+        action: () => {
+          // Dispatch custom event that will be caught by content script with chrome API access
+          const event = new CustomEvent('PRINCHAT_OPEN_OPTIONS', { bubbles: true });
+          document.dispatchEvent(event);
+          dropdown.remove();
+          button.classList.remove('active');
+          this.profileDropdown = null;
+        }
+      },
+      {
+        label: 'Minha Conta',
+        icon: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
+        action: () => {
+          console.log('[PrinChat UI] Minha Conta clicked');
+          // TODO: Implement account action
+        }
+      },
+      {
+        label: 'Ajustar Zoom',
+        icon: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/><line x1="11" x2="11" y1="8" y2="14"/><line x1="8" x2="14" y1="11" y2="11"/></svg>`,
+        action: () => {
+          console.log('[PrinChat UI] Ajustar Zoom clicked');
+          // TODO: Implement zoom action
+        }
+      },
+      {
+        label: 'Sair',
+        icon: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>`,
+        action: () => {
+          console.log('[PrinChat UI] Sair clicked');
+          // TODO: Implement logout action
+        }
+      }
+    ];
+
+    // Build menu HTML
+    dropdown.innerHTML = menuItems.map(item => `
+      <div class="princhat-profile-menu-item" data-action="${item.label}">
+        <span class="princhat-profile-menu-icon">${item.icon}</span>
+        <span class="princhat-profile-menu-label">${item.label}</span>
+      </div>
+    `).join('');
+
+    // Position dropdown below button
+    const rect = button.getBoundingClientRect();
+    dropdown.style.position = 'fixed';
+    dropdown.style.top = `${rect.bottom + 8}px`;
+    dropdown.style.right = `${window.innerWidth - rect.right}px`;
+
+    document.body.appendChild(dropdown);
+    button.classList.add('active');
+
+    // Add click handlers
+    menuItems.forEach((item, index) => {
+      const menuItem = dropdown.querySelectorAll('.princhat-profile-menu-item')[index];
+      menuItem.addEventListener('click', item.action);
+    });
+
+    // Close dropdown when clicking outside
+    const closeDropdown = (e: MouseEvent) => {
+      if (!dropdown.contains(e.target as Node) && !button.contains(e.target as Node)) {
+        dropdown.remove();
+        button.classList.remove('active');
+        this.profileDropdown = null;
+        document.removeEventListener('click', closeDropdown);
+      }
+    };
+
+    // Add listener after a short delay to prevent immediate closure
+    setTimeout(() => {
+      document.addEventListener('click', closeDropdown);
+    }, 100);
+  }
+
+  /**
    * Toggle executions popup (contains script + message execution popups)
    */
   private toggleExecutionsPopup(button: HTMLElement) {
@@ -2653,7 +2783,7 @@ class WhatsAppUIOverlay {
             <path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
           </svg>
         </button>
-        <button class="princhat-executions-close" title="Fechar">
+        <button class="princhat-popup-close-btn princhat-executions-close" title="Fechar">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M18 6L6 18M6 6l12 12"/>
           </svg>
@@ -2737,14 +2867,6 @@ class WhatsAppUIOverlay {
 
     // Close popup when clicking outside (unless pinned)
     const closePopup = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-
-      // Don't close if clicking on action buttons or their children
-      const isActionButton = target.closest('[data-action]');
-      if (isActionButton) {
-        return; // Keep popup open
-      }
-
       // Don't close if pinned
       if (isPinned) {
         return;
@@ -2994,10 +3116,16 @@ class WhatsAppUIOverlay {
     window.addEventListener('message', (event) => {
       if (!event.data) return;
 
-      if (event.data.type === 'PRINCHAT_POPUP_PIN_TOGGLE') {
-        const pinned = event.data.pinned;
-        console.log('[PrinChat UI] Popup pinned state changed:', pinned);
-        this.setPopupPinned(pinned);
+      // Handle pin toggle from popup iframe
+      if (event.data?.type === 'PRINCHAT_POPUP_PIN_TOGGLE') {
+        console.log('[PrinChat UI] Received pin toggle:', event.data.pinned);
+        this.setPopupPinned(event.data.pinned);
+      }
+
+      // Handle close popup from iframe
+      if (event.data?.type === 'PRINCHAT_CLOSE_POPUP') {
+        console.log('[PrinChat UI] Received close popup request from iframe');
+        this.toggleHeaderPopup(false);
       } else if (event.data.type === 'PRINCHAT_TOGGLE_FAB_MODE') {
         const floating = event.data.floating;
         console.log('[PrinChat UI] Floating mode toggled by user:', floating);
@@ -3336,8 +3464,8 @@ class WhatsAppUIOverlay {
 
     profileBtn.appendChild(profileImg);
     profileBtn.addEventListener('click', () => {
-      console.log('[PrinChat UI] Profile clicked');
-      chrome.runtime.sendMessage({ action: 'OPEN_OPTIONS_PAGE', tab: 'settings' });
+      console.log('[PrinChat UI] Profile clicked - opening dropdown');
+      this.toggleProfileDropdown(profileBtn);
     });
 
     rightSection.appendChild(profileBtn);

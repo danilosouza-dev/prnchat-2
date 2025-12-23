@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Settings,
   Grid,
   Mic,
   MessageCircle,
@@ -649,9 +648,20 @@ const App: React.FC = () => {
             <Move size={18} />
           </button>
 
-          <button className="icon-btn" onClick={openOptions} title="Configurações">
-            <Settings size={18} />
-          </button>
+          {!isFloating && (
+            <button
+              className="icon-btn"
+              onClick={() => {
+                // Close popup by sending message to parent
+                window.parent.postMessage({ type: 'PRINCHAT_CLOSE_POPUP' }, '*');
+              }}
+              title="Fechar"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18">
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+            </button>
+          )}
         </div>
       </header>
 
