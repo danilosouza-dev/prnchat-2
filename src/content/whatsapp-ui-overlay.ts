@@ -2462,20 +2462,18 @@ class WhatsAppUIOverlay {
       emptyState.textContent = 'Nenhuma execução em andamento';
       content.appendChild(emptyState);
     } else {
-      // Render script popup inside if there are scripts
-      if (hasScripts || this.completedScripts.length > 0) {
-        const scriptsContainer = this.renderScriptExecutions();
-        if (scriptsContainer) {
-          content.appendChild(scriptsContainer);
-        }
+      // ALWAYS render both sections (even if empty) to support real-time updates
+      // This ensures that when first message/script starts after popup opens,
+      // the section exists and can be updated by updateMessageStatusPopup/updateStatusPopup
+
+      const scriptsContainer = this.renderScriptExecutions();
+      if (scriptsContainer) {
+        content.appendChild(scriptsContainer);
       }
 
-      // Render message popup inside if there are messages
-      if (hasMessages || this.completedMessages.length > 0) {
-        const messagesContainer = this.renderMessageExecutions();
-        if (messagesContainer) {
-          content.appendChild(messagesContainer);
-        }
+      const messagesContainer = this.renderMessageExecutions();
+      if (messagesContainer) {
+        content.appendChild(messagesContainer);
       }
     }
 
@@ -3275,8 +3273,8 @@ class WhatsAppUIOverlay {
       //   console.log('[PrinChat UI] Script execution popup is disabled in settings');
       // }
 
-      // Update badge instead
-      this.updateStatusPopup(); // Still call to update badge
+      // Update badge and executions popup
+      this.updateStatusPopup(); // Already updates executions popup
     });
 
     // Listen for script progress
@@ -3361,8 +3359,9 @@ class WhatsAppUIOverlay {
       //   console.log('[PrinChat UI] Message execution popup is disabled in settings');
       // }
 
-      // Update badge instead
+      // Update badge and executions popup
       this.updateExecutionsBadge();
+      this.updateMessageStatusPopup(); // Updates executions popup
     });
 
     // Listen for message completion
