@@ -205,6 +205,7 @@
                 // Check if cancelled after delay
                 if (execution.isCancelled) {
                   console.log('[PrinChat] Script cancelled after text delay');
+                  result = { success: false, error: 'Cancelled' };
                   break;
                 }
                 // Send text message with NO delay (delay already applied)
@@ -224,6 +225,7 @@
                   // Check if cancelled after delay
                   if (execution.isCancelled) {
                     console.log('[PrinChat] Script cancelled after audio delay');
+                    result = { success: false, error: 'Cancelled' };
                     break;
                   }
                   // Send audio message with NO delay (delay already applied)
@@ -247,6 +249,7 @@
                   // Check if cancelled after delay
                   if (execution.isCancelled) {
                     console.log('[PrinChat] Script cancelled after image delay');
+                    result = { success: false, error: 'Cancelled' };
                     break;
                   }
                   result = await this.injector.sendImage({
@@ -267,6 +270,7 @@
                   // Check if cancelled after delay
                   if (execution.isCancelled) {
                     console.log('[PrinChat] Script cancelled after video delay');
+                    result = { success: false, error: 'Cancelled' };
                     break;
                   }
                   result = await this.injector.sendVideo({
@@ -287,6 +291,7 @@
                   // Check if cancelled after delay
                   if (execution.isCancelled) {
                     console.log('[PrinChat] Script cancelled after file delay');
+                    result = { success: false, error: 'Cancelled' };
                     break;
                   }
                   result = await this.injector.sendFile({
@@ -324,7 +329,12 @@
               await new Promise(resolve => setTimeout(resolve, 800));
             }
           } else {
-            console.error('[PrinChat] Failed to send message:', result?.error);
+            // Distinguish between intentional cancellation and real errors
+            if (result?.error === 'Cancelled') {
+              console.log('[PrinChat] Message cancelled by user (type:', message.type, ')');
+            } else {
+              console.error('[PrinChat] Failed to send message (type:', message.type, '):', result?.error || 'No error message', 'Result:', result);
+            }
             // Continue to next message even if one fails
           }
         }
