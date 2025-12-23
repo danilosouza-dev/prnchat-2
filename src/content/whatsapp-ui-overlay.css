@@ -247,6 +247,25 @@
   pointer-events: none;
 }
 
+/* Spin animation for executions icon */
+@keyframes princhat-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Apply animation and pink color when executions are active */
+.princhat-header-icon-btn.has-executions {
+  color: #e91e63;
+}
+
+.princhat-header-icon-btn.has-executions svg {
+  animation: princhat-spin 2s linear infinite;
+}
+
 /* Executions popup */
 .princhat-executions-popup {
   position: fixed;
