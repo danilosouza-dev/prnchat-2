@@ -899,6 +899,384 @@
   margin: 0;
 }
 
+/* Subscription Popup */
+.princhat-subscription-popup {
+  position: fixed;
+  width: 360px;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  z-index: 100000;
+}
+
+.princhat-subscription-popup-header {
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.princhat-subscription-popup-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.princhat-subscription-empty {
+  padding: 40px 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.princhat-subscription-icon-wrapper {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.princhat-subscription-icon-circle-outer {
+  position: absolute;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: rgba(233, 30, 99, 0.05);
+}
+
+.princhat-subscription-icon-circle-middle {
+  position: absolute;
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: rgba(233, 30, 99, 0.1);
+}
+
+.princhat-subscription-icon-circle-inner {
+  position: absolute;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: rgba(233, 30, 99, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.princhat-subscription-icon {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  color: #e91e63;
+  z-index: 1;
+}
+
+.princhat-subscription-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.princhat-subscription-empty-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #e0e0e0;
+  margin-bottom: 12px;
+}
+
+.princhat-subscription-empty-description {
+  font-size: 13px;
+  color: #9e9e9e;
+  line-height: 1.5;
+  margin-bottom: 24px;
+  max-width: 280px;
+}
+
+.princhat-subscription-new-btn {
+  width: 100%;
+  padding: 12px;
+  background: #e91e63;
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+  font-family: inherit;
+}
+
+.princhat-subscription-new-btn:hover {
+  background: #f06292;
+}
+
+/* Subscription Form Modal */
+.princhat-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100001;
+  animation: princhat-modal-overlay-in 0.2s ease-out;
+}
+
+@keyframes princhat-modal-overlay-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.princhat-subscription-form-modal {
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  width: 540px;
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  animation: princhat-modal-in 0.3s ease-out;
+}
+
+@keyframes princhat-modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.princhat-modal-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid #2a2a2a;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.princhat-modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.princhat-modal-body {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.princhat-modal-footer {
+  padding: 16px 20px;
+  border-top: 1px solid #2a2a2a;
+  display: flex;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+/* Form Fields */
+.princhat-form-field {
+  margin-bottom: 20px;
+}
+
+.princhat-form-field:last-child {
+  margin-bottom: 0;
+}
+
+.princhat-form-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: #e0e0e0;
+  margin-bottom: 8px;
+}
+
+.princhat-form-input {
+  width: 100%;
+  padding: 10px 12px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s, background 0.2s;
+  box-sizing: border-box;
+}
+
+.princhat-form-input:focus {
+  border-color: #e91e63;
+  background: #333333;
+}
+
+.princhat-form-input::placeholder {
+  color: #6e6e6e;
+}
+
+/* Formatting Buttons */
+.princhat-formatting-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.princhat-format-btn {
+  padding: 8px 14px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #9e9e9e;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.princhat-format-btn:hover {
+  background: #333333;
+  border-color: #4a4a4a;
+  color: #e0e0e0;
+}
+
+.princhat-format-btn.active {
+  background: rgba(233, 30, 99, 0.15);
+  border-color: #e91e63;
+  color: #e91e63;
+}
+
+/* Spacing Input */
+.princhat-spacing-input {
+  width: 80px;
+  padding: 10px 12px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s, background 0.2s;
+  text-align: center;
+}
+
+.princhat-spacing-input:focus {
+  border-color: #e91e63;
+  background: #333333;
+}
+
+/* Preview Section */
+.princhat-preview-section {
+  margin-top: 24px;
+  padding: 16px;
+  background: #222;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+}
+
+.princhat-preview-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #9e9e9e;
+  margin-bottom: 12px;
+  display: block;
+}
+
+.princhat-preview-content {
+  color: #e0e0e0;
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 60px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Formatting classes for preview */
+.princhat-preview-content.bold {
+  font-weight: 700;
+}
+
+.princhat-preview-content.italic {
+  font-style: italic;
+}
+
+.princhat-preview-content.strikethrough {
+  text-decoration: line-through;
+}
+
+.princhat-preview-content.monospace {
+  font-family: 'Courier New', Courier, monospace;
+}
+
+/* Formatting classes for signature span inside preview */
+.princhat-signature-formatted.bold {
+  font-weight: 700;
+}
+
+.princhat-signature-formatted.italic {
+  font-style: italic;
+}
+
+.princhat-signature-formatted.strikethrough {
+  text-decoration: line-through;
+}
+
+.princhat-signature-formatted.monospace {
+  font-family: 'Courier New', Courier, monospace;
+}
+
+/* Modal Action Buttons */
+.princhat-modal-add-btn {
+  padding: 10px 24px;
+  background: #e91e63;
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, opacity 0.2s;
+  font-family: inherit;
+}
+
+.princhat-modal-add-btn:hover:not(:disabled) {
+  background: #f06292;
+}
+
+.princhat-modal-add-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Make #app flex column to stack header above WhatsApp */
 body.princhat-header-active #app {
   display: flex !important;

@@ -73,6 +73,8 @@ class WhatsAppUIOverlay {
   private directChatPopup: HTMLElement | null = null; // Direct chat popup
   private profileDropdown: HTMLElement | null = null; // Profile dropdown menu
   private helpPopup: HTMLElement | null = null; // Help popup
+  private subscriptionPopup: HTMLElement | null = null; // Subscription popup
+  private subscriptionFormModal: HTMLElement | null = null; // Subscription form modal
   private tooltip: HTMLElement | null = null;
   private scripts: Script[] = [];
   private messages: Message[] = [];
@@ -2873,6 +2875,322 @@ class WhatsAppUIOverlay {
   }
 
   /**
+   * Toggle subscription popup for managing message signatures
+   */
+  private toggleSubscriptionPopup(button: HTMLElement) {
+    // If popup already exists, close it
+    if (this.subscriptionPopup) {
+      this.subscriptionPopup.remove();
+      button.classList.remove('active');
+      this.subscriptionPopup = null;
+      return;
+    }
+
+    // Create popup
+    const popup = document.createElement('div');
+    popup.className = 'princhat-subscription-popup';
+    this.subscriptionPopup = popup;
+
+    // Build popup HTML with empty state
+    popup.innerHTML = `
+      <div class="princhat-subscription-popup-header">
+        <h3>Mensagem com assinatura</h3>
+        <button class="princhat-popup-close-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="princhat-subscription-empty">
+        <div class="princhat-subscription-icon-wrapper">
+          <div class="princhat-subscription-icon-circle-outer"></div>
+          <div class="princhat-subscription-icon-circle-middle"></div>
+          <div class="princhat-subscription-icon-circle-inner">
+            <div class="princhat-subscription-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 20h9"/>
+                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+        <div class="princhat-subscription-empty-title">Nenhuma assinatura adicionada!</div>
+        <div class="princhat-subscription-empty-description">
+          Comece a enviar mensagens para seus contatos com uma assinatura personalizada, basta criar uma nova assinatura.
+        </div>
+        <button class="princhat-subscription-new-btn">Nova assinatura</button>
+      </div>
+    `;
+
+    // Position popup below button
+    const rect = button.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.top = `${rect.bottom + 8}px`;
+    popup.style.right = `${window.innerWidth - rect.right}px`;
+
+    document.body.appendChild(popup);
+    button.classList.add('active');
+
+    // Add close button handler
+    const closeBtn = popup.querySelector('.princhat-popup-close-btn');
+    closeBtn?.addEventListener('click', () => {
+      popup.remove();
+      button.classList.remove('active');
+      this.subscriptionPopup = null;
+    });
+
+    // Add "Nova assinatura" button handler
+    const newBtn = popup.querySelector('.princhat-subscription-new-btn');
+    newBtn?.addEventListener('click', () => {
+      console.log('[PrinChat] Nova assinatura clicked');
+      this.openSubscriptionFormModal();
+    });
+
+    // Close popup when clicking outside
+    const closePopup = (e: MouseEvent) => {
+      if (!popup.contains(e.target as Node) && !button.contains(e.target as Node)) {
+        popup.remove();
+        button.classList.remove('active');
+        this.subscriptionPopup = null;
+        document.removeEventListener('click', closePopup);
+      }
+    };
+
+    // Add listener after a short delay to prevent immediate closure
+    setTimeout(() => {
+      document.addEventListener('click', closePopup);
+    }, 100);
+  }
+
+
+  /**
+   * Open subscription form modal for creating new signature
+   */
+  private openSubscriptionFormModal() {
+    // Close if already open
+    if (this.subscriptionFormModal) {
+      this.closeSubscriptionFormModal();
+      return;
+    }
+
+    // Create modal state
+    const formState = {
+      signatureText: '',
+      formatting: {
+        bold: false,
+        italic: false,
+        strikethrough: false,
+        monospace: false
+      },
+      spacing: 1
+    };
+
+    // Create overlay
+    const overlay = document.createElement('div');
+    overlay.className = 'princhat-modal-overlay';
+    this.subscriptionFormModal = overlay;
+
+    // Create modal
+    const modal = document.createElement('div');
+    modal.className = 'princhat-subscription-form-modal';
+
+    // Build modal HTML
+    modal.innerHTML = `
+      <div class="princhat-modal-header">
+        <h3>Adicionar nova</h3>
+        <button class="princhat-popup-close-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="princhat-modal-body">
+        <!-- Signature Input -->
+        <div class="princhat-form-field">
+          <label class="princhat-form-label">Assinatura</label>
+          <input 
+            type="text" 
+            class="princhat-form-input" 
+            placeholder="Adicione uma assinatura"
+            data-field="signature"
+          />
+        </div>
+
+        <!-- Formatting -->
+        <div class="princhat-form-field">
+          <label class="princhat-form-label">Formatação</label>
+          <div class="princhat-formatting-buttons">
+            <button class="princhat-format-btn" data-format="bold">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"></path>
+                <path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"></path>
+              </svg>
+              Negrito
+            </button>
+            <button class="princhat-format-btn" data-format="italic">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="19" y1="4" x2="10" y2="4"></line>
+                <line x1="14" y1="20" x2="5" y2="20"></line>
+                <line x1="15" y1="4" x2="9" y2="20"></line>
+              </svg>
+              Itálico
+            </button>
+            <button class="princhat-format-btn" data-format="strikethrough">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M16 4H9a3 3 0 0 0-2.83 4"></path>
+                <path d="M14 12a4 4 0 0 1 0 8H6"></path>
+                <line x1="4" y1="12" x2="20" y2="12"></line>
+              </svg>
+              Tachado
+            </button>
+            <button class="princhat-format-btn" data-format="monospace">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="4 7 4 4 20 4 20 7"></polyline>
+                <line x1="9" y1="20" x2="15" y2="20"></line>
+                <line x1="12" y1="4" x2="12" y2="20"></line>
+              </svg>
+              Monoespaçado
+            </button>
+          </div>
+        </div>
+
+        <!-- Spacing -->
+        <div class="princhat-form-field">
+          <label class="princhat-form-label">Espaçamento</label>
+          <input 
+            type="number" 
+            class="princhat-spacing-input" 
+            min="1" 
+            max="10" 
+            value="1"
+            data-field="spacing"
+          />
+        </div>
+
+        <!-- Preview -->
+        <div class="princhat-preview-section">
+          <span class="princhat-preview-label">Pré-visualização</span>
+          <div class="princhat-preview-content" data-preview></div>
+        </div>
+      </div>
+      <div class="princhat-modal-footer">
+        <button class="princhat-modal-add-btn" disabled data-action="add">
+          Adicionar
+        </button>
+      </div>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // Get elements
+    const signatureInput = modal.querySelector('[data-field="signature"]') as HTMLInputElement;
+    const spacingInput = modal.querySelector('[data-field="spacing"]') as HTMLInputElement;
+    const formatButtons = modal.querySelectorAll('.princhat-format-btn');
+    const previewSection = modal.querySelector('.princhat-preview-section') as HTMLElement;
+    const previewContent = modal.querySelector('[data-preview]') as HTMLElement;
+    const addButton = modal.querySelector('[data-action="add"]') as HTMLButtonElement;
+    const closeBtn = modal.querySelector('.princhat-popup-close-btn');
+
+    // Update preview function
+    const updatePreview = () => {
+      const text = formState.signatureText;
+
+      // Show/hide preview section based on text
+      if (text.trim()) {
+        previewSection.style.display = 'block';
+
+        // Build formatting classes for signature only
+        let signatureClasses = '';
+        if (formState.formatting.bold) signatureClasses += ' bold';
+        if (formState.formatting.italic) signatureClasses += ' italic';
+        if (formState.formatting.strikethrough) signatureClasses += ' strikethrough';
+        if (formState.formatting.monospace) signatureClasses += ' monospace';
+
+        // Create example message (fixed text)
+        const exampleMessage = `Olá, tudo bem? Esta é uma mensagem de exemplo para que você veja como sua assinatura será exibida quando enviada junto com uma mensagem.`;
+
+        // Build HTML: formatted signature at beginning + example message
+        previewContent.className = 'princhat-preview-content';
+        previewContent.innerHTML = `<span class="princhat-signature-formatted${signatureClasses}">${text}</span>:\n\n${exampleMessage}`;
+      } else {
+        // Hide preview when empty
+        previewSection.style.display = 'none';
+      }
+
+      // Enable/disable add button
+      addButton.disabled = !text.trim();
+    };
+
+    // Signature input handler
+    signatureInput.addEventListener('input', (e) => {
+      formState.signatureText = (e.target as HTMLInputElement).value;
+      updatePreview();
+    });
+
+    // Spacing input handler
+    spacingInput.addEventListener('input', (e) => {
+      const value = parseInt((e.target as HTMLInputElement).value) || 1;
+      formState.spacing = Math.max(1, Math.min(10, value));
+      updatePreview();
+    });
+
+    // Format button handlers
+    formatButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const format = btn.getAttribute('data-format') as keyof typeof formState.formatting;
+        formState.formatting[format] = !formState.formatting[format];
+        btn.classList.toggle('active', formState.formatting[format]);
+        updatePreview();
+      });
+    });
+
+    // Close button handler
+    closeBtn?.addEventListener('click', () => {
+      this.closeSubscriptionFormModal();
+    });
+
+    // Add button handler
+    addButton.addEventListener('click', () => {
+      console.log('[PrinChat] Saving subscription:', formState);
+      // TODO: Save to storage
+      alert(`Assinatura salva!\nTexto: ${formState.signatureText}\nFormatação: ${JSON.stringify(formState.formatting)}\nEspaçamento: ${formState.spacing}`);
+      this.closeSubscriptionFormModal();
+    });
+
+    // Close on overlay click
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        this.closeSubscriptionFormModal();
+      }
+    });
+
+    // Close on Esc key
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        this.closeSubscriptionFormModal();
+        document.removeEventListener('keydown', handleEsc);
+      }
+    };
+    document.addEventListener('keydown', handleEsc);
+
+    // Initial preview update
+    updatePreview();
+  }
+
+  /**
+   * Close subscription form modal
+   */
+  private closeSubscriptionFormModal() {
+    if (this.subscriptionFormModal) {
+      this.subscriptionFormModal.remove();
+      this.subscriptionFormModal = null;
+    }
+  }
+
+  /**
    * Toggle executions popup (contains script + message execution popups)
    */
   private toggleExecutionsPopup(button: HTMLElement) {
@@ -3411,9 +3729,9 @@ class WhatsAppUIOverlay {
         tooltip: 'Nova Mensagem'
       },
       {
-        name: 'edit',
+        name: 'subscription',
         svg: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
-        tooltip: 'Editar'
+        tooltip: 'Assinaturas'
       },
       {
         name: 'help',
@@ -3480,6 +3798,9 @@ class WhatsAppUIOverlay {
         } else if (icon.name === 'help') {
           console.log(`[PrinChat UI] Help clicked`);
           this.toggleHelpPopup(button);
+        } else if (icon.name === 'subscription') {
+          console.log(`[PrinChat UI] Subscription clicked`);
+          this.toggleSubscriptionPopup(button);
         } else {
           console.log(`[PrinChat UI] Action not implemented yet: ${icon.name}`);
         }
