@@ -72,6 +72,7 @@ class WhatsAppUIOverlay {
   private executionsPopup: HTMLElement | null = null; // Unified executions popup
   private directChatPopup: HTMLElement | null = null; // Direct chat popup
   private profileDropdown: HTMLElement | null = null; // Profile dropdown menu
+  private helpPopup: HTMLElement | null = null; // Help popup
   private tooltip: HTMLElement | null = null;
   private scripts: Script[] = [];
   private messages: Message[] = [];
@@ -2750,6 +2751,128 @@ class WhatsAppUIOverlay {
   }
 
   /**
+   * Toggle help popup with menu options
+   */
+  private toggleHelpPopup(button: HTMLElement) {
+    // If popup already exists, close it
+    if (this.helpPopup) {
+      this.helpPopup.remove();
+      button.classList.remove('active');
+      this.helpPopup = null;
+      return;
+    }
+
+    // Create popup
+    const popup = document.createElement('div');
+    popup.className = 'princhat-help-popup';
+    this.helpPopup = popup;
+
+    // Define menu items
+    const menuItems = [
+      {
+        icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 21 1.9-5.7a8.5 8.5 0 1 1 3.8 3.8z"/></svg>`,
+        title: 'Fale com o Suporte',
+        description: 'Tire suas dúvidas diretamente pelo WhatsApp.',
+        action: () => {
+          console.log('[PrinChat] Contact support clicked');
+          // TODO: Implement support link
+          popup.remove();
+          button.classList.remove('active');
+          this.helpPopup = null;
+        }
+      },
+      {
+        icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>`,
+        title: 'Central de Ajuda',
+        description: 'Acesse nossos tutoriais e guias completos.',
+        action: () => {
+          console.log('[PrinChat] Help center clicked');
+          // TODO: Implement help center link
+          popup.remove();
+          button.classList.remove('active');
+          this.helpPopup = null;
+        }
+      },
+      {
+        icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>`,
+        title: 'Sugerir uma melhoria',
+        description: 'Tem uma ideia? Adoraríamos ouvir você!',
+        action: () => {
+          console.log('[PrinChat] Suggest improvement clicked');
+          // TODO: Implement feedback form
+          popup.remove();
+          button.classList.remove('active');
+          this.helpPopup = null;
+        }
+      }
+    ];
+
+    // Build popup HTML
+    popup.innerHTML = `
+      <div class="princhat-help-popup-header">
+        <h3>Precisa de Ajuda?</h3>
+        <button class="princhat-popup-close-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="princhat-help-menu">
+        ${menuItems.map(item => `
+          <div class="princhat-help-menu-item">
+            <div class="princhat-help-menu-icon">
+              ${item.icon}
+            </div>
+            <div class="princhat-help-menu-item-content">
+              <div class="princhat-help-menu-item-title">${item.title}</div>
+              <div class="princhat-help-menu-item-description">${item.description}</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+
+    // Position popup below button
+    const rect = button.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.top = `${rect.bottom + 8}px`;
+    popup.style.right = `${window.innerWidth - rect.right}px`;
+
+    document.body.appendChild(popup);
+    button.classList.add('active');
+
+    // Add click handlers for menu items
+    const menuItemElements = popup.querySelectorAll('.princhat-help-menu-item');
+    menuItems.forEach((item, index) => {
+      menuItemElements[index].addEventListener('click', item.action);
+    });
+
+    // Add close button handler
+    const closeBtn = popup.querySelector('.princhat-popup-close-btn');
+    closeBtn?.addEventListener('click', () => {
+      popup.remove();
+      button.classList.remove('active');
+      this.helpPopup = null;
+    });
+
+    // Close popup when clicking outside
+    const closePopup = (e: MouseEvent) => {
+      if (!popup.contains(e.target as Node) && !button.contains(e.target as Node)) {
+        popup.remove();
+        button.classList.remove('active');
+        this.helpPopup = null;
+        document.removeEventListener('click', closePopup);
+      }
+    };
+
+    // Add listener after a short delay to prevent immediate closure
+    setTimeout(() => {
+      document.addEventListener('click', closePopup);
+    }, 100);
+  }
+
+  /**
    * Toggle executions popup (contains script + message execution popups)
    */
   private toggleExecutionsPopup(button: HTMLElement) {
@@ -3354,6 +3477,9 @@ class WhatsAppUIOverlay {
         } else if (icon.name === 'new-message') {
           console.log(`[PrinChat UI] New message clicked`);
           this.toggleDirectChatPopup(button);
+        } else if (icon.name === 'help') {
+          console.log(`[PrinChat UI] Help clicked`);
+          this.toggleHelpPopup(button);
         } else {
           console.log(`[PrinChat UI] Action not implemented yet: ${icon.name}`);
         }
