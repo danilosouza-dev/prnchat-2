@@ -239,10 +239,96 @@
       }
     });
 
+    // Helper function to apply WhatsApp formatting to signature text
+    function applySignatureFormatting(text: string, formatting: any): string {
+      let formatted = text;
+
+      // Apply formats in correct order for WhatsApp (innermost to outermost)
+      // Order matters for proper nesting: monospace -> strikethrough -> italic -> bold
+
+      if (formatting.monospace) {
+        formatted = `\`\`\`${formatted}\`\`\``;
+      }
+      if (formatting.strikethrough) {
+        formatted = `~${formatted}~`;
+      }
+      if (formatting.italic) {
+        formatted = `_${formatted}_`;
+      }
+      if (formatting.bold) {
+        formatted = `*${formatted}*`;
+      }
+
+      return formatted;
+    }
+
+    // Helper function to get active signature (async via custom event)
+    async function getActiveSignature(): Promise<any | null> {
+      return new Promise((resolve) => {
+        const requestId = `sig_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+        // Listen for response
+        const responseHandler = (event: any) => {
+          if (event.detail.requestId === requestId) {
+            document.removeEventListener('PrinChatSignatureResponse', responseHandler);
+            resolve(event.detail.signature || null);
+          }
+        };
+
+        document.addEventListener('PrinChatSignatureResponse', responseHandler);
+
+        // Request active signature
+        document.dispatchEvent(new CustomEvent('PrinChatGetActiveSignature', {
+          detail: { requestId }
+        }));
+
+        // Timeout after 1 second
+        setTimeout(() => {
+          document.removeEventListener('PrinChatSignatureResponse', responseHandler);
+          resolve(null);
+        }, 1000);
+      });
+    }
+
     // Listen for message send requests
     document.addEventListener('PrinChatSendMessage', async (event: any) => {
       try {
-        const { text, requestId, chatId } = event.detail;
+        let { text, requestId, chatId } = event.detail;
+
+        // Get active signature and append if exists
+        console.log('[PrinChat Page] 🔍 Checking for active signature...');
+        try {
+          const activeSignature = await getActiveSignature();
+          console.log('[PrinChat Page] 🔍 Active signature response:', activeSignature);
+
+          if (activeSignature && activeSignature.text) {
+            console.log('[PrinChat Page] ✅ Active signature found:', activeSignature.text);
+            console.log('[PrinChat Page] 🔍 Signature formatting:', activeSignature.formatting);
+            console.log('[PrinChat Page] 🔍 Signature spacing:', activeSignature.spacing);
+
+            // Apply spacing (line breaks)
+            const spacing = '\n'.repeat(activeSignature.spacing || 1);
+
+            // Apply formatting to signature text
+            const formattedSignature = applySignatureFormatting(
+              activeSignature.text,
+              activeSignature.formatting || {}
+            );
+
+            console.log('[PrinChat Page] 🔍 Formatted signature:', formattedSignature);
+            console.log('[PrinChat Page] 🔍 Original text:', text);
+
+            // Prepend signature to message (signature comes FIRST, then message)
+            // Format: "Name:\n\nMessage content"
+            text = formattedSignature + ':' + spacing + text;
+            console.log('[PrinChat Page] ✅ Message with signature:', text);
+          } else {
+            console.log('[PrinChat Page] ℹ️ No active signature found or signature is empty');
+          }
+        } catch (sigError) {
+          console.error('[PrinChat Page] ❌ Error getting signature:', sigError);
+          // Continue sending without signature
+        }
 
         let targetChat;
         if (chatId) {
@@ -297,6 +383,7 @@
         }));
       }
     });
+
 
     // Listen for audio send requests
     document.addEventListener('PrinChatSendAudio', async (event: any) => {

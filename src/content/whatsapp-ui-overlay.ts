@@ -25,13 +25,30 @@ interface Message {
   sendDelay?: number;
 }
 
-interface StatusItem {
+// Signature interface (inline to avoid import issues)
+interface Signature {
   id: string;
-  type: 'text' | 'audio' | 'image' | 'video' | 'file';
-  status: 'sending' | 'success' | 'error';
   text: string;
-  error?: string;
+  formatting: {
+    bold: boolean;
+    italic: boolean;
+    strikethrough: boolean;
+    monospace: boolean;
+  };
+  spacing: number;
+  isActive: boolean;
+  createdAt: number;
+  updatedAt: number;
 }
+
+// Unused interface - commented out to avoid lint error
+// interface StatusItem {
+//   id: string;
+//   type: 'text' | 'audio' | 'image' | 'video' | 'file';
+//   status: 'sending' | 'success' | 'error';
+//   text: string;
+//   error?: string;
+// }
 
 interface ScriptExecution {
   id: string;
@@ -102,6 +119,10 @@ class WhatsAppUIOverlay {
   private cachedChatTimestamp: number = 0;
   private readonly CHAT_CACHE_TTL = 10000; // 10 seconds cache
   private lastKnownChatElement: Element | null = null; // Track chat changes
+
+  // Signature Management
+  private signatures: Signature[] = [];
+  private editingSignatureId: string | null = null;
 
   // MutationObserver to detect script popup size changes
   private scriptPopupObserver: MutationObserver | null = null;
@@ -2877,7 +2898,7 @@ class WhatsAppUIOverlay {
   /**
    * Toggle subscription popup for managing message signatures
    */
-  private toggleSubscriptionPopup(button: HTMLElement) {
+  private async toggleSubscriptionPopup(button: HTMLElement) {
     // If popup already exists, close it
     if (this.subscriptionPopup) {
       this.subscriptionPopup.remove();
@@ -2886,42 +2907,96 @@ class WhatsAppUIOverlay {
       return;
     }
 
+    // Load signatures from database
+    console.log('[PrinChat] toggleSubscriptionPopup: Loading signatures...');
+    await this.loadSignatures();
+    console.log(`[PrinChat] toggleSubscriptionPopup: Building popup with ${this.signatures.length} signatures`);
+
     // Create popup
     const popup = document.createElement('div');
     popup.className = 'princhat-subscription-popup';
     this.subscriptionPopup = popup;
 
-    // Build popup HTML with empty state
-    popup.innerHTML = `
-      <div class="princhat-subscription-popup-header">
-        <h3>Mensagem com assinatura</h3>
-        <button class="princhat-popup-close-btn">
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </button>
-      </div>
-      <div class="princhat-subscription-empty">
-        <div class="princhat-subscription-icon-wrapper">
-          <div class="princhat-subscription-icon-circle-outer"></div>
-          <div class="princhat-subscription-icon-circle-middle"></div>
-          <div class="princhat-subscription-icon-circle-inner">
-            <div class="princhat-subscription-icon">
-              <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    // Build popup HTML based on signatures availability
+    if (this.signatures.length === 0) {
+      // Empty state
+      popup.innerHTML = `
+        <div class="princhat-subscription-popup-header">
+          <h3>Mensagem com assinatura</h3>
+          <button class="princhat-popup-close-btn">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+        <div class="princhat-subscription-empty">
+          <div class="princhat-subscription-icon-wrapper">
+            <div class="princhat-subscription-icon-circle-outer"></div>
+            <div class="princhat-subscription-icon-circle-middle"></div>
+            <div class="princhat-subscription-icon-circle-inner">
+              <div class="princhat-subscription-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 20h9"/>
+                  <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+          <div class="princhat-subscription-empty-title">Nenhuma assinatura adicionada!</div>
+          <div class="princhat-subscription-empty-description">
+            Comece a enviar mensagens para seus contatos com uma assinatura personalizada, basta criar uma nova assinatura.
+          </div>
+          <button class="princhat-subscription-new-btn">Nova assinatura</button>
+        </div>
+      `;
+    } else {
+      // Signature list state
+      const signatureCards = this.signatures.map(sig => `
+        <div class="princhat-signature-card" data-sig-id="${sig.id}">
+          <div class="princhat-signature-info">
+            <span class="princhat-signature-text">${this.escapeHtml(sig.text)}</span>
+          </div>
+          <div class="princhat-signature-actions">
+            <label class="princhat-signature-toggle">
+              <input type="checkbox" ${sig.isActive ? 'checked' : ''} data-sig-id="${sig.id}">
+              <span class="princhat-toggle-slider"></span>
+            </label>
+            <button class="princhat-signature-edit-btn" data-sig-id="${sig.id}">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M12 20h9"/>
                 <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>
               </svg>
-            </div>
+            </button>
+            <button class="princhat-signature-delete-btn" data-sig-id="${sig.id}">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 6h18"/>
+                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
+                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+              </svg>
+            </button>
           </div>
         </div>
-        <div class="princhat-subscription-empty-title">Nenhuma assinatura adicionada!</div>
-        <div class="princhat-subscription-empty-description">
-          Comece a enviar mensagens para seus contatos com uma assinatura personalizada, basta criar uma nova assinatura.
+      `).join('');
+
+      popup.innerHTML = `
+        <div class="princhat-subscription-popup-header">
+          <h3>Mensagem com assinatura</h3>
+          <button class="princhat-popup-close-btn">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
         </div>
-        <button class="princhat-subscription-new-btn">Nova assinatura</button>
-      </div>
-    `;
+        <div class="princhat-signature-list">
+          ${signatureCards}
+        </div>
+        <div class="princhat-subscription-footer">
+          <button class="princhat-subscription-new-btn">Nova assinatura</button>
+        </div>
+      `;
+    }
 
     // Position popup below button
     const rect = button.getBoundingClientRect();
@@ -2947,6 +3022,66 @@ class WhatsAppUIOverlay {
       this.openSubscriptionFormModal();
     });
 
+    // Add toggle handlers
+    const toggleInputs = popup.querySelectorAll('.princhat-signature-toggle input');
+    toggleInputs.forEach(input => {
+      input.addEventListener('change', async (e) => {
+        const target = e.target as HTMLInputElement;
+        const sigId = target.getAttribute('data-sig-id');
+        if (sigId) {
+          if (target.checked) {
+            // IMMEDIATELY uncheck all other checkboxes for instant visual feedback
+            toggleInputs.forEach(otherInput => {
+              if (otherInput !== target) {
+                (otherInput as HTMLInputElement).checked = false;
+              }
+            });
+
+            // Activating: use SET_ACTIVE_SIGNATURE to ensure only one is active in DB
+            console.log(`[PrinChat] Activating signature ${sigId}, will deactivate all others`);
+            const response = await this.requestFromContentScript({
+              type: 'SET_ACTIVE_SIGNATURE',
+              payload: { id: sigId }
+            });
+            if (response && response.success) {
+              await this.loadSignatures();
+              console.log('[PrinChat] Signature activated successfully');
+            } else {
+              console.error('[PrinChat] Failed to activate signature');
+              // Revert checkbox on failure
+              target.checked = false;
+            }
+          } else {
+            // Deactivating: just toggle it off
+            console.log(`[PrinChat] Deactivating signature ${sigId}`);
+            await this.toggleSignatureActive(sigId, false);
+          }
+        }
+      });
+    });
+
+    // Add delete button handlers
+    const deleteButtons = popup.querySelectorAll('.princhat-signature-delete-btn');
+    deleteButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const sigId = btn.getAttribute('data-sig-id');
+        if (sigId && confirm('Deseja realmente deletar esta assinatura?')) {
+          this.deleteSignature(sigId);
+        }
+      });
+    });
+
+    // Add edit button handlers
+    const editButtons = popup.querySelectorAll('.princhat-signature-edit-btn');
+    editButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const sigId = btn.getAttribute('data-sig-id');
+        if (sigId) {
+          this.editSignature(sigId);
+        }
+      });
+    });
+
     // Close popup when clicking outside
     const closePopup = (e: MouseEvent) => {
       if (!popup.contains(e.target as Node) && !button.contains(e.target as Node)) {
@@ -2963,6 +3098,15 @@ class WhatsAppUIOverlay {
     }, 100);
   }
 
+  /**
+   * Escape HTML to prevent XSS
+   */
+  private escapeHtml(text: string): string {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
 
   /**
    * Open subscription form modal for creating new signature
@@ -2977,19 +3121,22 @@ class WhatsAppUIOverlay {
     // Create modal state
     const formState = {
       signatureText: '',
+      spacing: 1,
       formatting: {
         bold: false,
         italic: false,
         strikethrough: false,
         monospace: false
-      },
-      spacing: 1
+      }
     };
 
     // Create overlay
     const overlay = document.createElement('div');
     overlay.className = 'princhat-modal-overlay';
     this.subscriptionFormModal = overlay;
+
+    // Store formState on modal for access during edit (AFTER modal is created)
+    (overlay as any).__formState = formState;
 
     // Create modal
     const modal = document.createElement('div');
@@ -3102,19 +3249,32 @@ class WhatsAppUIOverlay {
       if (text.trim()) {
         previewSection.style.display = 'block';
 
-        // Build formatting classes for signature only
-        let signatureClasses = '';
-        if (formState.formatting.bold) signatureClasses += ' bold';
-        if (formState.formatting.italic) signatureClasses += ' italic';
-        if (formState.formatting.strikethrough) signatureClasses += ' strikethrough';
-        if (formState.formatting.monospace) signatureClasses += ' monospace';
+        // Build formatting classes and formatted HTML
+        let formattedText = text;
+        const classes = [];
 
-        // Create example message (fixed text)
-        const exampleMessage = `Olá, tudo bem? Esta é uma mensagem de exemplo para que você veja como sua assinatura será exibida quando enviada junto com uma mensagem.`;
+        if (formState.formatting.bold) {
+          formattedText = `<strong>${formattedText}</strong>`;
+          classes.push('bold');
+        }
+        if (formState.formatting.italic) {
+          formattedText = `<em>${formattedText}</em>`;
+          classes.push('italic');
+        }
+        if (formState.formatting.strikethrough) {
+          formattedText = `<s>${formattedText}</s>`;
+          classes.push('strikethrough');
+        }
+        if (formState.formatting.monospace) {
+          formattedText = `<code>${formattedText}</code>`;
+          classes.push('monospace');
+        }
 
-        // Build HTML: formatted signature at beginning + example message
-        previewContent.className = 'princhat-preview-content';
-        previewContent.innerHTML = `<span class="princhat-signature-formatted${signatureClasses}">${text}</span>:\n\n${exampleMessage}`;
+        // Apply spacing (line breaks) - spacing value = number of <br> tags
+        const spacing = '<br>'.repeat(formState.spacing);
+
+        // Build HTML: formatted signature at beginning + spacing + example message
+        previewContent.innerHTML = `<span class="princhat-signature-formatted ${classes.join(' ')}">${formattedText}</span>:${spacing}Olá, tudo bem? Esta é uma mensagem de exemplo para que você veja como sua assinatura será exibida quando enviada junto com uma mensagem.`;
       } else {
         // Hide preview when empty
         previewSection.style.display = 'none';
@@ -3123,6 +3283,9 @@ class WhatsAppUIOverlay {
       // Enable/disable add button
       addButton.disabled = !text.trim();
     };
+
+    // Store updatePreview on overlay (subscriptionFormModal) for access during edit
+    (overlay as any).__updatePreview = updatePreview;
 
     // Signature input handler
     signatureInput.addEventListener('input', (e) => {
@@ -3153,11 +3316,71 @@ class WhatsAppUIOverlay {
     });
 
     // Add button handler
-    addButton.addEventListener('click', () => {
-      console.log('[PrinChat] Saving subscription:', formState);
-      // TODO: Save to storage
-      alert(`Assinatura salva!\nTexto: ${formState.signatureText}\nFormatação: ${JSON.stringify(formState.formatting)}\nEspaçamento: ${formState.spacing}`);
-      this.closeSubscriptionFormModal();
+    addButton.addEventListener('click', async () => {
+      try {
+        const now = Date.now();
+
+        // When editing, preserve original createdAt and isActive
+        let signatureData: any;
+
+        if (this.editingSignatureId) {
+          // Editing existing signature - get original first
+          const existingResponse = await this.requestFromContentScript({
+            type: 'GET_SIGNATURE',
+            payload: { id: this.editingSignatureId }
+          });
+
+          if (existingResponse && existingResponse.success && existingResponse.data) {
+            // Preserve original values, only update what changed
+            signatureData = {
+              ...existingResponse.data,
+              text: formState.signatureText,
+              formatting: formState.formatting,
+              spacing: formState.spacing,
+              updatedAt: now
+              // Keep original: id, isActive, createdAt
+            };
+          } else {
+            throw new Error('Failed to get original signature');
+          }
+
+          this.editingSignatureId = null;
+        } else {
+          // Creating new signature
+          signatureData = {
+            id: `sig_${now}_${Math.random().toString(36).substr(2, 9)}`,
+            text: formState.signatureText,
+            formatting: formState.formatting,
+            spacing: formState.spacing,
+            isActive: false,
+            createdAt: now,
+            updatedAt: now
+          };
+        }
+
+        const response = await this.requestFromContentScript({
+          type: 'SAVE_SIGNATURE',
+          payload: signatureData
+        });
+
+        if (response && response.success) {
+          // Close modal
+          this.closeSubscriptionFormModal();
+
+          // Refresh subscription popup if open
+          const subButton = document.querySelector('[data-action="subscription"]') as HTMLElement;
+          if (subButton && this.subscriptionPopup) {
+            this.subscriptionPopup.remove();
+            this.subscriptionPopup = null;
+            await this.toggleSubscriptionPopup(subButton);
+          }
+        } else {
+          throw new Error(response?.error || 'Failed to save');
+        }
+      } catch (error) {
+        console.error('[PrinChat] Error saving signature:', error);
+        alert('Erro ao salvar assinatura');
+      }
     });
 
     // Close on overlay click
@@ -3188,6 +3411,196 @@ class WhatsAppUIOverlay {
       this.subscriptionFormModal.remove();
       this.subscriptionFormModal = null;
     }
+  }
+
+  /**
+   * Load signatures from database via message passing
+   */
+  private async loadSignatures() {
+    try {
+      console.log('[PrinChat] Loading signatures from database...');
+      const response = await this.requestFromContentScript({
+        type: 'GET_SIGNATURES'
+      });
+      if (response && response.success) {
+        this.signatures = response.data || [];
+        console.log(`[PrinChat] Loaded ${this.signatures.length} signatures`);
+      } else {
+        console.log('[PrinChat] Failed to load signatures, initializing empty array.');
+        this.signatures = [];
+      }
+    } catch (error) {
+      console.error('[PrinChat] Error loading signatures:', error);
+      this.signatures = [];
+    }
+  }
+
+  /**
+   * Delete signature via message passing
+   */
+  private async deleteSignature(id: string) {
+    try {
+      const response = await this.requestFromContentScript({
+        type: 'DELETE_SIGNATURE',
+        payload: { id }
+      });
+
+      if (response && response.success) {
+        console.log('[PrinChat] Signature deleted successfully, reloading...');
+        await this.loadSignatures();
+
+        // Refresh subscription popup if open
+        if (this.subscriptionPopup) {
+          // Find and remove the deleted signature card directly
+          const cardToRemove = this.subscriptionPopup.querySelector(`.princhat-signature-card[data-sig-id="${id}"]`);
+          if (cardToRemove) {
+            console.log('[PrinChat] Removing deleted signature card from popup');
+            cardToRemove.remove();
+          } else {
+            console.log('[PrinChat] Card not found, might need to rebuild');
+          }
+
+          // If no signatures left, rebuild to show empty state
+          if (this.signatures.length === 0) {
+            const button = document.querySelector('[data-action="subscription"]') as HTMLElement;
+            if (button) {
+              this.subscriptionPopup.remove();
+              this.subscriptionPopup = null;
+              button.classList.remove('active');
+              await this.toggleSubscriptionPopup(button);
+            }
+          }
+        }
+      } else {
+        throw new Error(response?.error || 'Failed to delete');
+      }
+    } catch (error) {
+      console.error('[PrinChat] Error deleting signature:', error);
+      alert('Erro ao deletar assinatura');
+    }
+  }
+
+  /**
+   * Toggle signature active state via message passing
+   */
+  private async toggleSignatureActive(id: string, isActive: boolean) {
+    try {
+      const response = await this.requestFromContentScript({
+        type: 'TOGGLE_SIGNATURE_ACTIVE',
+        payload: { id, isActive }
+      });
+
+      if (response && response.success) {
+        await this.loadSignatures();
+
+        // Refresh subscription popup if open
+        if (this.subscriptionPopup) {
+          const button = document.querySelector('[data-action="subscription"]') as HTMLElement;
+          if (button) {
+            this.subscriptionPopup.remove();
+            this.subscriptionPopup = null;
+            await this.toggleSubscriptionPopup(button);
+          }
+        }
+      } else {
+        throw new Error(response?.error || 'Failed to toggle');
+      }
+    } catch (error) {
+      console.error('[PrinChat] Error toggling signature:', error);
+      alert('Erro ao ativar/desativar assinatura');
+    }
+  }
+
+  /**
+   * Edit existing signature
+   */
+  private async editSignature(id: string) {
+    try {
+      this.editingSignatureId = id;
+      const response = await this.requestFromContentScript({
+        type: 'GET_SIGNATURE',
+        payload: { id }
+      });
+
+      if (response && response.success && response.data) {
+        // Close subscription popup
+        if (this.subscriptionPopup) {
+          this.subscriptionPopup.remove();
+          this.subscriptionPopup = null;
+        }
+
+        // Open form modal with signature data
+        this.openSubscriptionFormModalWithData(response.data);
+      }
+    } catch (error) {
+      console.error('[PrinChat] Error editing signature:', error);
+      alert('Erro ao editar assinatura');
+    }
+  }
+
+  /**
+   * Open subscription form modal with existing signature data
+   */
+  private openSubscriptionFormModalWithData(signature: Signature) {
+    // Open the modal first
+    this.openSubscriptionFormModal();
+
+    // Wait a tick for DOM to be ready, then populate fields
+    setTimeout(() => {
+      const modal = this.subscriptionFormModal;
+      if (!modal) return;
+
+      // Get form elements
+      const signatureInput = modal.querySelector('[data-field="signature"]') as HTMLInputElement;
+      const spacingInput = modal.querySelector('[data-field="spacing"]') as HTMLInputElement;
+      const formatButtons = modal.querySelectorAll('.princhat-format-btn');
+      const addButton = modal.querySelector('[data-action="add"]') as HTMLButtonElement;
+
+      // CRITICAL: Update formState first so event listeners work correctly
+      const formState = (modal as any).__formState;
+      if (formState) {
+        formState.signatureText = signature.text;
+        formState.spacing = signature.spacing || 1;
+        formState.formatting = { ...signature.formatting };
+      }
+
+      // Populate signature text
+      if (signatureInput) {
+        signatureInput.value = signature.text;
+      }
+
+      // Populate spacing
+      if (spacingInput) {
+        spacingInput.value = String(signature.spacing || 1);
+      }
+
+      // Populate formatting buttons
+      formatButtons.forEach(btn => {
+        const format = btn.getAttribute('data-format');
+        if (format && signature.formatting && signature.formatting[format as keyof typeof signature.formatting]) {
+          btn.classList.add('active');
+        }
+      });
+
+      // Update button text to "Salvar"
+      if (addButton) {
+        addButton.textContent = 'Salvar';
+        addButton.disabled = false;
+      }
+
+      // Update modal title
+      const modalTitle = modal.querySelector('.princhat-modal-header h3');
+      if (modalTitle) {
+        modalTitle.textContent = 'Editar assinatura';
+      }
+
+      // Trigger preview update using the overlay's updatePreview function
+      // This makes the preview dynamic and connected to formState changes
+      const updatePreviewFunc = (this.subscriptionFormModal as any).__updatePreview;
+      if (updatePreviewFunc) {
+        updatePreviewFunc();
+      }
+    }, 50);
   }
 
   /**

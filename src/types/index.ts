@@ -82,6 +82,21 @@ export interface Trigger {
   updatedAt: number;
 }
 
+export interface Signature {
+  id: string;
+  text: string;
+  formatting: {
+    bold: boolean;
+    italic: boolean;
+    strikethrough: boolean;
+    monospace: boolean;
+  };
+  spacing: number;
+  isActive: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // Storage interfaces
 export interface StorageData {
   messages: Record<string, Message>;
