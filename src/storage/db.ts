@@ -4,7 +4,7 @@
  */
 
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
-import type { Message, Script, Trigger, Tag, Folder, Settings } from '@/types';
+import type { Message, Script, Trigger, Tag, Folder, Settings, Signature } from '@/types';
 
 interface PrinChatDB extends DBSchema {
   messages: {
@@ -35,6 +35,11 @@ interface PrinChatDB extends DBSchema {
     key: string;
     value: Settings;
   };
+  signatures: {
+    key: string;
+    value: Signature;
+    indexes: { 'by-active': number; 'by-created': number };
+  };
   audioBlobs: {
     key: string;
     value: { messageId: string; blob: Blob; createdAt: number };
@@ -60,7 +65,7 @@ interface PrinChatDB extends DBSchema {
 class DatabaseService {
   private db: IDBPDatabase<PrinChatDB> | null = null;
   private readonly DB_NAME = 'princhat-db';
-  private readonly DB_VERSION = 4; // Updated to version 4 for file support
+  private readonly DB_VERSION = 5; // Updated to version 5 for signatures support
 
   async init(): Promise<IDBPDatabase<PrinChatDB>> {
     console.log(`[PrinChat DB] Init called. DB: ${this.DB_NAME} v${this.DB_VERSION}`);
@@ -107,6 +112,13 @@ class DatabaseService {
         // Settings store
         if (!db.objectStoreNames.contains('settings')) {
           db.createObjectStore('settings', { keyPath: 'key' });
+        }
+
+        // Signatures store
+        if (!db.objectStoreNames.contains('signatures')) {
+          const signatureStore = db.createObjectStore('signatures', { keyPath: 'id' });
+          signatureStore.createIndex('by-active', 'isActive');
+          signatureStore.createIndex('by-created', 'createdAt');
         }
 
         // Audio blobs store (separate for better performance)
@@ -526,6 +538,83 @@ class DatabaseService {
     }
 
     return settings as Settings;
+  }
+
+  // ==================== SIGNATURES ====================
+  async saveSignature(signature: Signature): Promise<void> {
+    const db = await this.init();
+    await db.put('signatures', signature);
+
+    // Trigger chrome.storage change event to notify other components
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        signatures: Date.now() // Use timestamp to ensure value changes
+      });
+    }
+  }
+
+  async getAllSignatures(): Promise<Signature[]> {
+    const db = await this.init();
+    const signatures = await db.getAllFromIndex('signatures', 'by-created');
+    return signatures.reverse(); // Most recent first
+  }
+
+  async getSignature(id: string): Promise<Signature | undefined> {
+    const db = await this.init();
+    return db.get('signatures', id);
+  }
+
+  async getActiveSignature(): Promise<Signature | undefined> {
+    const db = await this.init();
+    try {
+      // Query by isActive index using boolean true (not number 1)
+      const signatures = await db.getAllFromIndex('signatures', 'by-active', IDBKeyRange.only(true));
+      return signatures[0]; // Return first active signature (should only be one)
+    } catch (error) {
+      // Fallback: get all and filter manually if index fails
+      console.warn('[DB] Index query failed, falling back to manual filter:', error);
+      const allSignatures = await db.getAll('signatures');
+      return allSignatures.find(sig => sig.isActive === true);
+    }
+  }
+
+  async setActiveSignature(id: string): Promise<void> {
+    const db = await this.init();
+
+    // Get all signatures
+    const allSignatures = await this.getAllSignatures();
+
+    // Deactivate all signatures
+    for (const sig of allSignatures) {
+      if (sig.isActive) {
+        await db.put('signatures', { ...sig, isActive: false, updatedAt: Date.now() });
+      }
+    }
+
+    // Activate the selected signature
+    const targetSignature = await db.get('signatures', id);
+    if (targetSignature) {
+      await db.put('signatures', { ...targetSignature, isActive: true, updatedAt: Date.now() });
+    }
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        signatures: Date.now()
+      });
+    }
+  }
+
+  async deleteSignature(id: string): Promise<void> {
+    const db = await this.init();
+    await db.delete('signatures', id);
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        signatures: Date.now()
+      });
+    }
   }
 
   // ==================== UTILITY ====================

@@ -647,7 +647,9 @@
         try {
           let response;
 
-          if (message.type === 'GET_SCRIPTS_AND_MESSAGES' || message.type === 'GET_SETTINGS' || message.type === 'TOGGLE_SIDE_PANEL') {
+          if (message.type === 'GET_SCRIPTS_AND_MESSAGES' || message.type === 'GET_SETTINGS' || message.type === 'TOGGLE_SIDE_PANEL' ||
+            message.type === 'GET_SIGNATURES' || message.type === 'SAVE_SIGNATURE' || message.type === 'DELETE_SIGNATURE' ||
+            message.type === 'GET_SIGNATURE' || message.type === 'TOGGLE_SIGNATURE_ACTIVE') {
             console.log('[PrinChat] Forwarding to background service worker...');
 
             // Check if extension context is still valid
@@ -743,6 +745,41 @@
         }
       });
       console.log('[PrinChat] ✅ State request listener registered');
+
+      // Listen for active signature requests from page script
+      document.addEventListener('PrinChatGetActiveSignature', async (event: any) => {
+        try {
+          const { requestId } = event.detail;
+          console.log('[PrinChat Injector] 📥 Active signature request received, ID:', requestId);
+
+          // Get active signature from service worker
+          console.log('[PrinChat Injector] 🔍 Requesting active signature from service worker...');
+          const response = await chrome.runtime.sendMessage({ type: 'GET_ACTIVE_SIGNATURE' });
+          console.log('[PrinChat Injector] 🔍 Service worker response:', response);
+
+          const signature = response?.success ? response.data : null;
+          console.log('[PrinChat Injector] 🔍 Signature to send:', signature);
+
+          // Send response back to page script
+          document.dispatchEvent(new CustomEvent('PrinChatSignatureResponse', {
+            detail: {
+              requestId,
+              signature: signature
+            }
+          }));
+          console.log('[PrinChat Injector] ✅ Signature response sent to page script');
+        } catch (error) {
+          console.error('[PrinChat Injector] ❌ Error getting active signature:', error);
+          // Send null response on error
+          document.dispatchEvent(new CustomEvent('PrinChatSignatureResponse', {
+            detail: {
+              requestId: event.detail.requestId,
+              signature: null
+            }
+          }));
+        }
+      });
+      console.log('[PrinChat] ✅ Signature request listener registered');
 
       // Listen for storage changes and forward to UI overlay
       console.log('[PrinChat] Setting up storage change listener...');
@@ -1172,6 +1209,16 @@
 
         case 'GET_ACTIVE_CHAT':
           return await this.getActiveChat();
+
+        case 'SET_ACTIVE_SIGNATURE':
+        case 'TOGGLE_SIGNATURE_ACTIVE':
+        case 'DELETE_SIGNATURE':
+        case 'SAVE_SIGNATURE':
+        case 'GET_SIGNATURES':
+        case 'GET_SIGNATURE':
+          // Forward signature operations to background service worker
+          console.log('[PrinChat] Forwarding signature operation to background:', action.type);
+          return await chrome.runtime.sendMessage(action);
 
         default:
           return { success: false, error: 'Unknown action: ' + action.type };
