@@ -187,6 +187,16 @@ class WhatsAppUIOverlay {
       this.listenForPopupMessages();
       console.log('[PrinChat UI] ✓ Popup messaging active');
 
+      // Inject schedule button into chat header
+      console.log('[PrinChat UI] Step 12: Injecting schedule button...');
+      this.injectScheduleButton();
+      console.log('[PrinChat UI] ✓ Schedule button injected');
+
+      // Monitor chat header changes
+      console.log('[PrinChat UI] Step 13: Setting up chat header monitor...');
+      this.monitorChatHeaderChanges();
+      console.log('[PrinChat UI] ✓ Popup messaging active');
+
       // Setup state synchronization with content script
       document.addEventListener('PrinChatSetState', (event: any) => {
         const viewMode = event.detail.viewMode;
@@ -4618,6 +4628,12 @@ class WhatsAppUIOverlay {
       console.log('[PrinChat UI] Chat changed detected, invalidating cache');
       this.invalidateChatCache();
       this.lastKnownChatElement = currentChatElement;
+
+      // Re-inject schedule button when chat changes
+      setTimeout(() => {
+        console.log('[PrinChat UI] Attempting to inject schedule button after chat change...');
+        this.injectScheduleButton();
+      }, 500); // Wait for DOM to stabilize
     } else if (!currentChatElement && this.lastKnownChatElement) {
       // Chat closed
       console.log('[PrinChat UI] Chat closed, invalidating cache');
@@ -5036,6 +5052,108 @@ class WhatsAppUIOverlay {
     this.loadData().then(() => {
       this.createShortcutBar();
     });
+  }
+
+  /**
+   * Inject schedule button into WhatsApp chat header
+   */
+  private injectScheduleButton() {
+    try {
+      // Find chat header
+      const chatHeader = document.querySelector('#main > header');
+      if (!chatHeader) {
+        console.log('[PrinChat UI] Chat header not found, will retry when chat is opened');
+        return;
+      }
+
+      // Check if button already exists
+      if (chatHeader.querySelector('.princhat-schedule-button')) {
+        console.log('[PrinChat UI] Schedule button already exists');
+        return;
+      }
+
+      // Find the actions container - it's the div that contains the search and more options buttons
+      // Looking for the parent div that contains all action buttons
+      const actionsContainer = chatHeader.querySelector('div.x78zum5.x6s0dn4.x1afcbsf.x14ug900');
+      if (!actionsContainer) {
+        console.log('[PrinChat UI] Actions container not found in header');
+        console.log('[PrinChat UI] Header HTML:', chatHeader.innerHTML.substring(0, 500));
+        return;
+      }
+
+      // Create schedule button
+      const scheduleButton = document.createElement('button');
+      scheduleButton.className = 'princhat-schedule-button';
+      scheduleButton.title = 'Agendar mensagem para este contato';
+      scheduleButton.innerHTML = `
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <polyline points="12 6 12 12 16 14"/>
+        </svg>
+        <span>Agendar</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="princhat-schedule-plus-icon">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+      `;
+
+
+      // Add click event
+      scheduleButton.addEventListener('click', (e) => {
+        e.stopPropagation();
+        console.log('[PrinChat UI] Schedule button clicked');
+        // TODO: Open schedule modal
+        alert('Funcionalidade de agendamento será implementada em breve!');
+      });
+
+      // Insert button at the beginning of actions container
+      actionsContainer.insertBefore(scheduleButton, actionsContainer.firstChild);
+      console.log('[PrinChat UI] ✅ Schedule button injected successfully');
+    } catch (error: any) {
+      console.error('[PrinChat UI] Error injecting schedule button:', error?.message || error);
+    }
+  }
+
+  /**
+   * Monitor chat header changes and re-inject button when chat changes
+   */
+  private monitorChatHeaderChanges() {
+    try {
+      let debounceTimer: NodeJS.Timeout | null = null;
+
+      // Observer for chat header changes
+      const observer = new MutationObserver(() => {
+        // Debounce to avoid excessive calls
+        if (debounceTimer) {
+          clearTimeout(debounceTimer);
+        }
+
+        debounceTimer = setTimeout(() => {
+          // Try to inject if chat header exists but button doesn't
+          const chatHeader = document.querySelector('#main > header');
+          if (chatHeader) {
+            const buttonExists = chatHeader.querySelector('.princhat-schedule-button');
+            if (!buttonExists) {
+              console.log('[PrinChat UI] Chat header detected without button, injecting...');
+              this.injectScheduleButton();
+            }
+          }
+        }, 300); // Wait 300ms after last mutation
+      });
+
+      // Observe the main container for changes
+      const mainContainer = document.querySelector('#main');
+      if (mainContainer) {
+        observer.observe(mainContainer, {
+          childList: true,
+          subtree: true
+        });
+        console.log('[PrinChat UI] ✓ Chat header monitor active');
+      } else {
+        console.log('[PrinChat UI] Main container not found for monitoring');
+      }
+    } catch (error: any) {
+      console.error('[PrinChat UI] Error setting up chat header monitor:', error?.message || error);
+    }
   }
 }
 
