@@ -1197,7 +1197,10 @@ class WhatsAppUIOverlay {
       `;
 
       const clearBtn = card.querySelector('[data-action="clear-message"]');
-      clearBtn?.addEventListener('click', () => this.clearCompletedMessage(msgExec.id));
+      clearBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.clearCompletedMessage(msgExec.id);
+      });
     } else {
       // Card em execução
       // Se tem delay: mostra cronômetro e pause/play
@@ -1228,10 +1231,16 @@ class WhatsAppUIOverlay {
         `;
 
         const pausePlayBtn = card.querySelector('[data-action="pause-play-message"]');
-        pausePlayBtn?.addEventListener('click', () => this.togglePauseMessage(msgExec.id));
+        pausePlayBtn?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.togglePauseMessage(msgExec.id);
+        });
 
         const cancelBtn = card.querySelector('[data-action="cancel-message"]');
-        cancelBtn?.addEventListener('click', () => this.cancelMessage(msgExec.id));
+        cancelBtn?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.cancelMessage(msgExec.id);
+        });
       } else {
         // Sem delay - layout simples
         card.innerHTML = `
@@ -1245,7 +1254,10 @@ class WhatsAppUIOverlay {
         `;
 
         const cancelBtn = card.querySelector('[data-action="cancel-message"]');
-        cancelBtn?.addEventListener('click', () => this.cancelMessage(msgExec.id));
+        cancelBtn?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.cancelMessage(msgExec.id);
+        });
       }
     }
 
@@ -1920,7 +1932,10 @@ class WhatsAppUIOverlay {
       `;
 
       const clearBtn = card.querySelector('[data-action="clear"]');
-      clearBtn?.addEventListener('click', () => this.clearCompletedScript(scriptExec.id));
+      clearBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.clearCompletedScript(scriptExec.id);
+      });
     } else {
       // Card em execução
       const isPaused = scriptExec.status === 'paused';
@@ -1946,10 +1961,16 @@ class WhatsAppUIOverlay {
       `;
 
       const pausePlayBtn = card.querySelector('[data-action="pause-play"]');
-      pausePlayBtn?.addEventListener('click', () => this.togglePauseScript(scriptExec.id));
+      pausePlayBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.togglePauseScript(scriptExec.id);
+      });
 
       const cancelBtn = card.querySelector('[data-action="cancel"]');
-      cancelBtn?.addEventListener('click', () => this.cancelScript(scriptExec.id));
+      cancelBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.cancelScript(scriptExec.id);
+      });
     }
 
     return card;
@@ -3980,10 +4001,16 @@ class WhatsAppUIOverlay {
 
     // Add event listeners for buttons
     const cancelAllBtn = container.querySelector('[data-action="cancel-all"]');
-    cancelAllBtn?.addEventListener('click', () => this.cancelAllScripts());
+    cancelAllBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.cancelAllScripts();
+    });
 
     const clearAllBtn = container.querySelector('[data-action="clear-all"]');
-    clearAllBtn?.addEventListener('click', () => this.clearAllCompleted());
+    clearAllBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.clearAllCompleted();
+    });
 
     return container;
   }
@@ -4039,10 +4066,16 @@ class WhatsAppUIOverlay {
 
     // Add event listeners for buttons
     const cancelAllBtn = container.querySelector('[data-action="cancel-all-messages"]');
-    cancelAllBtn?.addEventListener('click', () => this.cancelAllMessages());
+    cancelAllBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.cancelAllMessages();
+    });
 
     const clearAllBtn = container.querySelector('[data-action="clear-all-messages"]');
-    clearAllBtn?.addEventListener('click', () => this.clearAllCompletedMessages());
+    clearAllBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.clearAllCompletedMessages();
+    });
 
     return container;
   }
