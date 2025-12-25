@@ -3063,10 +3063,12 @@ class WhatsAppUIOverlay {
     // Add delete button handlers
     const deleteButtons = popup.querySelectorAll('.princhat-signature-delete-btn');
     deleteButtons.forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation(); // Prevent event bubbling
         const sigId = btn.getAttribute('data-sig-id');
-        if (sigId && confirm('Deseja realmente deletar esta assinatura?')) {
-          this.deleteSignature(sigId);
+        if (sigId) {
+          // Show custom confirmation modal instead of browser confirm
+          this.showDeleteConfirmation(sigId);
         }
       });
     });
@@ -3433,6 +3435,117 @@ class WhatsAppUIOverlay {
       console.error('[PrinChat] Error loading signatures:', error);
       this.signatures = [];
     }
+  }
+
+  /**
+   * Show delete confirmation modal (custom, not browser confirm)
+   */
+  private showDeleteConfirmation(id: string) {
+    // Create overlay
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+    `;
+
+    // Create modal
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+      background: #2a2a2a;
+      border: 1px solid #3a3a3a;
+      border-radius: 8px;
+      padding: 24px;
+      max-width: 400px;
+      width: 90%;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    `;
+
+    modal.innerHTML = `
+      <div style="margin-bottom: 16px;">
+        <h3 style="margin: 0 0 8px 0; font-size: 18px; font-weight: 600; color: #ffffff;">
+          Excluir assinatura
+        </h3>
+        <p style="margin: 0; font-size: 14px; color: #9e9e9e;">
+          Tem certeza que deseja excluir esta assinatura? Esta ação não pode ser desfeita.
+        </p>
+      </div>
+      <div style="display: flex; gap: 12px; justify-content: flex-end;">
+        <button class="cancel-btn" style="
+          padding: 8px 20px;
+          border: 1px solid #3a3a3a;
+          background: transparent;
+          color: white;
+          border-radius: 8px;
+          cursor: pointer;
+          font-size: 11px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          transition: all 0.2s;
+        ">CANCELAR</button>
+        <button class="confirm-btn" style="
+          padding: 8px 20px;
+          border: none;
+          background: #f44336;
+          color: white;
+          border-radius: 8px;
+          cursor: pointer;
+          font-size: 11px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          transition: all 0.2s;
+        ">EXCLUIR</button>
+      </div>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // Add event listeners
+    const cancelBtn = modal.querySelector('.cancel-btn') as HTMLElement;
+    const confirmBtn = modal.querySelector('.confirm-btn') as HTMLElement;
+
+    const closeModal = () => overlay.remove();
+
+    // Add hover effects
+    if (cancelBtn) {
+      cancelBtn.addEventListener('mouseenter', () => {
+        cancelBtn.style.background = 'var(--bg-hover)';
+        cancelBtn.style.borderColor = '#e91e63';
+      });
+      cancelBtn.addEventListener('mouseleave', () => {
+        cancelBtn.style.background = 'transparent';
+        cancelBtn.style.borderColor = 'var(--border-color)';
+      });
+    }
+
+    if (confirmBtn) {
+      confirmBtn.addEventListener('mouseenter', () => {
+        confirmBtn.style.background = '#c62828';
+      });
+      confirmBtn.addEventListener('mouseleave', () => {
+        confirmBtn.style.background = '#f44336';
+      });
+    }
+
+    cancelBtn?.addEventListener('click', closeModal);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeModal();
+    });
+
+    confirmBtn?.addEventListener('click', () => {
+      closeModal();
+      this.deleteSignature(id);
+    });
   }
 
   /**
