@@ -2345,6 +2345,62 @@ class WhatsAppUIOverlay {
         title: 'Manutenção Programada',
         message: 'Sistema estará em manutenção dia 25/11 das 2h às 4h.',
         timestamp: Date.now() - 172800000 // 2 dias atrás
+      },
+      {
+        id: '4',
+        type: 'promo',
+        icon: '🎁',
+        title: 'Oferta Exclusiva',
+        message: 'Aproveite nosso plano premium com recursos ilimitados.',
+        timestamp: Date.now() - 7200000 // 2h atrás
+      },
+      {
+        id: '5',
+        type: 'update',
+        icon: '✨',
+        title: 'Novo Recurso',
+        message: 'Agora você pode agendar mensagens para envio automático.',
+        timestamp: Date.now() - 10800000 // 3h atrás
+      },
+      {
+        id: '6',
+        type: 'alert',
+        icon: '📢',
+        title: 'Comunicado Importante',
+        message: 'Novos termos de serviço entrarão em vigor no próximo mês.',
+        timestamp: Date.now() - 259200000 // 3 dias atrás
+      },
+      {
+        id: '7',
+        type: 'promo',
+        icon: '💰',
+        title: 'Cashback Disponível',
+        message: 'Você tem R$ 25,00 de cashback para usar na próxima renovação.',
+        timestamp: Date.now() - 14400000 // 4h atrás
+      },
+      {
+        id: '8',
+        type: 'update',
+        icon: '🚀',
+        title: 'Performance Melhorada',
+        message: 'O sistema agora está 3x mais rápido no envio de mensagens.',
+        timestamp: Date.now() - 345600000 // 4 dias atrás
+      },
+      {
+        id: '9',
+        type: 'alert',
+        icon: '🔒',
+        title: 'Segurança',
+        message: 'Ative a autenticação de dois fatores para mais segurança.',
+        timestamp: Date.now() - 432000000 // 5 dias atrás
+      },
+      {
+        id: '10',
+        type: 'promo',
+        icon: '🌟',
+        title: 'Upgrade Premium',
+        message: 'Desbloqueie todos os recursos com nosso plano anual.',
+        timestamp: Date.now() - 18000000 // 5h atrás
       }
     ];
 
@@ -2406,6 +2462,12 @@ class WhatsAppUIOverlay {
       if (list) {
         list.innerHTML = '<div class="princhat-notifications-empty">Nenhuma notificação no momento</div>';
       }
+
+      // Hide badge
+      const badge = button.querySelector('.princhat-notification-badge') as HTMLElement;
+      if (badge) {
+        badge.style.display = 'none';
+      }
     });
 
     // Close button handler
@@ -2418,12 +2480,26 @@ class WhatsAppUIOverlay {
     // Close individual notification
     dropdown.querySelectorAll('.princhat-notification-close').forEach(btn => {
       btn.addEventListener('click', (e) => {
+        e.stopPropagation();
         const item = (e.target as HTMLElement).closest('.princhat-notification-item');
         if (item) {
           item.remove();
-          // Check if list is empty
+
+          // Update badge count
+          const badge = button.querySelector('.princhat-notification-badge') as HTMLElement;
           const remainingItems = dropdown.querySelectorAll('.princhat-notification-item');
-          if (remainingItems.length === 0) {
+          const count = remainingItems.length;
+
+          if (badge) {
+            if (count === 0) {
+              badge.style.display = 'none';
+            } else {
+              badge.textContent = count > 9 ? '9+' : count.toString();
+            }
+          }
+
+          // Check if list is empty
+          if (count === 0) {
             const list = dropdown.querySelector('.princhat-notifications-list');
             if (list) {
               list.innerHTML = '<div class="princhat-notifications-empty">Nenhuma notificação no momento</div>';
@@ -4279,11 +4355,12 @@ class WhatsAppUIOverlay {
       button.title = icon.tooltip;
       button.dataset.action = icon.name;
 
-      // Add notification badge for notifications button (FAKE for preview)
+      // Add notification badge for notifications button with 9+ logic
       if (icon.name === 'notifications') {
         const badge = document.createElement('span');
         badge.className = 'princhat-notification-badge';
-        badge.textContent = '3'; // Fake count
+        const count = 10; // Initial count (matches fake notifications)
+        badge.textContent = count > 9 ? '9+' : count.toString();
         button.appendChild(badge);
       }
 

@@ -77,14 +77,16 @@
   color: white;
   font-size: 10px;
   font-weight: 600;
-  width: 18px;
+  min-width: 18px;
   height: 18px;
+  padding: 0 3.5px;
   border-radius: 50%;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   box-shadow: 0 0 0 2px #1a1a1a;
   pointer-events: none;
+  box-sizing: border-box;
   /* Allow clicks to pass through to button */
 }
 
@@ -142,6 +144,7 @@
   align-items: flex-start;
   transition: background 0.2s;
   position: relative;
+  cursor: pointer;
 }
 
 .princhat-notification-item:hover {
