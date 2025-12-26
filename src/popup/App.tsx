@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Grid,
   Mic,
-  MessageCircle,
+  MessageSquare,
   Camera,
   FileText,
   Search,
@@ -614,7 +614,7 @@ const App: React.FC = () => {
       case 'audio':
         return <Mic size={16} />;
       case 'text':
-        return <MessageCircle size={16} />;
+        return <MessageSquare size={16} />;
       case 'image':
         return <Camera size={16} />;
       case 'video':
@@ -720,7 +720,7 @@ const App: React.FC = () => {
             onClick={() => setMediaFilter('text')}
             title="Textos"
           >
-            <MessageCircle size={18} />
+            <MessageSquare size={18} />
           </button>
           <button
             className={`tool-btn ${mediaFilter === 'image' ? 'active' : ''}`}

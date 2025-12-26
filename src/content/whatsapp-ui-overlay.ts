@@ -3228,11 +3228,6 @@ class WhatsAppUIOverlay {
         <div class="princhat-section-label">Escolha o que será enviado</div>
         
         <div class="princhat-icon-filters">
-          <button class="princhat-icon-filter" data-filter="script">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>
-            </svg>
-          </button>
           <button class="princhat-icon-filter active" data-filter="all">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>
@@ -3240,7 +3235,7 @@ class WhatsAppUIOverlay {
           </button>
           <button class="princhat-icon-filter" data-filter="text">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
             </svg>
           </button>
           <button class="princhat-icon-filter" data-filter="audio">
@@ -3256,6 +3251,11 @@ class WhatsAppUIOverlay {
           <button class="princhat-icon-filter" data-filter="file">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><line x1="10" x2="14" y1="12" y2="12"/><line x1="10" x2="14" y1="16" y2="16"/>
+            </svg>
+          </button>
+          <button class="princhat-icon-filter" data-filter="script">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>
             </svg>
           </button>
         </div>
@@ -3357,8 +3357,8 @@ class WhatsAppUIOverlay {
         }).join('');
       }
 
-      // Add scripts at the end
-      if (scripts.length > 0) {
+      // Add scripts at the end (only if filter is 'all' or 'script')
+      if (scripts.length > 0 && (state.filterType === 'all' || state.filterType === 'script')) {
         if (messages.length > 0) {
           html += '<div class="princhat-dropdown-divider"></div>';
         }

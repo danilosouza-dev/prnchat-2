@@ -6,7 +6,7 @@ import NewMessageModal from '../components/NewMessageModal';
 import CustomAudioPlayer from '../components/CustomAudioPlayer';
 import FolderManagementModal from '../components/FolderManagementModal';
 import { Tabs, TabsList, TabsTrigger, Button, Card, AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui';
-import { Grid, Mic, MessageCircle, Camera, Video, FileText, GripVertical, Edit2, Trash2, ChevronDown, ChevronUp, Plus, Search, Folder as FolderIcon, Download, Upload } from 'lucide-react';
+import { Grid, Mic, MessageSquare, Camera, Video, FileText, GripVertical, Edit2, Trash2, ChevronDown, ChevronUp, Plus, Search, Folder as FolderIcon, Download, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface MessagesTabProps {
@@ -412,7 +412,7 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
       case 'audio':
         return <Mic size={16} className="text-[var(--text-secondary)]" />;
       case 'text':
-        return <MessageCircle size={16} className="text-[var(--text-secondary)]" />;
+        return <MessageSquare size={16} className="text-[var(--text-secondary)]" />;
       case 'image':
         return <Camera size={16} className="text-[var(--text-secondary)]" />;
       case 'video':
@@ -420,7 +420,7 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
       case 'file':
         return <FileText size={16} className="text-[var(--text-secondary)]" />;
       default:
-        return <MessageCircle size={16} className="text-[var(--text-secondary)]" />;
+        return <MessageSquare size={16} className="text-[var(--text-secondary)]" />;
     }
   };
 
@@ -716,7 +716,7 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
                 Pastas
               </TabsTrigger>
               <TabsTrigger value="text">
-                <MessageCircle size={18} className="mr-1" />
+                <MessageSquare size={18} className="mr-1" />
                 Texto
               </TabsTrigger>
               <TabsTrigger value="audio">
@@ -860,7 +860,7 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
                             };
                           case 'text':
                             return {
-                              icon: <MessageCircle size={48} />,
+                              icon: <MessageSquare size={48} />,
                               title: 'Nenhuma mensagem de texto',
                               description: 'Crie modelos de texto para respostas rápidas'
                             };
@@ -891,7 +891,7 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ setHeaderActions }) => {
                           default:
                             // 'all' filter
                             return {
-                              icon: <MessageCircle size={48} />,
+                              icon: <MessageSquare size={48} />,
                               title: 'Nenhuma mensagem criada',
                               description: 'Crie sua primeira mensagem para começar a automatizar o WhatsApp'
                             };
