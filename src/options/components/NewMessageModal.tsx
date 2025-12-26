@@ -15,7 +15,7 @@ import {
   RadioGroupItem,
   Switch,
 } from '@/components/ui';
-import { MessageCircle, Mic, Camera, Video, Upload, Check, X, Clock, Plus, Minus, FileText } from 'lucide-react';
+import { MessageSquare, Mic, Camera, Video, Upload, Check, X, Clock, Plus, Minus, FileText } from 'lucide-react';
 import AudioRecorder from './AudioRecorder';
 import FolderManager from './FolderManager';
 import FileUploader from './FileUploader';
@@ -227,7 +227,7 @@ const NewMessageModal: React.FC<NewMessageModalProps> = ({
               >
                 <RadioGroupItem value="text" id="type-text" />
                 <div className="flex items-center gap-2 flex-1">
-                  <MessageCircle size={18} />
+                  <MessageSquare size={18} />
                   <span>Texto</span>
                 </div>
               </Label>
