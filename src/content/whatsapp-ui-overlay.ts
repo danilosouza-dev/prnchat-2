@@ -11,6 +11,7 @@ interface Script {
 
 interface Message {
   id: string;
+  name?: string;
   content: string;
   type: string;
   caption?: string;
@@ -92,6 +93,8 @@ class WhatsAppUIOverlay {
   private helpPopup: HTMLElement | null = null; // Help popup
   private subscriptionPopup: HTMLElement | null = null; // Subscription popup
   private subscriptionFormModal: HTMLElement | null = null; // Subscription form modal
+  private scheduleListPopup: HTMLElement | null = null; // Schedule list popup
+  private scheduleCreationModal: HTMLElement | null = null; // Schedule creation modal
   private tooltip: HTMLElement | null = null;
   private scripts: Script[] = [];
   private messages: Message[] = [];
@@ -3003,6 +3006,507 @@ class WhatsAppUIOverlay {
   }
 
   /**
+   * Toggle schedule list popup
+   */
+  private toggleScheduleListPopup(button: HTMLElement) {
+    if (this.scheduleListPopup) {
+      this.scheduleListPopup.remove();
+      this.scheduleListPopup = null;
+      return;
+    }
+
+    const popup = document.createElement('div');
+    popup.className = 'princhat-schedule-list-popup';
+    this.scheduleListPopup = popup;
+
+    popup.innerHTML = `
+      <div class="princhat-schedule-list-header">
+        <h3>Lista de agendamentos</h3>
+        <button class="princhat-popup-close-btn">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="princhat-schedule-list-content">
+        <div class="princhat-schedule-list-empty">
+          <div class="princhat-schedule-list-empty-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+            </svg>
+          </div>
+          <div class="princhat-schedule-list-empty-title">Nenhum agendamento</div>
+          <div class="princhat-schedule-list-empty-subtitle">Não há mensagens ou scripts agendados para este contato.</div>
+        </div>
+      </div>
+      <div class="princhat-schedule-list-footer">
+        <button class="princhat-schedule-list-create-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+          Criar novo
+        </button>
+      </div>
+    `;
+
+    const rect = button.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.top = `${rect.bottom + 8}px`;
+    popup.style.right = `${window.innerWidth - rect.right}px`;
+    document.body.appendChild(popup);
+
+    const closeBtn = popup.querySelector('.princhat-popup-close-btn');
+    closeBtn?.addEventListener('click', () => {
+      popup.remove();
+      this.scheduleListPopup = null;
+    });
+
+    const createBtn = popup.querySelector('.princhat-schedule-list-create-btn');
+    createBtn?.addEventListener('click', () => {
+      popup.remove();
+      this.scheduleListPopup = null;
+      this.openScheduleCreationModal();
+    });
+
+    const closePopup = (e: MouseEvent) => {
+      if (!popup.contains(e.target as Node) && !button.contains(e.target as Node)) {
+        popup.remove();
+        this.scheduleListPopup = null;
+        document.removeEventListener('click', closePopup);
+      }
+    };
+
+    setTimeout(() => document.addEventListener('click', closePopup), 100);
+  }
+
+  /**
+   * Open schedule creation modal
+   */
+  private openScheduleCreationModal() {
+    if (this.scheduleCreationModal) {
+      this.scheduleCreationModal.remove();
+      this.scheduleCreationModal = null;
+      return;
+    }
+
+    const state = {
+      contentType: 'message' as 'message' | 'script',
+      filterType: 'all' as 'all' | 'text' | 'audio' | 'image' | 'file' | 'script',
+      searchText: '',
+      selectedId: '',
+      date: '',
+      time: ''
+    };
+
+    const now = new Date();
+    now.setHours(now.getHours() + 1, 0, 0, 0);
+    state.date = now.toISOString().split('T')[0];
+    state.time = `${String(now.getHours()).padStart(2, '0')}:00`;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'princhat-modal-overlay';
+    this.scheduleCreationModal = overlay;
+
+    const modal = document.createElement('div');
+    modal.className = 'princhat-schedule-modal';
+
+    const getIcon = (type: string) => {
+      const icons: Record<string, string> = {
+        text: '<path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>',
+        audio: '<path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>',
+        image: '<path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>',
+        video: '<path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>',
+        file: '<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/>',
+        script: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>'
+      };
+      return icons[type] || icons.text;
+    };
+
+    const buildList = (): string => {
+      let items: any[] = state.contentType === 'message' ? this.messages : this.scripts;
+
+      if (state.contentType === 'message' && state.filterType !== 'all') {
+        items = items.filter((m: Message) => m.type === state.filterType);
+      }
+
+      if (state.searchText) {
+        const search = state.searchText.toLowerCase();
+        items = items.filter((item: Message | Script) => {
+          const text = state.contentType === 'message' ? (item as Message).content : (item as Script).name;
+          return text.toLowerCase().includes(search);
+        });
+      }
+
+      if (items.length === 0) {
+        return '<div class="princhat-item-empty">Nenhum item encontrado</div>';
+      }
+
+      return items.map((item: Message | Script) => {
+        const icon = state.contentType === 'message' ? getIcon((item as Message).type) : getIcon('script');
+        const text = state.contentType === 'message'
+          ? (item as Message).content.substring(0, 60) + ((item as Message).content.length > 60 ? '...' : '')
+          : (item as Script).name;
+
+        return `
+          <div class="princhat-item-row" data-id="${item.id}">
+            <svg class="princhat-item-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">${icon}</svg>
+            <span class="princhat-item-text">${text}</span>
+          </div>
+        `;
+      }).join('');
+    };
+
+    const updateList = () => {
+      const list = modal.querySelector('[data-list]') as HTMLElement;
+      if (list) {
+        list.innerHTML = buildList();
+        attachItemListeners();
+      }
+    };
+
+    const attachItemListeners = () => {
+      const items = modal.querySelectorAll('.princhat-item-row');
+      items.forEach(item => {
+        item.addEventListener('click', () => {
+          items.forEach(i => i.classList.remove('active'));
+          item.classList.add('active');
+          state.selectedId = (item as HTMLElement).dataset.id || '';
+          updatePreview();
+        });
+      });
+    };
+
+    const updatePreview = () => {
+      const preview = modal.querySelector('[data-preview]') as HTMLElement;
+      const btn = modal.querySelector('[data-action="schedule"]') as HTMLButtonElement;
+
+      if (!state.selectedId || !state.date || !state.time) {
+        if (preview) preview.style.display = 'none';
+        if (btn) btn.disabled = true;
+        return;
+      }
+
+      const item = state.contentType === 'message'
+        ? this.messages.find(m => m.id === state.selectedId)
+        : this.scripts.find(s => s.id === state.selectedId);
+
+      if (!item) return;
+
+      const scheduleDate = new Date(`${state.date}T${state.time}`);
+      const formatted = scheduleDate.toLocaleDateString('pt-BR', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+
+      const text = state.contentType === 'message'
+        ? (item as Message).content.substring(0, 80)
+        : `${(item as Script).name} (${(item as Script).steps.length} passos)`;
+
+      if (preview) {
+        preview.innerHTML = `<strong>${text}</strong> • ${formatted}`;
+        preview.style.display = 'block';
+      }
+
+      const nowCheck = new Date();
+      const isValid = scheduleDate > nowCheck;
+      if (btn) btn.disabled = !isValid;
+    };
+
+    modal.innerHTML = `
+      <div class="princhat-modal-header">
+        <h3>Agendar nova mensagem</h3>
+        <button class="princhat-popup-close-btn">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="princhat-modal-body">
+        <div class="princhat-section-label">Escolha o que será enviado</div>
+        
+        <div class="princhat-icon-filters">
+          <button class="princhat-icon-filter" data-filter="script">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>
+            </svg>
+          </button>
+          <button class="princhat-icon-filter active" data-filter="all">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>
+            </svg>
+          </button>
+          <button class="princhat-icon-filter" data-filter="text">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>
+            </svg>
+          </button>
+          <button class="princhat-icon-filter" data-filter="audio">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>
+            </svg>
+          </button>
+          <button class="princhat-icon-filter" data-filter="image">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>
+            </svg>
+          </button>
+          <button class="princhat-icon-filter" data-filter="file">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><line x1="10" x2="14" y1="12" y2="12"/><line x1="10" x2="14" y1="16" y2="16"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="princhat-custom-dropdown" data-dropdown>
+          <button class="princhat-dropdown-trigger" data-dropdown-trigger>
+            <span data-dropdown-label>Selecione</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+          <div class="princhat-dropdown-panel" data-dropdown-panel style="display:none">
+            <div class="princhat-dropdown-search">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+              </svg>
+              <input type="text" placeholder="Pesquisar..." data-dropdown-search />
+            </div>
+            <div class="princhat-dropdown-list" data-dropdown-list></div>
+          </div>
+        </div>
+
+        <div class="princhat-time-shortcuts">
+          <button class="princhat-time-tag princhat-time-reset" data-reset>Redefinir</button>
+          <button class="princhat-time-tag" data-add-min="30">+30min</button>
+          <button class="princhat-time-tag" data-add-min="60">+1h</button>
+          <button class="princhat-time-tag" data-add-min="720">+12h</button>
+          <button class="princhat-time-tag" data-add-days="1">+1 dia</button>
+          <button class="princhat-time-tag" data-add-days="7">+1 semana</button>
+        </div>
+
+        <div class="princhat-datetime-row">
+          <input type="date" class="princhat-datetime-input" value="${state.date}" data-field="date" />
+          <input type="time" class="princhat-datetime-input" value="${state.time}" data-field="time" />
+        </div>
+
+        <div class="princhat-preview-inline" style="display:none" data-preview></div>
+      </div>
+      <div class="princhat-modal-footer-right">
+        <button class="princhat-schedule-btn" disabled data-action="schedule">Agendar</button>
+      </div>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    attachItemListeners();
+
+    const filterBtns = modal.querySelectorAll('[data-filter]');
+    filterBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        filterBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        state.filterType = (btn as HTMLElement).dataset.filter as any;
+        state.selectedId = '';
+        updateList();
+        updatePreview();
+      });
+    });
+
+    // Dropdown functionality
+    const dropdownTrigger = modal.querySelector('[data-dropdown-trigger]') as HTMLElement;
+    const dropdownPanel = modal.querySelector('[data-dropdown-panel]') as HTMLElement;
+    const dropdownLabel = modal.querySelector('[data-dropdown-label]') as HTMLElement;
+    const dropdownList = modal.querySelector('[data-dropdown-list]') as HTMLElement;
+    const dropdownSearchInput = modal.querySelector('[data-dropdown-search]') as HTMLInputElement;
+
+    const buildDropdownList = (searchText = '') => {
+      // Get messages and scripts separately
+      let messages = this.messages;
+      let scripts = this.scripts;
+
+      // Apply type filter to messages
+      if (state.filterType !== 'all') {
+        messages = messages.filter((m: Message) => m.type === state.filterType);
+      }
+
+      // Apply search to both
+      if (searchText) {
+        const search = searchText.toLowerCase();
+        messages = messages.filter((m: Message) => (m.name || m.content).toLowerCase().includes(search));
+        scripts = scripts.filter((s: Script) => s.name.toLowerCase().includes(search));
+      }
+
+      // Build HTML: messages first, then scripts
+      let html = '';
+
+      // Add messages
+      if (messages.length > 0) {
+        html += messages.map((msg: Message) => {
+          const icon = getIcon(msg.type);
+          const text = msg.name || msg.content.substring(0, 60) + (msg.content.length > 60 ? '...' : '');
+          return `
+            <div class="princhat-dropdown-item" data-id="${msg.id}" data-type="message">
+              <svg class="princhat-item-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">${icon}</svg>
+              <span>${text}</span>
+            </div>
+          `;
+        }).join('');
+      }
+
+      // Add scripts at the end
+      if (scripts.length > 0) {
+        if (messages.length > 0) {
+          html += '<div class="princhat-dropdown-divider"></div>';
+        }
+        html += scripts.map((script: Script) => {
+          const icon = getIcon('script');
+          return `
+            <div class="princhat-dropdown-item" data-id="${script.id}" data-type="script">
+              <svg class="princhat-item-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">${icon}</svg>
+              <span>${script.name}</span>
+            </div>
+          `;
+        }).join('');
+      }
+
+      if (!html) {
+        return '<div class="princhat-dropdown-empty">Nenhum item encontrado</div>';
+      }
+
+      return html;
+    };
+
+    const updateDropdownList = (searchText = '') => {
+      dropdownList.innerHTML = buildDropdownList(searchText);
+
+      const items = dropdownList.querySelectorAll('.princhat-dropdown-item');
+      items.forEach(item => {
+        item.addEventListener('click', () => {
+          const id = (item as HTMLElement).dataset.id || '';
+          const itemType = (item as HTMLElement).dataset.type as 'message' | 'script';
+
+          state.selectedId = id;
+          state.contentType = itemType;
+
+          const selectedItem = itemType === 'message'
+            ? this.messages.find(m => m.id === id)
+            : this.scripts.find(s => s.id === id);
+
+          if (selectedItem) {
+            const text = itemType === 'message'
+              ? (selectedItem as Message).content.substring(0, 40) + ((selectedItem as Message).content.length > 40 ? '...' : '')
+              : (selectedItem as Script).name;
+            dropdownLabel.textContent = text;
+          }
+
+          dropdownPanel.style.display = 'none';
+          updatePreview();
+        });
+      });
+    };
+
+    dropdownTrigger?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = dropdownPanel.style.display !== 'none';
+
+      if (isOpen) {
+        dropdownPanel.style.display = 'none';
+      } else {
+        // Position dropdown fixed relative to trigger button
+        const triggerRect = dropdownTrigger.getBoundingClientRect();
+        dropdownPanel.style.top = `${triggerRect.bottom + 4}px`;
+        dropdownPanel.style.left = `${triggerRect.left}px`;
+        dropdownPanel.style.width = `${triggerRect.width}px`;
+        dropdownPanel.style.display = 'block';
+
+        updateDropdownList();
+        dropdownSearchInput.value = '';
+      }
+    });
+
+    dropdownSearchInput?.addEventListener('input', () => {
+      updateDropdownList(dropdownSearchInput.value);
+    });
+
+    const closeDropdownOnOutsideClick = (e: MouseEvent) => {
+      if (!dropdownPanel.contains(e.target as Node) && !dropdownTrigger.contains(e.target as Node)) {
+        dropdownPanel.style.display = 'none';
+      }
+    };
+    document.addEventListener('click', closeDropdownOnOutsideClick);
+
+    const searchInput = modal.querySelector('[data-search]') as HTMLInputElement;
+    searchInput?.addEventListener('input', () => {
+      state.searchText = searchInput.value;
+      updateList();
+    });
+
+    const dateInput = modal.querySelector('[data-field="date"]') as HTMLInputElement;
+    const timeInput = modal.querySelector('[data-field="time"]') as HTMLInputElement;
+    dateInput?.addEventListener('change', () => {
+      state.date = dateInput.value;
+      updatePreview();
+    });
+    timeInput?.addEventListener('change', () => {
+      state.time = timeInput.value;
+      updatePreview();
+    });
+
+    const timeTags = modal.querySelectorAll('[data-add-min], [data-add-days], [data-reset]');
+    timeTags.forEach(tag => {
+      tag.addEventListener('click', () => {
+        if ((tag as HTMLElement).dataset.reset !== undefined) {
+          const defaultTime = new Date();
+          defaultTime.setHours(defaultTime.getHours() + 1, 0, 0, 0);
+          state.date = defaultTime.toISOString().split('T')[0];
+          state.time = `${String(defaultTime.getHours()).padStart(2, '0')}:00`;
+        } else {
+          const current = new Date(`${state.date}T${state.time}`);
+          const addMin = (tag as HTMLElement).dataset.addMin;
+          const addDays = (tag as HTMLElement).dataset.addDays;
+
+          if (addMin) current.setMinutes(current.getMinutes() + parseInt(addMin));
+          if (addDays) current.setDate(current.getDate() + parseInt(addDays));
+
+          state.date = current.toISOString().split('T')[0];
+          state.time = `${String(current.getHours()).padStart(2, '0')}:${String(current.getMinutes()).padStart(2, '0')}`;
+        }
+
+        if (dateInput) dateInput.value = state.date;
+        if (timeInput) timeInput.value = state.time;
+        updatePreview();
+      });
+    });
+
+    const scheduleBtn = modal.querySelector('[data-action="schedule"]') as HTMLButtonElement;
+    scheduleBtn?.addEventListener('click', () => {
+      console.log('[PrinChat UI] Creating schedule:', state);
+      alert('Agendamento criado!');
+      overlay.remove();
+      this.scheduleCreationModal = null;
+    });
+
+    const closeBtn = modal.querySelector('.princhat-popup-close-btn');
+    closeBtn?.addEventListener('click', () => {
+      overlay.remove();
+      this.scheduleCreationModal = null;
+    });
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        overlay.remove();
+        this.scheduleCreationModal = null;
+      }
+    });
+
+    updatePreview();
+  }
+
+  /**
    * Toggle subscription popup for managing message signatures
    */
   private async toggleSubscriptionPopup(button: HTMLElement) {
@@ -5101,8 +5605,7 @@ class WhatsAppUIOverlay {
       scheduleButton.addEventListener('click', (e) => {
         e.stopPropagation();
         console.log('[PrinChat UI] Schedule button clicked');
-        // TODO: Open schedule modal
-        alert('Funcionalidade de agendamento será implementada em breve!');
+        this.toggleScheduleListPopup(scheduleButton);
       });
 
       // Insert button at the beginning of actions container
