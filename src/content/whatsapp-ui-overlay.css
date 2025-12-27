@@ -73,7 +73,7 @@
   position: absolute;
   top: -2px;
   right: -2px;
-  background: #e91e63;
+  background: #ff0000;
   color: white;
   font-size: 10px;
   font-weight: 600;
@@ -2349,6 +2349,48 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
   stroke-width: 1.5;
 }
 
+/* Icon-only state (when has schedules) */
+.princhat-schedule-button.has-schedules {
+  width: auto;
+  height: auto;
+  padding: 8px;
+  border-radius: 50%;
+  position: relative;
+  background: transparent;
+  border: none;
+}
+
+.princhat-schedule-button.has-schedules:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.princhat-schedule-button.has-schedules svg {
+  width: 20px;
+  height: 20px;
+  color: #8696a0;
+}
+
+/* Schedule badge */
+.princhat-schedule-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: #ff0000;
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  min-width: 18px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 2px solid #111b21;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
 /* ==================== SCHEDULE LIST POPUP ==================== */
 .princhat-schedule-list-popup {
   position: fixed;
@@ -2449,6 +2491,81 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
 
 .princhat-schedule-list-create-btn:hover {
   background: #c2185b;
+}
+
+/* Schedule Items */
+.princhat-schedule-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid #2a2a2a;
+  transition: background 0.2s;
+}
+
+.princhat-schedule-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.princhat-schedule-item:last-child {
+  border-bottom: none;
+}
+
+.princhat-schedule-item-icon {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: rgba(233, 30, 99, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #e91e63;
+}
+
+.princhat-schedule-item-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.princhat-schedule-item-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #fff;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.princhat-schedule-item-time {
+  font-size: 12px;
+  color: #888;
+}
+
+.princhat-schedule-item-delete {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: transparent;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  opacity: 0;
+}
+
+.princhat-schedule-item:hover .princhat-schedule-item-delete {
+  opacity: 1;
+}
+
+.princhat-schedule-item-delete:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ff4444;
 }
 
 /* ==================== SCHEDULE CREATION MODAL ==================== */
