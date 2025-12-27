@@ -42,6 +42,18 @@ interface Signature {
   updatedAt: number;
 }
 
+interface Schedule {
+  id: string;
+  chatId: string;
+  chatName: string;
+  type: 'message' | 'script';
+  itemId: string;
+  scheduledTime: number;
+  status: 'pending' | 'completed' | 'failed';
+  createdAt: number;
+  updatedAt: number;
+}
+
 // Unused interface - commented out to avoid lint error
 // interface StatusItem {
 //   id: string;
@@ -687,7 +699,7 @@ class WhatsAppUIOverlay {
   /**
    * Send message in PARALLEL (each executes independently with own delay/pause/cancel)
    */
-  private async sendSingleMessage(message: Message) {
+  private async sendSingleMessage(message: Message, targetChatId?: string) {
     // IMPORTANT: Only show popup for messages with delay
     // Messages without delay are sent directly without popup
     const hasDelay = this.messageHasDelay(message);
@@ -695,7 +707,7 @@ class WhatsAppUIOverlay {
     if (!hasDelay) {
       // Send directly without popup (no delay = no need for pause/cancel controls)
       console.log('[PrinChat UI] Sending message without delay (no popup):', message.type);
-      await this.sendMessageDirect(message);
+      await this.sendMessageDirect(message, targetChatId);
       return;
     }
 
@@ -703,7 +715,7 @@ class WhatsAppUIOverlay {
     const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
     // IMPORTANT: Capture chat info NOW (not after delay) - like scripts do
-    const chatId = await this.getActiveChatId();
+    const chatId = targetChatId || await this.getActiveChatId();
     if (!chatId) {
       console.error('[PrinChat UI] No active chat selected');
       return;
@@ -3008,7 +3020,7 @@ class WhatsAppUIOverlay {
   /**
    * Toggle schedule list popup
    */
-  private toggleScheduleListPopup(button: HTMLElement) {
+  private async toggleScheduleListPopup(button: HTMLElement) {
     if (this.scheduleListPopup) {
       this.scheduleListPopup.remove();
       this.scheduleListPopup = null;
@@ -3018,6 +3030,77 @@ class WhatsAppUIOverlay {
     const popup = document.createElement('div');
     popup.className = 'princhat-schedule-list-popup';
     this.scheduleListPopup = popup;
+
+    // Get active chat ID
+    const chatId = await this.getActiveChatId() || '';
+
+    // Load schedules for this chat
+    console.log('[PrinChat UI] Loading schedules for chat:', chatId);
+    const response = await this.requestFromContentScript({
+      type: 'GET_SCHEDULES_BY_CHAT',
+      payload: { chatId }
+    });
+
+    const schedules: Schedule[] = response?.data || [];
+    console.log('[PrinChat UI] Loaded schedules:', schedules);
+
+    // Build schedule list HTML
+    let scheduleListHTML = '';
+    if (schedules.length === 0) {
+      scheduleListHTML = `
+        <div class="princhat-schedule-list-empty">
+          <div class="princhat-schedule-list-empty-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+            </svg>
+          </div>
+          <div class="princhat-schedule-list-empty-title">Nenhum agendamento</div>
+          <div class="princhat-schedule-list-empty-subtitle">Crie seu primeiro agendamento</div>
+        </div>
+      `;
+    } else {
+      scheduleListHTML = schedules.map(schedule => {
+        const date = new Date(schedule.scheduledTime);
+        const formattedDate = date.toLocaleDateString('pt-BR', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric'
+        });
+        const formattedTime = date.toLocaleTimeString('pt-BR', {
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+
+        // Get item details
+        const item = schedule.type === 'message'
+          ? this.messages.find(m => m.id === schedule.itemId)
+          : this.scripts.find(s => s.id === schedule.itemId);
+
+        const itemName = schedule.type === 'message'
+          ? (item as Message)?.name || (item as Message)?.content.substring(0, 40)
+          : (item as Script)?.name;
+
+        return `
+          <div class="princhat-schedule-item" data-schedule-id="${schedule.id}">
+            <div class="princhat-schedule-item-icon">
+              ${schedule.type === 'script' ?
+            '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>' :
+            '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'
+          }
+            </div>
+            <div class="princhat-schedule-item-content">
+              <div class="princhat-schedule-item-name">${itemName || 'Item removido'}</div>
+              <div class="princhat-schedule-item-time">${formattedDate} às ${formattedTime}</div>
+            </div>
+            <button class="princhat-schedule-item-delete" data-schedule-id="${schedule.id}">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
+        `;
+      }).join('');
+    }
 
     popup.innerHTML = `
       <div class="princhat-schedule-list-header">
@@ -3029,15 +3112,7 @@ class WhatsAppUIOverlay {
         </button>
       </div>
       <div class="princhat-schedule-list-content">
-        <div class="princhat-schedule-list-empty">
-          <div class="princhat-schedule-list-empty-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-            </svg>
-          </div>
-          <div class="princhat-schedule-list-empty-title">Nenhum agendamento</div>
-          <div class="princhat-schedule-list-empty-subtitle">Não há mensagens ou scripts agendados para este contato.</div>
-        </div>
+        ${scheduleListHTML}
       </div>
       <div class="princhat-schedule-list-footer">
         <button class="princhat-schedule-list-create-btn">
@@ -3063,12 +3138,30 @@ class WhatsAppUIOverlay {
 
     const createBtn = popup.querySelector('.princhat-schedule-list-create-btn');
     createBtn?.addEventListener('click', () => {
-      popup.remove();
-      this.scheduleListPopup = null;
       this.openScheduleCreationModal();
     });
 
+    // Delete schedule handlers
+    const deleteButtons = popup.querySelectorAll('.princhat-schedule-item-delete');
+    deleteButtons.forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const scheduleId = (btn as HTMLElement).dataset.scheduleId;
+        if (scheduleId && confirm('Deseja cancelar este agendamento?')) {
+          await this.deleteSchedule(scheduleId);
+          // Refresh popup
+          this.scheduleListPopup = null;
+          await this.toggleScheduleListPopup(button);
+        }
+      });
+    });
+
     const closePopup = (e: MouseEvent) => {
+      // Don't close if clicking inside modal
+      if (this.scheduleCreationModal && this.scheduleCreationModal.contains(e.target as Node)) {
+        return;
+      }
+
       if (!popup.contains(e.target as Node) && !button.contains(e.target as Node)) {
         popup.remove();
         this.scheduleListPopup = null;
@@ -3077,6 +3170,22 @@ class WhatsAppUIOverlay {
     };
 
     setTimeout(() => document.addEventListener('click', closePopup), 100);
+  }
+
+  /**
+   * Delete a schedule
+   */
+  private async deleteSchedule(scheduleId: string) {
+    try {
+      await this.requestFromContentScript({
+        type: 'DELETE_SCHEDULE',
+        payload: { id: scheduleId }
+      });
+      console.log('[PrinChat UI] Schedule deleted:', scheduleId);
+    } catch (error) {
+      console.error('[PrinChat UI] Error deleting schedule:', error);
+      alert('Erro ao cancelar agendamento');
+    }
   }
 
   /**
@@ -3483,11 +3592,74 @@ class WhatsAppUIOverlay {
     });
 
     const scheduleBtn = modal.querySelector('[data-action="schedule"]') as HTMLButtonElement;
-    scheduleBtn?.addEventListener('click', () => {
-      console.log('[PrinChat UI] Creating schedule:', state);
-      alert('Agendamento criado!');
-      overlay.remove();
-      this.scheduleCreationModal = null;
+    scheduleBtn?.addEventListener('click', async () => {
+      try {
+        console.log('[PrinChat UI] Creating schedule:', state);
+
+        // Get active chat info
+        const activeChatElement = document.querySelector('._ak8l');
+        const activeChatName = activeChatElement?.querySelector('span[title]')?.getAttribute('title') || 'Unknown Contact';
+
+        // Get chat ID
+        const chatId = await this.getActiveChatId();
+        if (!chatId) {
+          throw new Error('Nenhum chat ativo selecionado');
+        }
+
+        console.log('[PrinChat UI] Chat info:', { chatId, chatName: activeChatName });
+
+        // Create schedule object
+        const scheduleTime = new Date(`${state.date}T${state.time}`).getTime();
+        const schedule: Schedule = {
+          id: `schedule-${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          chatId: chatId,
+          chatName: activeChatName,
+          type: state.contentType,
+          itemId: state.selectedId,
+          scheduledTime: scheduleTime,
+          status: 'pending',
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+
+        console.log('[PrinChat UI] Schedule object created:', schedule);
+
+        // Save to database via content script event system
+        const response = await this.requestFromContentScript({
+          type: 'SAVE_SCHEDULE',
+          payload: schedule
+        });
+
+        console.log('[PrinChat UI] Service worker response:', response);
+
+        if (!response || !response.success) {
+          throw new Error(response?.error || 'Failed to save schedule');
+        }
+
+        console.log('[PrinChat UI] Schedule saved successfully!');
+
+        // Close modal
+        overlay.remove();
+        this.scheduleCreationModal = null;
+
+        // Update schedule button (check if should transform to icon)
+        await this.updateScheduleButton();
+
+        // Refresh schedule list if popup is currently open
+        if (this.scheduleListPopup) {
+          const button = document.querySelector('.princhat-schedule-button') as HTMLElement;
+          if (button) {
+            // Close and reopen to refresh
+            this.scheduleListPopup.remove();
+            this.scheduleListPopup = null;
+            await this.toggleScheduleListPopup(button);
+          }
+        }
+      } catch (error) {
+        console.error('[PrinChat UI] Error saving schedule:', error);
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        alert(`Erro ao criar agendamento: ${errorMsg}`);
+      }
     });
 
     const closeBtn = modal.querySelector('.princhat-popup-close-btn');
@@ -5347,16 +5519,14 @@ class WhatsAppUIOverlay {
     // Listen for single message requests from popup/FAB
     // This routes popup messages through sendSingleMessage() so they show execution popup
     document.addEventListener('PrinChatSendSingleMessageFromPopup', async (event: any) => {
-      const { messageId } = event.detail;
-      console.log('[PrinChat UI] Single message request from popup, messageId:', messageId);
+      const { messageId, chatId } = event.detail;
+      console.log('[PrinChat UI] Send single message event received:', { messageId, chatId });
 
       if (!messageId) {
         console.error('[PrinChat UI] No messageId provided in event');
         return;
       }
 
-      // Look up message from our cache (which already has restored media data)
-      // This avoids chrome.tabs.sendMessage size limits for large media files
       const message = this.messages.find((m: any) => m.id === messageId);
       if (!message) {
         console.error('[PrinChat UI] Message not found in cache:', messageId);
@@ -5371,7 +5541,7 @@ class WhatsAppUIOverlay {
       // 2. Create execution state
       // 3. Dispatch PrinChatMessageStart event
       // 4. Execute with delay/pause/cancel support
-      await this.sendSingleMessage(message);
+      await this.sendSingleMessage(message, chatId);
     });
   }
 
@@ -5611,8 +5781,84 @@ class WhatsAppUIOverlay {
       // Insert button at the beginning of actions container
       actionsContainer.insertBefore(scheduleButton, actionsContainer.firstChild);
       console.log('[PrinChat UI] ✅ Schedule button injected successfully');
+
+      // Update button state based on existing schedules
+      this.updateScheduleButton();
     } catch (error: any) {
       console.error('[PrinChat UI] Error injecting schedule button:', error?.message || error);
+    }
+  }
+
+  /**
+   * Update schedule button based on schedule count
+   * - Shows button with text if no schedules
+   * - Shows icon with badge if schedules exist
+   */
+  private async updateScheduleButton() {
+    try {
+      const chatHeader = document.querySelector('#main > header');
+      if (!chatHeader) {
+        console.log('[PrinChat UI] Chat header not found');
+        return;
+      }
+
+      // Get active chat ID
+      const chatId = await this.getActiveChatId() || '';
+      if (!chatId) {
+        console.log('[PrinChat UI] No active chat ID');
+        return;
+      }
+
+      // Load schedules for this chat
+      const response = await this.requestFromContentScript({
+        type: 'GET_SCHEDULES_BY_CHAT',
+        payload: { chatId }
+      });
+
+      const schedules: Schedule[] = response?.data || [];
+      const scheduleCount = schedules.length;
+
+      console.log('[PrinChat UI] Schedule count for this chat:', scheduleCount);
+
+      // Find existing button
+      const existingButton = chatHeader.querySelector('.princhat-schedule-button') as HTMLElement;
+      if (!existingButton) {
+        console.log('[PrinChat UI] Schedule button not found, reinjecting...');
+        this.injectScheduleButton();
+        return;
+      }
+
+      // Update button based on schedule count
+      if (scheduleCount > 0) {
+        // Transform to icon with badge - using calendar icon
+        existingButton.classList.add('has-schedules');
+        existingButton.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+            <line x1="16" y1="2" x2="16" y2="6"/>
+            <line x1="8" y1="2" x2="8" y2="6"/>
+            <line x1="3" y1="10" x2="21" y2="10"/>
+          </svg>
+          <span class="princhat-schedule-badge">${scheduleCount}</span>
+        `;
+        existingButton.title = `${scheduleCount} agendamento${scheduleCount > 1 ? 's' : ''}`;
+      } else {
+        // Show as button with text
+        existingButton.classList.remove('has-schedules');
+        existingButton.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <polyline points="12 6 12 12 16 14"/>
+          </svg>
+          <span>Agendar</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="princhat-schedule-plus-icon">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+        `;
+        existingButton.title = 'Agendar mensagem para este contato';
+      }
+    } catch (error: any) {
+      console.error('[PrinChat UI] Error updating schedule button:', error);
     }
   }
 
@@ -5654,6 +5900,21 @@ class WhatsAppUIOverlay {
       } else {
         console.log('[PrinChat UI] Main container not found for monitoring');
       }
+
+
+      // Listen for schedule changes from storage (DELETE/CREATE) - same context
+      document.addEventListener('PrinChatSchedulesChanged', () => {
+        console.log('[PrinChat UI] 🔔 PrinChatSchedulesChanged (storage change)');
+        this.updateScheduleButton();
+      });
+
+      // Listen for schedule execution from injector via document
+      document.addEventListener('PrinChatScheduleExecuted', () => {
+        console.log('[PrinChat UI] 🔔 PrinChatScheduleExecuted from injector!');
+        this.updateScheduleButton();
+      });
+
+      console.log('[PrinChat UI] ✅ Schedule change listener registered');
     } catch (error: any) {
       console.error('[PrinChat UI] Error setting up chat header monitor:', error?.message || error);
     }

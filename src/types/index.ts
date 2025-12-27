@@ -97,6 +97,18 @@ export interface Signature {
   updatedAt: number;
 }
 
+export interface Schedule {
+  id: string;
+  chatId: string;
+  chatName: string;
+  type: 'message' | 'script';
+  itemId: string; // messageId or scriptId
+  scheduledTime: number; // timestamp
+  status: 'pending' | 'completed' | 'failed';
+  createdAt: number;
+  updatedAt: number;
+}
+
 // Storage interfaces
 export interface StorageData {
   messages: Record<string, Message>;

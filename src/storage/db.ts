@@ -4,7 +4,7 @@
  */
 
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
-import type { Message, Script, Trigger, Tag, Folder, Settings, Signature } from '@/types';
+import type { Message, Script, Trigger, Tag, Folder, Settings, Signature, Schedule } from '@/types';
 
 interface PrinChatDB extends DBSchema {
   messages: {
@@ -60,12 +60,17 @@ interface PrinChatDB extends DBSchema {
     value: { messageId: string; blob: Blob; fileName: string; createdAt: number };
     indexes: { 'by-messageId': string };
   };
+  schedules: {
+    key: string;
+    value: Schedule;
+    indexes: { 'by-chatId': string; 'by-status': string; 'by-scheduledTime': number };
+  };
 }
 
 class DatabaseService {
   private db: IDBPDatabase<PrinChatDB> | null = null;
   private readonly DB_NAME = 'princhat-db';
-  private readonly DB_VERSION = 5; // Updated to version 5 for signatures support
+  private readonly DB_VERSION = 6; // Updated to version 6 for schedules support
 
   async init(): Promise<IDBPDatabase<PrinChatDB>> {
     console.log(`[PrinChat DB] Init called. DB: ${this.DB_NAME} v${this.DB_VERSION}`);
@@ -143,6 +148,14 @@ class DatabaseService {
         if (!db.objectStoreNames.contains('fileBlobs')) {
           const fileBlobStore = db.createObjectStore('fileBlobs', { keyPath: 'messageId' });
           fileBlobStore.createIndex('by-messageId', 'messageId');
+        }
+
+        // Schedules store
+        if (!db.objectStoreNames.contains('schedules')) {
+          const scheduleStore = db.createObjectStore('schedules', { keyPath: 'id' });
+          scheduleStore.createIndex('by-chatId', 'chatId');
+          scheduleStore.createIndex('by-status', 'status');
+          scheduleStore.createIndex('by-scheduledTime', 'scheduledTime');
         }
       },
     });
@@ -613,6 +626,77 @@ class DatabaseService {
     if (typeof chrome !== 'undefined' && chrome.storage) {
       await chrome.storage.local.set({
         signatures: Date.now()
+      });
+    }
+  }
+
+  // ==================== SCHEDULES ====================
+  async saveSchedule(schedule: Schedule): Promise<void> {
+    const db = await this.init();
+    await db.put('schedules', schedule);
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        schedules: Date.now()
+      });
+    }
+  }
+
+  async getSchedule(id: string): Promise<Schedule | undefined> {
+    const db = await this.init();
+    return db.get('schedules', id);
+  }
+
+  async getSchedulesByChatId(chatId: string): Promise<Schedule[]> {
+    const db = await this.init();
+    const schedules = await db.getAllFromIndex('schedules', 'by-chatId', chatId);
+    return schedules.sort((a, b) => a.scheduledTime - b.scheduledTime);
+  }
+
+  async getPendingSchedules(): Promise<Schedule[]> {
+    const db = await this.init();
+    const now = Date.now();
+    const pendingSchedules = await db.getAllFromIndex('schedules', 'by-status', 'pending');
+
+    // Filter to only return schedules that are due
+    return pendingSchedules.filter(schedule => schedule.scheduledTime <= now)
+      .sort((a, b) => a.scheduledTime - b.scheduledTime);
+  }
+
+  async getAllPendingSchedules(): Promise<Schedule[]> {
+    const db = await this.init();
+    return db.getAllFromIndex('schedules', 'by-status', 'pending');
+  }
+
+  async updateScheduleStatus(id: string, status: 'pending' | 'completed' | 'failed'): Promise<void> {
+    const db = await this.init();
+    const schedule = await db.get('schedules', id);
+
+    if (schedule) {
+      await db.put('schedules', {
+        ...schedule,
+        status,
+        updatedAt: Date.now()
+      });
+
+      // Trigger chrome.storage change event
+      if (typeof chrome !== 'undefined' && chrome.storage) {
+        await chrome.storage.local.set({
+          schedules: Date.now()
+        });
+      }
+    }
+  }
+
+  async deleteSchedule(id: string): Promise<void> {
+    const db = await this.init();
+    await db.delete('schedules', id);
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        schedules: Date.now()
       });
     }
   }
