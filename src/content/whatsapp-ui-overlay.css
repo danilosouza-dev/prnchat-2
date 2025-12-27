@@ -77,14 +77,16 @@
   color: white;
   font-size: 10px;
   font-weight: 600;
-  width: 18px;
+  min-width: 18px;
   height: 18px;
+  padding: 0 3.5px;
   border-radius: 50%;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   box-shadow: 0 0 0 2px #1a1a1a;
   pointer-events: none;
+  box-sizing: border-box;
   /* Allow clicks to pass through to button */
 }
 
@@ -142,6 +144,7 @@
   align-items: flex-start;
   transition: background 0.2s;
   position: relative;
+  cursor: pointer;
 }
 
 .princhat-notification-item:hover {
@@ -228,6 +231,445 @@
   font-size: 13px;
 }
 
+/* Executions badge on refresh icon */
+.princhat-executions-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  background: #2196f3;
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 2px #1a1a1a;
+  pointer-events: none;
+}
+
+/* Spin animation for executions icon */
+@keyframes princhat-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Apply animation and pink color when executions are active */
+.princhat-header-icon-btn.has-executions {
+  color: #e91e63;
+}
+
+.princhat-header-icon-btn.has-executions svg {
+  animation: princhat-spin 2s linear infinite;
+}
+
+/* Direct chat popup */
+.princhat-direct-chat-popup {
+  position: fixed;
+  width: 360px;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  overflow: visible;
+  z-index: 10001;
+}
+
+.princhat-direct-chat-header {
+  padding: 16px;
+  border-bottom: 1px solid #2a2a2a;
+  font-weight: 600;
+  color: #e0e0e0;
+  font-size: 16px;
+}
+
+.princhat-direct-chat-form {
+  padding: 20px;
+}
+
+.princhat-direct-chat-field {
+  margin-bottom: 20px;
+}
+
+.princhat-direct-chat-field:last-child {
+  margin-bottom: 0;
+}
+
+.princhat-direct-chat-label {
+  display: block;
+  color: #9e9e9e;
+  font-size: 12px;
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
+/* Country selector */
+.princhat-country-selector {
+  position: relative;
+  width: 100%;
+}
+
+.princhat-country-selector-button {
+  width: 100%;
+  padding: 10px 12px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #e0e0e0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: background 0.2s;
+  font-family: inherit;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+.princhat-country-selector-button:hover {
+  background: #333333;
+  border-color: #e91e63;
+}
+
+.princhat-country-selected {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.princhat-country-flag {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.princhat-country-code {
+  font-weight: 600;
+  color: #e91e63;
+}
+
+.princhat-country-name {
+  color: #9e9e9e;
+  font-size: 13px;
+}
+
+.princhat-country-arrow {
+  flex-shrink: 0;
+  transition: transform 0.2s;
+  color: #666666;
+}
+
+/* Country dropdown */
+.princhat-country-dropdown {
+  position: fixed;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+  z-index: 100000;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.princhat-country-dropdown::-webkit-scrollbar {
+  width: 6px;
+}
+
+.princhat-country-dropdown::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+.princhat-country-dropdown::-webkit-scrollbar-thumb {
+  background: #e91e63;
+  border-radius: 3px;
+}
+
+.princhat-country-option {
+  padding: 10px 12px;
+  color: #e0e0e0;
+  cursor: pointer;
+  transition: background 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.princhat-country-option:hover {
+  background: #333333;
+}
+
+.princhat-country-option .princhat-country-code {
+  font-weight: 600;
+  color: #e91e63;
+  min-width: 45px;
+}
+
+.princhat-country-option .princhat-country-name {
+  color: #e0e0e0;
+  font-size: 13px;
+}
+
+/* Phone input */
+.princhat-phone-input {
+  width: 100%;
+  padding: 10px 12px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.princhat-phone-input:focus {
+  border-color: #e91e63;
+}
+
+.princhat-phone-input::placeholder {
+  color: #6e6e6e;
+}
+
+/* Start chat button */
+.princhat-start-chat-button {
+  width: 100%;
+  padding: 12px;
+  background: #e91e63;
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+  font-family: inherit;
+}
+
+.princhat-start-chat-button:hover:not(:disabled) {
+  background: #f06292;
+}
+
+.princhat-start-chat-button:disabled {
+  background: #3a3a3a;
+  color: #6e6e6e;
+  cursor: not-allowed;
+}
+
+
+/* Executions popup */
+.princhat-executions-popup {
+  position: fixed;
+  width: 480px;
+  max-height: 650px;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  z-index: 10001;
+}
+
+.princhat-executions-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid #2a2a2a;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.princhat-executions-header h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #e0e0e0;
+  margin: 0;
+}
+
+.princhat-executions-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px 0;
+}
+
+.princhat-executions-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: #6e6e6e;
+  font-size: 13px;
+}
+
+/* Inline popup containers (scripts and messages inside executions popup) */
+.princhat-script-popup-inline,
+.princhat-message-popup-inline {
+  width: 100%;
+  padding: 0;
+  margin: 0;
+}
+
+.princhat-script-popup-inline .princhat-script-section,
+.princhat-message-popup-inline .princhat-message-section {
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.princhat-script-popup-inline .princhat-script-section:last-child,
+.princhat-message-popup-inline .princhat-message-section:last-child {
+  border-bottom: none;
+}
+
+/* Ensure sections have proper spacing */
+.princhat-message-section {
+  margin: 0;
+}
+
+.princhat-message-section-header {
+  padding: 12px 16px;
+  background: #222;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.princhat-message-section-title {
+  font-weight: 600;
+  font-size: 12px;
+  color: #9e9e9e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.princhat-message-btn-discrete {
+  background: transparent;
+  border: none;
+  color: #e91e63;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.princhat-message-btn-discrete:hover {
+  background: rgba(233, 30, 99, 0.1);
+}
+
+.princhat-message-section-body {
+  padding: 0;
+}
+
+
+.princhat-executions-section {
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.princhat-executions-section:last-child {
+  border-bottom: none;
+}
+
+/* Executions popup action icons - exact match with popup icon-btn */
+.princhat-executions-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.princhat-executions-actions button {
+  background: none;
+  border: none;
+  color: #666666;
+  /* --text-muted */
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s;
+}
+
+.princhat-executions-actions button:hover,
+.princhat-executions-actions button.active {
+  color: #e91e63;
+  /* --accent-pink */
+}
+
+.princhat-executions-actions button svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Better spacing for cards */
+.princhat-script-card,
+.princhat-message-card {
+  padding: 16px 20px !important;
+  margin: 8px 12px !important;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  transition: background 0.2s ease;
+}
+
+.princhat-executions-section-header {
+  padding: 12px 16px;
+  background: #222;
+  font-weight: 600;
+  font-size: 12px;
+  color: #9e9e9e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.princhat-executions-subsection-header {
+  padding: 8px 16px;
+  font-size: 11px;
+  color: #6e6e6e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.princhat-execution-card {
+  padding: 12px 16px;
+  border-bottom: 1px solid #2a2a2a;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: background 0.2s;
+}
+
+.princhat-execution-card:hover {
+  background: #222;
+}
+
+.princhat-execution-card:last-child {
+  border-bottom: none;
+}
+
+.princhat-execution-card-name {
+  flex: 1;
+  color: #e0e0e0;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-right: 12px;
+}
+
+.princhat-execution-card-status {
+  color: #2196f3;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+
 /* Profile button */
 .princhat-header-profile-btn {
   width: 36px;
@@ -264,6 +706,706 @@
 .princhat-header-profile-img svg {
   width: 18px;
   height: 18px;
+}
+
+/* Profile Dropdown Menu */
+.princhat-profile-dropdown {
+  position: fixed;
+  width: 220px;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  z-index: 100000;
+  padding: 8px 0;
+}
+
+.princhat-profile-menu-item {
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+  color: #e0e0e0;
+}
+
+.princhat-profile-menu-item:hover {
+  background: #2a2a2a;
+}
+
+.princhat-profile-menu-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: #9e9e9e;
+}
+
+.princhat-profile-menu-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.princhat-profile-menu-label {
+  font-size: 14px;
+  font-weight: 500;
+  flex: 1;
+}
+
+.princhat-profile-menu-item:hover .princhat-profile-menu-icon {
+  color: #e91e63;
+}
+
+/* Help Popup */
+.princhat-help-popup {
+  position: fixed;
+  width: 320px;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  z-index: 100000;
+}
+
+.princhat-help-popup-header {
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.princhat-help-popup-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.princhat-help-menu {
+  padding: 8px 0;
+}
+
+.princhat-help-menu-item {
+  padding: 12px 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.princhat-help-menu-item:hover {
+  background: #2a2a2a;
+}
+
+.princhat-help-menu-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  background: #2a2a2a;
+  border-radius: 50%;
+  color: #9e9e9e;
+}
+
+.princhat-help-menu-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.princhat-help-menu-item:hover .princhat-help-menu-icon {
+  color: #e91e63;
+}
+
+.princhat-help-menu-item-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 2px;
+}
+
+.princhat-help-menu-item-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.princhat-help-menu-item-description {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  line-height: 1.4;
+}
+
+/* Close Button for All Popups */
+.princhat-popup-close-btn {
+  background: transparent;
+  border: none;
+  color: #666666;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s;
+  flex-shrink: 0;
+}
+
+.princhat-popup-close-btn:hover {
+  color: #e91e63;
+}
+
+.princhat-popup-close-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* Floating Close Button for Messages Popup */
+.princhat-floating-close-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1000;
+}
+
+/* Notifications Header Actions */
+.princhat-notifications-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Direct Chat Header Update */
+.princhat-direct-chat-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid #2a2a2a;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.princhat-direct-chat-header h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #e0e0e0;
+  margin: 0;
+}
+
+/* Subscription Popup */
+.princhat-subscription-popup {
+  position: fixed;
+  width: 360px;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  z-index: 100000;
+}
+
+.princhat-subscription-popup-header {
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.princhat-subscription-popup-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.princhat-subscription-empty {
+  padding: 40px 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.princhat-subscription-icon-wrapper {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.princhat-subscription-icon-circle-outer {
+  position: absolute;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: rgba(233, 30, 99, 0.05);
+}
+
+.princhat-subscription-icon-circle-middle {
+  position: absolute;
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: rgba(233, 30, 99, 0.1);
+}
+
+.princhat-subscription-icon-circle-inner {
+  position: absolute;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: rgba(233, 30, 99, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.princhat-subscription-icon {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  color: #e91e63;
+  z-index: 1;
+}
+
+.princhat-subscription-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.princhat-subscription-empty-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #e0e0e0;
+  margin-bottom: 12px;
+}
+
+.princhat-subscription-empty-description {
+  font-size: 13px;
+  color: #9e9e9e;
+  line-height: 1.5;
+  margin-bottom: 24px;
+  max-width: 280px;
+}
+
+.princhat-subscription-new-btn {
+  width: 100%;
+  padding: 12px;
+  background: #e91e63;
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+  font-family: inherit;
+}
+
+.princhat-subscription-new-btn:hover {
+  background: #f06292;
+}
+
+/* Signature List */
+.princhat-signature-list {
+  padding: 16px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.princhat-signature-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  margin-bottom: 8px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.princhat-signature-card:hover {
+  background: #333;
+  border-color: #e91e63;
+}
+
+.princhat-signature-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.princhat-signature-text {
+  color: #e0e0e0;
+  font-size: 14px;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.princhat-signature-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 12px;
+}
+
+/* Toggle Switch */
+.princhat-signature-toggle {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  cursor: pointer;
+}
+
+.princhat-signature-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.princhat-toggle-slider {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #4a4a4a;
+  border-radius: 24px;
+  transition: 0.3s;
+}
+
+.princhat-toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  border-radius: 50%;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: 0.3s;
+}
+
+.princhat-signature-toggle input:checked+.princhat-toggle-slider {
+  background-color: #e91e63;
+}
+
+.princhat-signature-toggle input:checked+.princhat-toggle-slider:before {
+  transform: translateX(20px);
+}
+
+/* Edit and Delete Buttons */
+.princhat-signature-edit-btn,
+.princhat-signature-delete-btn {
+  padding: 6px;
+  background: transparent;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  color: #9e9e9e;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.princhat-signature-edit-btn:hover {
+  background: #3a3a3a;
+  border-color: #e91e63;
+  color: #e91e63;
+}
+
+.princhat-signature-delete-btn:hover {
+  background: #3a1a1a;
+  border-color: #f44336;
+  color: #f44336;
+}
+
+/* Subscription Footer */
+.princhat-subscription-footer {
+  padding: 12px 16px;
+  border-top: 1px solid #2a2a2a;
+}
+
+.princhat-subscription-footer .princhat-subscription-new-btn {
+  border-radius: 6px;
+}
+
+/* Subscription Form Modal */
+.princhat-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100001;
+  animation: princhat-modal-overlay-in 0.2s ease-out;
+}
+
+@keyframes princhat-modal-overlay-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.princhat-subscription-form-modal {
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  width: 540px;
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  animation: princhat-modal-in 0.3s ease-out;
+}
+
+@keyframes princhat-modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.princhat-modal-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid #2a2a2a;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.princhat-modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.princhat-modal-body {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.princhat-modal-footer {
+  padding: 16px 20px;
+  border-top: 1px solid #2a2a2a;
+  display: flex;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+/* Form Fields */
+.princhat-form-field {
+  margin-bottom: 20px;
+}
+
+.princhat-form-field:last-child {
+  margin-bottom: 0;
+}
+
+.princhat-form-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: #e0e0e0;
+  margin-bottom: 8px;
+}
+
+.princhat-form-input {
+  width: 100%;
+  padding: 10px 12px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s, background 0.2s;
+  box-sizing: border-box;
+}
+
+.princhat-form-input:focus {
+  border-color: #e91e63;
+  background: #333333;
+}
+
+.princhat-form-input::placeholder {
+  color: #6e6e6e;
+}
+
+/* Formatting Buttons */
+.princhat-formatting-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.princhat-format-btn {
+  padding: 8px 14px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #9e9e9e;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.princhat-format-btn:hover {
+  background: #333333;
+  border-color: #4a4a4a;
+  color: #e0e0e0;
+}
+
+.princhat-format-btn.active {
+  background: rgba(233, 30, 99, 0.15);
+  border-color: #e91e63;
+  color: #e91e63;
+}
+
+/* Spacing Input */
+.princhat-spacing-input {
+  width: 80px;
+  padding: 10px 12px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s, background 0.2s;
+  text-align: center;
+}
+
+.princhat-spacing-input:focus {
+  border-color: #e91e63;
+  background: #333333;
+}
+
+/* Preview Section */
+.princhat-preview-section {
+  margin-top: 24px;
+  padding: 16px;
+  background: #222;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+}
+
+.princhat-preview-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #9e9e9e;
+  margin-bottom: 12px;
+  display: block;
+}
+
+.princhat-preview-content {
+  color: #e0e0e0;
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 60px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Formatting classes for preview */
+.princhat-preview-content.bold {
+  font-weight: 700;
+}
+
+.princhat-preview-content.italic {
+  font-style: italic;
+}
+
+.princhat-preview-content.strikethrough {
+  text-decoration: line-through;
+}
+
+.princhat-preview-content.monospace {
+  font-family: 'Courier New', Courier, monospace;
+}
+
+/* Formatting classes for signature span inside preview */
+.princhat-signature-formatted.bold {
+  font-weight: 700;
+}
+
+.princhat-signature-formatted.italic {
+  font-style: italic;
+}
+
+.princhat-signature-formatted.strikethrough {
+  text-decoration: line-through;
+}
+
+.princhat-signature-formatted.monospace {
+  font-family: 'Courier New', Courier, monospace;
+}
+
+/* Modal Action Buttons */
+.princhat-modal-add-btn {
+  padding: 10px 24px;
+  background: #e91e63;
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, opacity 0.2s;
+  font-family: inherit;
+}
+
+.princhat-modal-add-btn:hover:not(:disabled) {
+  background: #f06292;
+}
+
+.princhat-modal-add-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Make #app flex column to stack header above WhatsApp */
@@ -652,9 +1794,10 @@ body[data-princhat-chat-active="true"] .princhat-shortcut-bar {
 .princhat-script-card {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   padding: 6px;
-  background: #1a1a1a;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 6px;
   margin-bottom: 4px;
   transition: all 0.2s ease;
@@ -770,7 +1913,7 @@ body[data-princhat-chat-active="true"] .princhat-shortcut-bar {
 .princhat-script-card-status {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
   font-size: 11px;
   color: #00a884;
   font-weight: 500;
@@ -1139,4 +2282,543 @@ body[data-princhat-chat-active="true"] .princhat-shortcut-bar {
 body:not([data-princhat-chat-active="true"]) .princhat-shortcut-bar,
 body:not([data-princhat-chat-active="true"]) .princhat-fab {
   display: none;
+}
+
+/* Schedule Button - Injected into WhatsApp chat header */
+/* Matches the accent button variant from Options page */
+.princhat-schedule-button {
+  /* Base styles matching Shadcn Button component */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+
+  /* Sizing - using 'sm' size from button.tsx */
+  padding: 8px 12px;
+  height: 32px;
+
+  /* Typography - matching button.tsx */
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, sans-serif;
+
+  /* Colors - accent variant from button.tsx */
+  background: #e91e63;
+  color: white;
+  border: none;
+  border-radius: 8px;
+
+  /* Interactions */
+  cursor: pointer;
+  transition: background 0.2s ease;
+
+  /* Positioning */
+  margin-right: 12px;
+}
+
+.princhat-schedule-button:hover {
+  background: #c2185b;
+}
+
+.princhat-schedule-button:active {
+  background: #ad1457;
+}
+
+.princhat-schedule-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.princhat-schedule-button svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.princhat-schedule-button span {
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Plus icon - larger and thinner to match Options buttons */
+.princhat-schedule-button .princhat-schedule-plus-icon {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.5;
+}
+
+/* ==================== SCHEDULE LIST POPUP ==================== */
+.princhat-schedule-list-popup {
+  position: fixed;
+  width: 400px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 10001;
+  display: flex;
+  flex-direction: column;
+  max-height: 600px;
+}
+
+.princhat-schedule-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.princhat-schedule-list-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.princhat-schedule-list-content {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 300px;
+}
+
+.princhat-schedule-list-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 32px;
+  text-align: center;
+  height: 100%;
+}
+
+.princhat-schedule-list-empty-icon {
+  width: 80px;
+  height: 80px;
+  margin-bottom: 24px;
+  color: #e91e63;
+  background: rgba(233, 30, 99, 0.1);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.princhat-schedule-list-empty-icon svg {
+  width: 40px;
+  height: 40px;
+}
+
+.princhat-schedule-list-empty-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 8px;
+}
+
+.princhat-schedule-list-empty-subtitle {
+  font-size: 14px;
+  color: #888;
+  line-height: 1.5;
+  max-width: 350px;
+}
+
+.princhat-schedule-list-footer {
+  padding: 20px;
+  border-top: 1px solid #2a2a2a;
+}
+
+.princhat-schedule-list-create-btn {
+  width: 100%;
+  padding: 12px;
+  background: #e91e63;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.princhat-schedule-list-create-btn:hover {
+  background: #c2185b;
+}
+
+/* ==================== SCHEDULE CREATION MODAL ==================== */
+.princhat-schedule-modal {
+  width: 550px;
+  max-width: 95vw;
+  max-height: 90vh;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+}
+
+.princhat-schedule-modal .princhat-modal-body {
+  padding: 24px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.princhat-section-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 12px;
+}
+
+/* Simple icon-only filters (like message popup) */
+.princhat-icon-filters {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 0;
+}
+
+.princhat-icon-filter {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+  color: #6b7280;
+}
+
+.princhat-icon-filter:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+
+.princhat-icon-filter.active {
+  color: #e91e63;
+}
+
+.princhat-icon-filter svg {
+  flex-shrink: 0;
+}
+
+.princhat-search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: #2a2a2a;
+  margin-bottom: 12px;
+}
+
+.princhat-search-box svg {
+  color: #666;
+  flex-shrink: 0;
+}
+
+.princhat-search-box input {
+  flex: 1;
+  border: none;
+  background: none;
+  outline: none;
+  font-size: 14px;
+  color: #fff;
+}
+
+.princhat-search-box input::placeholder {
+  color: #666;
+}
+
+.princhat-item-list {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  background: #202020;
+}
+
+.princhat-item-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+  border-bottom: 1px solid #252525;
+}
+
+.princhat-item-row:last-child {
+  border-bottom: none;
+}
+
+.princhat-item-row:hover {
+  background: #252525;
+}
+
+.princhat-item-row.active {
+  background: rgba(233, 30, 99, 0.12);
+  border-left: 3px solid #e91e63;
+}
+
+.princhat-item-icon {
+  color: #888;
+  flex-shrink: 0;
+}
+
+.princhat-item-row.active .princhat-item-icon {
+  color: #e91e63;
+}
+
+.princhat-item-text {
+  flex: 1;
+  font-size: 14px;
+  color: #ccc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.princhat-item-row.active .princhat-item-text {
+  color: #fff;
+}
+
+.princhat-item-empty {
+  padding: 24px;
+  text-align: center;
+  color: #666;
+  font-size: 14px;
+}
+
+.princhat-time-shortcuts {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  overflow-x: auto;
+}
+
+.princhat-time-tag {
+  padding: 6px 12px;
+  border: 1px solid #333;
+  background: #2a2a2a;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #aaa;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.princhat-time-tag:hover {
+  border-color: #e91e63;
+  background: rgba(233, 30, 99, 0.15);
+  color: #e91e63;
+}
+
+.princhat-time-reset {
+  color: #666;
+}
+
+.princhat-time-reset:hover {
+  color: #888;
+}
+
+.princhat-datetime-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.princhat-datetime-input {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: #2a2a2a;
+  font-size: 14px;
+  color: #fff;
+  cursor: pointer;
+  outline: none;
+}
+
+.princhat-datetime-input:focus {
+  border-color: #e91e63;
+}
+
+.princhat-datetime-input::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+}
+
+.princhat-preview-inline {
+  padding: 12px;
+  background: #252525;
+  border-left: 3px solid #e91e63;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #aaa;
+}
+
+.princhat-preview-inline strong {
+  color: #fff;
+  font-weight: 600;
+}
+
+.princhat-modal-footer-right {
+  padding: 16px 20px;
+  border-top: 1px solid #2a2a2a;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.princhat-schedule-btn {
+  padding: 10px 24px;
+  background: #e91e63;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+  outline: none;
+}
+
+.princhat-schedule-btn:hover:not(:disabled) {
+  background: #c2185b;
+}
+
+.princhat-schedule-btn:disabled {
+  background: #333;
+  color: #666;
+  cursor: not-allowed;
+}
+
+/* Custom Dropdown */
+.princhat-custom-dropdown {
+  position: relative;
+  margin-bottom: 12px;
+}
+
+.princhat-dropdown-trigger {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: #2a2a2a;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.princhat-dropdown-trigger:hover {
+  border-color: #e91e63;
+}
+
+.princhat-dropdown-trigger svg {
+  color: #888;
+  flex-shrink: 0;
+  transition: transform 0.2s;
+}
+
+.princhat-dropdown-panel {
+  position: fixed;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  z-index: 100000;
+  max-height: 300px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.princhat-dropdown-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.princhat-dropdown-search svg {
+  color: #666;
+  flex-shrink: 0;
+}
+
+.princhat-dropdown-search input {
+  flex: 1;
+  border: none;
+  background: none;
+  outline: none;
+  font-size: 14px;
+  color: #fff;
+}
+
+.princhat-dropdown-search input::placeholder {
+  color: #666;
+}
+
+.princhat-dropdown-list {
+  overflow-y: auto;
+  max-height: 250px;
+}
+
+.princhat-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+  border-bottom: 1px solid #252525;
+}
+
+.princhat-dropdown-item:last-child {
+  border-bottom: none;
+}
+
+.princhat-dropdown-item:hover {
+  background: #252525;
+}
+
+.princhat-dropdown-item svg {
+  color: #888;
+  flex-shrink: 0;
+}
+
+.princhat-dropdown-item span {
+  flex: 1;
+  font-size: 14px;
+  color: #ccc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.princhat-dropdown-empty {
+  padding: 24px;
+  text-align: center;
+  color: #666;
+  font-size: 14px;
 }

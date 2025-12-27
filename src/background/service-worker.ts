@@ -118,6 +118,74 @@ class BackgroundService {
           .catch((error) => sendResponse({ success: false, error: error.message }));
         return true; // Keep channel open for async response
 
+      case 'GET_SIGNATURES':
+        db.getAllSignatures()
+          .then((signatures) => sendResponse({ success: true, data: signatures }))
+          .catch((error) => sendResponse({ success: false, error: error.message }));
+        return true;
+
+      case 'SAVE_SIGNATURE':
+        db.saveSignature(message.payload)
+          .then(() => sendResponse({ success: true }))
+          .catch((error) => sendResponse({ success: false, error: error.message }));
+        return true;
+
+      case 'DELETE_SIGNATURE':
+        db.deleteSignature(message.payload.id)
+          .then(() => sendResponse({ success: true }))
+          .catch((error) => sendResponse({ success: false, error: error.message }));
+        return true;
+
+      case 'GET_SIGNATURE':
+        db.getSignature(message.payload.id)
+          .then((signature) => sendResponse({ success: true, data: signature }))
+          .catch((error) => sendResponse({ success: false, error: error.message }));
+        return true;
+
+      case 'SET_ACTIVE_SIGNATURE':
+        (async () => {
+          try {
+            console.log('[PrinChat SW] Setting active signature:', message.payload);
+            await db.setActiveSignature(message.payload.id);
+            sendResponse({ success: true });
+          } catch (error: any) {
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'TOGGLE_SIGNATURE_ACTIVE':
+        (async () => {
+          try {
+            const { id, isActive } = message.payload;
+            if (isActive) {
+              await db.setActiveSignature(id);
+            } else {
+              const signature = await db.getSignature(id);
+              if (signature) {
+                await db.saveSignature({ ...signature, isActive: false, updatedAt: Date.now() });
+              }
+            }
+            sendResponse({ success: true });
+          } catch (error: any) {
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'GET_ACTIVE_SIGNATURE':
+        console.log('[PrinChat SW] 🔍 GET_ACTIVE_SIGNATURE request received');
+        db.getActiveSignature()
+          .then((signature) => {
+            console.log('[PrinChat SW] 🔍 Active signature from DB:', signature);
+            sendResponse({ success: true, data: signature || null });
+          })
+          .catch((error) => {
+            console.error('[PrinChat SW] ❌ Error getting active signature:', error);
+            sendResponse({ success: false, error: error.message });
+          });
+        return true;
+
       case 'GET_SCRIPT':
         // Content script needs to execute a script but can't access extension's IndexedDB
         // So we fetch it here and return the complete script with all message data
@@ -125,6 +193,12 @@ class BackgroundService {
           .then((scriptData) => sendResponse({ success: true, data: scriptData }))
           .catch((error) => sendResponse({ success: false, error: error.message }));
         return true; // Keep channel open for async response
+
+      case 'OPEN_OPTIONS':
+        // Open options page (from profile dropdown)
+        chrome.runtime.openOptionsPage();
+        sendResponse({ success: true });
+        break;
 
       default:
         sendResponse({ success: false, error: 'Unknown message type' });

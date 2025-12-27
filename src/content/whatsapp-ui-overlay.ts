@@ -11,6 +11,7 @@ interface Script {
 
 interface Message {
   id: string;
+  name?: string;
   content: string;
   type: string;
   caption?: string;
@@ -25,13 +26,30 @@ interface Message {
   sendDelay?: number;
 }
 
-interface StatusItem {
+// Signature interface (inline to avoid import issues)
+interface Signature {
   id: string;
-  type: 'text' | 'audio' | 'image' | 'video' | 'file';
-  status: 'sending' | 'success' | 'error';
   text: string;
-  error?: string;
+  formatting: {
+    bold: boolean;
+    italic: boolean;
+    strikethrough: boolean;
+    monospace: boolean;
+  };
+  spacing: number;
+  isActive: boolean;
+  createdAt: number;
+  updatedAt: number;
 }
+
+// Unused interface - commented out to avoid lint error
+// interface StatusItem {
+//   id: string;
+//   type: 'text' | 'audio' | 'image' | 'video' | 'file';
+//   status: 'sending' | 'success' | 'error';
+//   text: string;
+//   error?: string;
+// }
 
 interface ScriptExecution {
   id: string;
@@ -69,6 +87,14 @@ class WhatsAppUIOverlay {
   // private fab: HTMLElement | null = null; // Not used in new design
   private statusPopup: HTMLElement | null = null; // Script execution popup
   private messageStatusPopup: HTMLElement | null = null; // Message execution popup (separate!)
+  private executionsPopup: HTMLElement | null = null; // Unified executions popup
+  private directChatPopup: HTMLElement | null = null; // Direct chat popup
+  private profileDropdown: HTMLElement | null = null; // Profile dropdown menu
+  private helpPopup: HTMLElement | null = null; // Help popup
+  private subscriptionPopup: HTMLElement | null = null; // Subscription popup
+  private subscriptionFormModal: HTMLElement | null = null; // Subscription form modal
+  private scheduleListPopup: HTMLElement | null = null; // Schedule list popup
+  private scheduleCreationModal: HTMLElement | null = null; // Schedule creation modal
   private tooltip: HTMLElement | null = null;
   private scripts: Script[] = [];
   private messages: Message[] = [];
@@ -96,6 +122,10 @@ class WhatsAppUIOverlay {
   private cachedChatTimestamp: number = 0;
   private readonly CHAT_CACHE_TTL = 10000; // 10 seconds cache
   private lastKnownChatElement: Element | null = null; // Track chat changes
+
+  // Signature Management
+  private signatures: Signature[] = [];
+  private editingSignatureId: string | null = null;
 
   // MutationObserver to detect script popup size changes
   private scriptPopupObserver: MutationObserver | null = null;
@@ -158,6 +188,16 @@ class WhatsAppUIOverlay {
 
       console.log('[PrinChat UI] Step 11: Setting up popup messaging...');
       this.listenForPopupMessages();
+      console.log('[PrinChat UI] ✓ Popup messaging active');
+
+      // Inject schedule button into chat header
+      console.log('[PrinChat UI] Step 12: Injecting schedule button...');
+      this.injectScheduleButton();
+      console.log('[PrinChat UI] ✓ Schedule button injected');
+
+      // Monitor chat header changes
+      console.log('[PrinChat UI] Step 13: Setting up chat header monitor...');
+      this.monitorChatHeaderChanges();
       console.log('[PrinChat UI] ✓ Popup messaging active');
 
       // Setup state synchronization with content script
@@ -996,7 +1036,9 @@ class WhatsAppUIOverlay {
 
   /**
    * Create dedicated popup for message execution (SEPARATE from scripts!)
+   * DISABLED: Now showing in header executions popup instead
    */
+  // @ts-expect-error - Keeping for potential future use
   private createMessageStatusPopup() {
     // Remove existing popup
     if (this.messageStatusPopup) this.messageStatusPopup.remove();
@@ -1047,31 +1089,89 @@ class WhatsAppUIOverlay {
    * Update message popup content
    */
   private updateMessageStatusPopup() {
-    if (!this.messageStatusPopup) return;
+    // Update both floating popup AND executions popup (either/both may be open)
 
-    // Update running messages section
-    const runningSection = this.messageStatusPopup.querySelector('[data-section="running-messages"]');
+    // SMART UPDATE: Only add/remove cards when list changes, preserve existing cards for timers
+    const runningSection = this.messageStatusPopup?.querySelector('[data-section="running-messages"]');
     if (runningSection) {
-      runningSection.innerHTML = '';
-      const runningArray = Array.from(this.runningMessages.values()).reverse();
-
-      runningArray.forEach((msgExec) => {
-        const card = this.createMessageCard(msgExec, false);
-        runningSection.appendChild(card);
-      });
+      this.updateMessageSection(runningSection, Array.from(this.runningMessages.values()).reverse(), false);
     }
 
-    // Update completed messages section
-    const completedSection = this.messageStatusPopup.querySelector('[data-section="completed-messages"]');
+    const completedSection = this.messageStatusPopup?.querySelector('[data-section="completed-messages"]');
     if (completedSection) {
-      completedSection.innerHTML = '';
-      const completedReversed = [...this.completedMessages].reverse();
-
-      completedReversed.forEach((msgExec) => {
-        const card = this.createMessageCard(msgExec, true);
-        completedSection.appendChild(card);
-      });
+      this.updateMessageSection(completedSection, [...this.completedMessages].reverse(), true);
     }
+
+    // Also update executions popup if open
+    if (this.executionsPopup) {
+      const execRunning = this.executionsPopup.querySelector('[data-section="running-messages"]');
+      if (execRunning) {
+        this.updateMessageSection(execRunning, Array.from(this.runningMessages.values()).reverse(), false);
+      }
+      const execCompleted = this.executionsPopup.querySelector('[data-section="completed-messages"]');
+      if (execCompleted) {
+        this.updateMessageSection(execCompleted, [...this.completedMessages].reverse(), true);
+      }
+    }
+
+    // Update executions badge in header
+    this.updateExecutionsBadge();
+  }
+
+  /**
+   * Smart update for message section - preserves existing cards BUT recreates when state changes
+   */
+  private updateMessageSection(section: Element, messages: MessageExecution[], isCompleted: boolean) {
+    const existingCards = Array.from(section.querySelectorAll('[data-message-id]'));
+    const existingIds = new Set(existingCards.map(card => card.getAttribute('data-message-id')!));
+    const currentIds = new Set(messages.map(m => m.id));
+
+    // Remove cards that no longer exist
+    existingCards.forEach(card => {
+      const id = card.getAttribute('data-message-id')!;
+      if (!currentIds.has(id)) {
+        card.remove();
+      }
+    });
+
+    // Add new cards OR recreate if state changed
+    messages.forEach((message, index) => {
+      const existingCard = section.querySelector(`[data-message-id="${message.id}"]`);
+
+      // Check if card needs recreation due to pause state change
+      let needsRecreation = false;
+      if (existingCard && !isCompleted) {
+        const execution = this.messageExecutions.get(message.id);
+        if (execution) {
+          // Check if pause state changed
+          const currentClass = existingCard.querySelector('.princhat-script-btn-icon')?.classList.contains('paused') ? true : false;
+          const newPauseState = execution.isPaused;
+          if (currentClass !== newPauseState) {
+            needsRecreation = true;
+            console.log(`[PrinChat UI] 🔄 Message ${message.id} state changed, recreating card`);
+          }
+        }
+      }
+
+      if (!existingIds.has(message.id) || needsRecreation) {
+        // Remove old card if recreating
+        if (needsRecreation && existingCard) {
+          existingCard.remove();
+        }
+
+        const card = this.createMessageCard(message, isCompleted);
+        if (index === 0) {
+          section.prepend(card);
+        } else {
+          const prevCard = section.querySelector(`[data-message-id="${messages[index - 1].id}"]`);
+          if (prevCard && prevCard.nextSibling) {
+            section.insertBefore(card, prevCard.nextSibling);
+          } else {
+            section.appendChild(card);
+          }
+        }
+      }
+    });
   }
 
   /**
@@ -1110,7 +1210,10 @@ class WhatsAppUIOverlay {
       `;
 
       const clearBtn = card.querySelector('[data-action="clear-message"]');
-      clearBtn?.addEventListener('click', () => this.clearCompletedMessage(msgExec.id));
+      clearBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.clearCompletedMessage(msgExec.id);
+      });
     } else {
       // Card em execução
       // Se tem delay: mostra cronômetro e pause/play
@@ -1141,10 +1244,16 @@ class WhatsAppUIOverlay {
         `;
 
         const pausePlayBtn = card.querySelector('[data-action="pause-play-message"]');
-        pausePlayBtn?.addEventListener('click', () => this.togglePauseMessage(msgExec.id));
+        pausePlayBtn?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.togglePauseMessage(msgExec.id);
+        });
 
         const cancelBtn = card.querySelector('[data-action="cancel-message"]');
-        cancelBtn?.addEventListener('click', () => this.cancelMessage(msgExec.id));
+        cancelBtn?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.cancelMessage(msgExec.id);
+        });
       } else {
         // Sem delay - layout simples
         card.innerHTML = `
@@ -1158,7 +1267,10 @@ class WhatsAppUIOverlay {
         `;
 
         const cancelBtn = card.querySelector('[data-action="cancel-message"]');
-        cancelBtn?.addEventListener('click', () => this.cancelMessage(msgExec.id));
+        cancelBtn?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.cancelMessage(msgExec.id);
+        });
       }
     }
 
@@ -1183,9 +1295,34 @@ class WhatsAppUIOverlay {
       console.log('[PrinChat UI] Message paused:', messageId);
     }
 
+    // Update pause/play icon directly in ALL popups without recreating card
+    this.updateMessagePausePlayIcon(messageId, execution.isPaused);
+
     // Update UI
     if (this.showMessageExecutionPopup) {
       this.updateMessageStatusPopup();
+    }
+  }
+
+  /**
+   * Update pause/play icon in all popups for a message
+   */
+  private updateMessagePausePlayIcon(id: string, isPaused: boolean) {
+    console.log(`[PrinChat UI] 🔄 updateMessagePausePlayIcon called: ${id}, isPaused=${isPaused}`);
+    const pauseIcon = `<path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>`;
+    const playIcon = `<path d="M8 5v14l11-7z"/>`;
+    const icon = isPaused ? playIcon : pauseIcon;
+
+    // Update in floating popup
+    const card = this.messageStatusPopup?.querySelector(`[data-message-id="${id}"]`);
+    const btn = card?.querySelector('[data-action="pause-play"] svg path');
+    if (btn) btn.setAttribute('d', icon);
+
+    // Update in executions popup
+    if (this.executionsPopup) {
+      const execCard = this.executionsPopup.querySelector(`[data-message-id="${id}"]`);
+      const execBtn = execCard?.querySelector('[data-action="pause-play"] svg path');
+      if (execBtn) execBtn.setAttribute('d', icon);
     }
   }
 
@@ -1623,6 +1760,7 @@ class WhatsAppUIOverlay {
     return undefined;
   }
 
+  // @ts-expect-error - Keeping for potential future use
   private createStatusPopup() {
     // Remove existing popup
     if (this.statusPopup) this.statusPopup.remove();
@@ -1688,31 +1826,87 @@ class WhatsAppUIOverlay {
   // }
 
   private updateStatusPopup() {
-    if (!this.statusPopup) return;
+    // Update both floating popup AND executions popup (either/both may be open)
 
-    // Update running scripts section
-    const runningSection = this.statusPopup.querySelector('[data-section="running"]');
+    // SMART UPDATE: Only add/remove cards when list changes, preserve existing cards for timers
+    const runningSection = this.statusPopup?.querySelector('[data-section="running"]');
     if (runningSection) {
-      runningSection.innerHTML = '';
-      // Convert Map to array and REVERSE to show newest first (at top)
-      const runningArray = Array.from(this.runningScripts.values()).reverse();
-      runningArray.forEach((scriptExec) => {
-        const card = this.createScriptCard(scriptExec, false);
-        runningSection.appendChild(card);
-      });
+      this.updateScriptSection(runningSection, Array.from(this.runningScripts.values()).reverse(), false);
     }
 
-    // Update completed scripts section
-    const completedSection = this.statusPopup.querySelector('[data-section="completed"]');
+    const completedSection = this.statusPopup?.querySelector('[data-section="completed"]');
     if (completedSection) {
-      completedSection.innerHTML = '';
-      // Show newest completed first (at top)
-      const completedReversed = [...this.completedScripts].reverse();
-      completedReversed.forEach((scriptExec) => {
-        const card = this.createScriptCard(scriptExec, true);
-        completedSection.appendChild(card);
-      });
+      this.updateScriptSection(completedSection, [...this.completedScripts].reverse(), true);
     }
+
+    // Also update executions popup if open
+    if (this.executionsPopup) {
+      const execRunning = this.executionsPopup.querySelector('[data-section="running"]');
+      if (execRunning) {
+        this.updateScriptSection(execRunning, Array.from(this.runningScripts.values()).reverse(), false);
+      }
+      const execCompleted = this.executionsPopup.querySelector('[data-section="completed"]');
+      if (execCompleted) {
+        this.updateScriptSection(execCompleted, [...this.completedScripts].reverse(), true);
+      }
+    }
+
+    // Update executions badge in header
+    this.updateExecutionsBadge();
+  }
+
+  /**
+   * Smart update for script section - preserves existing cards BUT recreates when state changes
+   */
+  private updateScriptSection(section: Element, scripts: ScriptExecution[], isCompleted: boolean) {
+    const existingCards = Array.from(section.querySelectorAll('[data-script-id]'));
+    const existingIds = new Set(existingCards.map(card => card.getAttribute('data-script-id')!));
+    const currentIds = new Set(scripts.map(s => s.id));
+
+    // Remove cards that no longer exist
+    existingCards.forEach(card => {
+      const id = card.getAttribute('data-script-id')!;
+      if (!currentIds.has(id)) {
+        card.remove();
+      }
+    });
+
+    // Add new cards OR recreate if state changed
+    scripts.forEach((script, index) => {
+      const existingCard = section.querySelector(`[data-script-id="${script.id}"]`);
+
+      // Check if card needs recreation due to state change
+      let needsRecreation = false;
+      if (existingCard && !isCompleted) {
+        // Check if status changed (running <-> paused)
+        const btn = existingCard.querySelector('.princhat-script-btn-icon');
+        const currentClass = btn?.classList.contains('paused') ? 'paused' : 'running';
+        const newClass = script.status === 'paused' ? 'paused' : 'running';
+        console.log(`[PrinChat DEBUG] Script ${script.id}: currentClass=${currentClass}, newClass=${newClass}, needsRecreation=${currentClass !== newClass}`);
+        if (currentClass !== newClass) {
+          needsRecreation = true;
+        }
+      }
+
+      if (!existingIds.has(script.id) || needsRecreation) {
+        // Remove old card if recreating
+        if (needsRecreation && existingCard) {
+          existingCard.remove();
+        }
+
+        const card = this.createScriptCard(script, isCompleted);
+        if (index === 0) {
+          section.prepend(card);
+        } else {
+          const prevCard = section.querySelector(`[data-script-id="${scripts[index - 1].id}"]`);
+          if (prevCard && prevCard.nextSibling) {
+            section.insertBefore(card, prevCard.nextSibling);
+          } else {
+            section.appendChild(card);
+          }
+        }
+      }
+    });
   }
 
   private createScriptCard(scriptExec: ScriptExecution, isCompleted: boolean): HTMLElement {
@@ -1751,7 +1945,10 @@ class WhatsAppUIOverlay {
       `;
 
       const clearBtn = card.querySelector('[data-action="clear"]');
-      clearBtn?.addEventListener('click', () => this.clearCompletedScript(scriptExec.id));
+      clearBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.clearCompletedScript(scriptExec.id);
+      });
     } else {
       // Card em execução
       const isPaused = scriptExec.status === 'paused';
@@ -1777,10 +1974,16 @@ class WhatsAppUIOverlay {
       `;
 
       const pausePlayBtn = card.querySelector('[data-action="pause-play"]');
-      pausePlayBtn?.addEventListener('click', () => this.togglePauseScript(scriptExec.id));
+      pausePlayBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.togglePauseScript(scriptExec.id);
+      });
 
       const cancelBtn = card.querySelector('[data-action="cancel"]');
-      cancelBtn?.addEventListener('click', () => this.cancelScript(scriptExec.id));
+      cancelBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.cancelScript(scriptExec.id);
+      });
     }
 
     return card;
@@ -1789,6 +1992,8 @@ class WhatsAppUIOverlay {
   private togglePauseScript(scriptId: string) {
     const scriptExec = this.runningScripts.get(scriptId);
     if (!scriptExec) return;
+
+
 
     if (scriptExec.status === 'running') {
       scriptExec.status = 'paused';
@@ -1810,7 +2015,31 @@ class WhatsAppUIOverlay {
       }));
     }
 
+    // Update pause/play icon directly in ALL popups without recreating card
+    this.updatePausePlayIcon(scriptId, scriptExec.status === 'paused');
+
     this.updateStatusPopup();
+  }
+
+  /**
+   * Update pause/play icon in all popups for a script/message
+   */
+  private updatePausePlayIcon(id: string, isPaused: boolean) {
+    const pauseIconPath = 'M6 4h4v16H6V4zm8 0h4v16h-4V4z';
+    const playIconPath = 'M8 5v14l11-7z';
+    const iconPath = isPaused ? playIconPath : pauseIconPath;
+
+    // Update in floating popup
+    const card = this.statusPopup?.querySelector(`[data-script-id="${id}"]`);
+    const btn = card?.querySelector('[data-action="pause-play"] svg path');
+    if (btn) btn.setAttribute('d', iconPath);
+
+    // Update in executions popup
+    if (this.executionsPopup) {
+      const execCard = this.executionsPopup.querySelector(`[data-script-id="${id}"]`);
+      const execBtn = execCard?.querySelector('[data-action="pause-play"] svg path');
+      if (execBtn) execBtn.setAttribute('d', iconPath);
+    }
   }
 
   private cancelScript(scriptId: string) {
@@ -1904,11 +2133,21 @@ class WhatsAppUIOverlay {
       const scriptExec = this.runningScripts.get(scriptId);
       if (scriptExec && scriptExec.status === 'running') {
         scriptExec.elapsedSeconds++;
-        // Update only the timer element to avoid re-rendering everything
+
+        // Update timer in floating popup (if exists)
         const card = this.statusPopup?.querySelector(`[data-script-id="${scriptId}"]`);
         const timerEl = card?.querySelector('.princhat-script-card-timer');
         if (timerEl) {
           timerEl.textContent = `${scriptExec.elapsedSeconds}s`;
+        }
+
+        // ALSO update timer in executions popup (if exists and open)
+        if (this.executionsPopup) {
+          const execCard = this.executionsPopup.querySelector(`[data-script-id="${scriptId}"]`);
+          const execTimerEl = execCard?.querySelector('.princhat-script-card-timer');
+          if (execTimerEl) {
+            execTimerEl.textContent = `${scriptExec.elapsedSeconds}s`;
+          }
         }
       }
     }, 1000);
@@ -2006,8 +2245,7 @@ class WhatsAppUIOverlay {
     console.log('[PrinChat UI] Header Popup URL:', popupUrl);
 
     if (popupUrl) {
-      // Use innerHTML to match FAB implementation exactly
-      // This ensures identical DOM structure and initialization behavior
+      // Simple iframe structure - close button is now inside the iframe
       this.headerPopup.innerHTML = `
         <div style="width: 100%; height: 100%; overflow: hidden; border-radius: 8px;">
           <iframe
@@ -2017,6 +2255,13 @@ class WhatsAppUIOverlay {
           ></iframe>
         </div>
       `;
+
+      // Add close button handler
+      const closeBtn = this.headerPopup.querySelector('.princhat-popup-close-btn');
+      closeBtn?.addEventListener('click', () => {
+        console.log('[PrinChat UI] Close button clicked');
+        this.toggleHeaderPopup(false);
+      });
     } else {
       console.error('[PrinChat UI] Popup URL not found in marker');
       this.headerPopup.innerHTML = '<div style="color:white;padding:20px;">Erro: URL do popup não encontrada</div>';
@@ -2134,6 +2379,62 @@ class WhatsAppUIOverlay {
         title: 'Manutenção Programada',
         message: 'Sistema estará em manutenção dia 25/11 das 2h às 4h.',
         timestamp: Date.now() - 172800000 // 2 dias atrás
+      },
+      {
+        id: '4',
+        type: 'promo',
+        icon: '🎁',
+        title: 'Oferta Exclusiva',
+        message: 'Aproveite nosso plano premium com recursos ilimitados.',
+        timestamp: Date.now() - 7200000 // 2h atrás
+      },
+      {
+        id: '5',
+        type: 'update',
+        icon: '✨',
+        title: 'Novo Recurso',
+        message: 'Agora você pode agendar mensagens para envio automático.',
+        timestamp: Date.now() - 10800000 // 3h atrás
+      },
+      {
+        id: '6',
+        type: 'alert',
+        icon: '📢',
+        title: 'Comunicado Importante',
+        message: 'Novos termos de serviço entrarão em vigor no próximo mês.',
+        timestamp: Date.now() - 259200000 // 3 dias atrás
+      },
+      {
+        id: '7',
+        type: 'promo',
+        icon: '💰',
+        title: 'Cashback Disponível',
+        message: 'Você tem R$ 25,00 de cashback para usar na próxima renovação.',
+        timestamp: Date.now() - 14400000 // 4h atrás
+      },
+      {
+        id: '8',
+        type: 'update',
+        icon: '🚀',
+        title: 'Performance Melhorada',
+        message: 'O sistema agora está 3x mais rápido no envio de mensagens.',
+        timestamp: Date.now() - 345600000 // 4 dias atrás
+      },
+      {
+        id: '9',
+        type: 'alert',
+        icon: '🔒',
+        title: 'Segurança',
+        message: 'Ative a autenticação de dois fatores para mais segurança.',
+        timestamp: Date.now() - 432000000 // 5 dias atrás
+      },
+      {
+        id: '10',
+        type: 'promo',
+        icon: '🌟',
+        title: 'Upgrade Premium',
+        message: 'Desbloqueie todos os recursos com nosso plano anual.',
+        timestamp: Date.now() - 18000000 // 5h atrás
       }
     ];
 
@@ -2155,7 +2456,14 @@ class WhatsAppUIOverlay {
     dropdown.innerHTML = `
       <div class="princhat-notifications-header">
         <span>Notificações</span>
-        <button class="princhat-notifications-clear-all">Limpar tudo</button>
+        <div class="princhat-notifications-header-actions">
+          <button class="princhat-notifications-clear-all">Limpar tudo</button>
+          <button class="princhat-popup-close-btn" title="Fechar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
       </div>
       <div class="princhat-notifications-list">
         ${fakeNotifications.map(notif => `
@@ -2188,17 +2496,44 @@ class WhatsAppUIOverlay {
       if (list) {
         list.innerHTML = '<div class="princhat-notifications-empty">Nenhuma notificação no momento</div>';
       }
+
+      // Hide badge
+      const badge = button.querySelector('.princhat-notification-badge') as HTMLElement;
+      if (badge) {
+        badge.style.display = 'none';
+      }
+    });
+
+    // Close button handler
+    const closeBtn = dropdown.querySelector('.princhat-popup-close-btn');
+    closeBtn?.addEventListener('click', () => {
+      dropdown.remove();
+      button.classList.remove('active');
     });
 
     // Close individual notification
     dropdown.querySelectorAll('.princhat-notification-close').forEach(btn => {
       btn.addEventListener('click', (e) => {
+        e.stopPropagation();
         const item = (e.target as HTMLElement).closest('.princhat-notification-item');
         if (item) {
           item.remove();
-          // Check if list is empty
+
+          // Update badge count
+          const badge = button.querySelector('.princhat-notification-badge') as HTMLElement;
           const remainingItems = dropdown.querySelectorAll('.princhat-notification-item');
-          if (remainingItems.length === 0) {
+          const count = remainingItems.length;
+
+          if (badge) {
+            if (count === 0) {
+              badge.style.display = 'none';
+            } else {
+              badge.textContent = count > 9 ? '9+' : count.toString();
+            }
+          }
+
+          // Check if list is empty
+          if (count === 0) {
             const list = dropdown.querySelector('.princhat-notifications-list');
             if (list) {
               list.innerHTML = '<div class="princhat-notifications-empty">Nenhuma notificação no momento</div>';
@@ -2223,14 +2558,2164 @@ class WhatsAppUIOverlay {
     }, 100);
   }
 
+  /**
+   * Toggle direct chat popup for starting a conversation with a phone number
+   */
+  private toggleDirectChatPopup(button: HTMLElement) {
+    // Use stored reference instead of querySelector
+    if (this.directChatPopup) {
+      // Close popup
+      this.directChatPopup.remove();
+      button.classList.remove('active');
+      this.directChatPopup = null;
+      return;
+    }
+
+    // Country codes list (Brazil first)
+    const countryCodes = [
+      { name: 'Brasil', code: '+55', flag: '🇧🇷' },
+      { name: 'Estados Unidos', code: '+1', flag: '🇺🇸' },
+      { name: 'Argentina', code: '+54', flag: '🇦🇷' },
+      { name: 'Chile', code: '+56', flag: '🇨🇱' },
+      { name: 'Colômbia', code: '+57', flag: '🇨🇴' },
+      { name: 'México', code: '+52', flag: '🇲🇽' },
+      { name: 'Portugal', code: '+351', flag: '🇵🇹' },
+      { name: 'Espanha', code: '+34', flag: '🇪🇸' },
+      { name: 'Alemanha', code: '+49', flag: '🇩🇪' },
+      { name: 'França', code: '+33', flag: '🇫🇷' },
+      { name: 'Itália', code: '+39', flag: '🇮🇹' },
+      { name: 'Reino Unido', code: '+44', flag: '🇬🇧' },
+      { name: 'Canadá', code: '+1', flag: '🇨🇦' },
+      { name: 'Japão', code: '+81', flag: '🇯🇵' },
+      { name: 'China', code: '+86', flag: '🇨🇳' },
+      { name: 'Índia', code: '+91', flag: '🇮🇳' },
+      { name: 'Austrália', code: '+61', flag: '🇦🇺' }
+    ];
+
+    let selectedCountry = countryCodes[0]; // Default to Brazil
+    let isDropdownOpen = false;
+
+    // Create popup
+    const popup = document.createElement('div');
+    popup.className = 'princhat-direct-chat-popup';
+    this.directChatPopup = popup;
+
+    // Build popup content
+    popup.innerHTML = `
+      <div class="princhat-direct-chat-header">
+        <h3>Iniciar conversa</h3>
+        <button class="princhat-popup-close-btn" title="Fechar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="princhat-direct-chat-form">
+        <div class="princhat-direct-chat-field">
+          <label class="princhat-direct-chat-label">Código do país</label>
+          <div class="princhat-country-selector">
+            <button type="button" class="princhat-country-selector-button">
+              <span class="princhat-country-selected">
+                <span class="princhat-country-flag">${selectedCountry.flag}</span>
+                <span class="princhat-country-code">${selectedCountry.code}</span>
+                <span class="princhat-country-name">${selectedCountry.name}</span>
+              </span>
+              <svg class="princhat-country-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </button>
+            <div class="princhat-country-dropdown" style="display: none;">
+              ${countryCodes.map(country => `
+                <div class="princhat-country-option" data-code="${country.code}" data-name="${country.name}" data-flag="${country.flag}">
+                  <span class="princhat-country-flag">${country.flag}</span>
+                  <span class="princhat-country-code">${country.code}</span>
+                  <span class="princhat-country-name">${country.name}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+        <div class="princhat-direct-chat-field">
+          <label class="princhat-direct-chat-label">Número de celular (WhatsApp)</label>
+          <input 
+            type="tel" 
+            class="princhat-phone-input" 
+            placeholder="ex: 21993253978"
+            maxlength="15"
+          />
+        </div>
+        <button type="button" class="princhat-start-chat-button" disabled>
+          Iniciar conversa
+        </button>
+      </div>
+    `;
+
+    // Position popup below button
+    const rect = button.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.top = `${rect.bottom + 8}px`;
+    popup.style.right = `${window.innerWidth - rect.right}px`;
+
+    document.body.appendChild(popup);
+    button.classList.add('active');
+
+    // Get elements
+    const selectorButton = popup.querySelector('.princhat-country-selector-button') as HTMLElement;
+    const dropdown = popup.querySelector('.princhat-country-dropdown') as HTMLElement;
+    const phoneInput = popup.querySelector('.princhat-phone-input') as HTMLInputElement;
+    const startButton = popup.querySelector('.princhat-start-chat-button') as HTMLButtonElement;
+    const arrow = popup.querySelector('.princhat-country-arrow') as HTMLElement;
+
+    // Close button handler
+    const closeBtn = popup.querySelector('.princhat-popup-close-btn');
+    closeBtn?.addEventListener('click', () => {
+      popup.remove();
+      button.classList.remove('active');
+      this.directChatPopup = null;
+    });
+
+    // Toggle dropdown
+    const toggleDropdown = (e: Event) => {
+      e.stopPropagation();
+      isDropdownOpen = !isDropdownOpen;
+      dropdown.style.display = isDropdownOpen ? 'block' : 'none';
+      arrow.style.transform = isDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)';
+
+      // Position dropdown when opening (fixed positioning)
+      if (isDropdownOpen) {
+        const selectorRect = selectorButton.getBoundingClientRect();
+        dropdown.style.top = `${selectorRect.bottom + 4}px`;
+        dropdown.style.left = `${selectorRect.left}px`;
+        dropdown.style.width = `${selectorRect.width}px`;
+      }
+    };
+
+    selectorButton.addEventListener('click', toggleDropdown);
+
+    // Select country
+    dropdown.querySelectorAll('.princhat-country-option').forEach(option => {
+      option.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const target = e.currentTarget as HTMLElement;
+        const code = target.dataset.code!;
+        const name = target.dataset.name!;
+        const flag = target.dataset.flag!;
+
+        selectedCountry = { name, code, flag };
+
+        // Update button text
+        const selectedSpan = selectorButton.querySelector('.princhat-country-selected');
+        if (selectedSpan) {
+          selectedSpan.innerHTML = `
+            <span class="princhat-country-flag">${flag}</span>
+            <span class="princhat-country-code">${code}</span>
+            <span class="princhat-country-name">${name}</span>
+          `;
+        }
+
+        // Close dropdown
+        isDropdownOpen = false;
+        dropdown.style.display = 'none';
+        arrow.style.transform = 'rotate(0deg)';
+      });
+    });
+
+    // Validate phone input
+    const validateAndEnableButton = () => {
+      const phone = phoneInput.value.trim();
+      // Remove any non-digit characters for validation
+      const digitsOnly = phone.replace(/\D/g, '');
+
+      // Enable button if we have at least 10 digits
+      if (digitsOnly.length >= 10) {
+        startButton.disabled = false;
+      } else {
+        startButton.disabled = true;
+      }
+    };
+
+    phoneInput.addEventListener('input', (e) => {
+      // Allow only numbers
+      const target = e.target as HTMLInputElement;
+      target.value = target.value.replace(/\D/g, '');
+      validateAndEnableButton();
+    });
+
+    // Start chat
+    startButton.addEventListener('click', async () => {
+      const phone = phoneInput.value.trim().replace(/\D/g, '');
+
+      if (phone.length >= 10) {
+        console.log('[PrinChat UI] Starting chat with:', selectedCountry.code, phone);
+
+        // Remove + from country code and combine with phone number
+        const countryCodeDigits = selectedCountry.code.replace(/\D/g, '');
+        const fullNumber = `${countryCodeDigits}${phone}`;
+
+        // Close popup
+        popup.remove();
+        button.classList.remove('active');
+        this.directChatPopup = null;
+
+        // Use page script to open chat (has access to WPP.js and Store)
+        console.log('[PrinChat UI] Opening chat via page script event');
+        const chatId = `${fullNumber}@c.us`;
+
+        // Dispatch event to page script
+        const eventId = `open-chat-${Date.now()}`;
+        document.dispatchEvent(new CustomEvent('PrinChatOpenChat', {
+          detail: { chatId, requestId: eventId }
+        }));
+
+        console.log('[PrinChat UI] ✅ Open chat event dispatched for:', chatId);
+      }
+    });
+
+    // Close popup when clicking outside
+    const closePopup = (e: MouseEvent) => {
+      if (!popup.contains(e.target as Node) && !button.contains(e.target as Node)) {
+        popup.remove();
+        button.classList.remove('active');
+        this.directChatPopup = null;
+        document.removeEventListener('click', closePopup);
+      }
+    };
+
+    // Add listener after a short delay to prevent immediate closure
+    setTimeout(() => {
+      document.addEventListener('click', closePopup);
+    }, 100);
+  }
+
+  /**
+   * Toggle profile dropdown menu
+   */
+  private toggleProfileDropdown(button: HTMLElement) {
+    // Close if already open
+    if (this.profileDropdown) {
+      this.profileDropdown.remove();
+      button.classList.remove('active');
+      this.profileDropdown = null;
+      return;
+    }
+
+    // Create dropdown
+    const dropdown = document.createElement('div');
+    dropdown.className = 'princhat-profile-dropdown';
+    this.profileDropdown = dropdown;
+
+    // Menu items with Lucide icons
+    const menuItems = [
+      {
+        label: 'Configuração',
+        icon: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`,
+        action: () => {
+          // Dispatch custom event that will be caught by content script with chrome API access
+          const event = new CustomEvent('PRINCHAT_OPEN_OPTIONS', { bubbles: true });
+          document.dispatchEvent(event);
+          dropdown.remove();
+          button.classList.remove('active');
+          this.profileDropdown = null;
+        }
+      },
+      {
+        label: 'Minha Conta',
+        icon: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
+        action: () => {
+          console.log('[PrinChat UI] Minha Conta clicked');
+          // TODO: Implement account action
+        }
+      },
+      {
+        label: 'Ajustar Zoom',
+        icon: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/><line x1="11" x2="11" y1="8" y2="14"/><line x1="8" x2="14" y1="11" y2="11"/></svg>`,
+        action: () => {
+          console.log('[PrinChat UI] Ajustar Zoom clicked');
+          // TODO: Implement zoom action
+        }
+      },
+      {
+        label: 'Sair',
+        icon: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>`,
+        action: () => {
+          console.log('[PrinChat UI] Sair clicked');
+          // TODO: Implement logout action
+        }
+      }
+    ];
+
+    // Build menu HTML
+    dropdown.innerHTML = menuItems.map(item => `
+      <div class="princhat-profile-menu-item" data-action="${item.label}">
+        <span class="princhat-profile-menu-icon">${item.icon}</span>
+        <span class="princhat-profile-menu-label">${item.label}</span>
+      </div>
+    `).join('');
+
+    // Position dropdown below button
+    const rect = button.getBoundingClientRect();
+    dropdown.style.position = 'fixed';
+    dropdown.style.top = `${rect.bottom + 8}px`;
+    dropdown.style.right = `${window.innerWidth - rect.right}px`;
+
+    document.body.appendChild(dropdown);
+    button.classList.add('active');
+
+    // Add click handlers
+    menuItems.forEach((item, index) => {
+      const menuItem = dropdown.querySelectorAll('.princhat-profile-menu-item')[index];
+      menuItem.addEventListener('click', item.action);
+    });
+
+    // Close dropdown when clicking outside
+    const closeDropdown = (e: MouseEvent) => {
+      if (!dropdown.contains(e.target as Node) && !button.contains(e.target as Node)) {
+        dropdown.remove();
+        button.classList.remove('active');
+        this.profileDropdown = null;
+        document.removeEventListener('click', closeDropdown);
+      }
+    };
+
+    // Add listener after a short delay to prevent immediate closure
+    setTimeout(() => {
+      document.addEventListener('click', closeDropdown);
+    }, 100);
+  }
+
+  /**
+   * Toggle help popup with menu options
+   */
+  private toggleHelpPopup(button: HTMLElement) {
+    // If popup already exists, close it
+    if (this.helpPopup) {
+      this.helpPopup.remove();
+      button.classList.remove('active');
+      this.helpPopup = null;
+      return;
+    }
+
+    // Create popup
+    const popup = document.createElement('div');
+    popup.className = 'princhat-help-popup';
+    this.helpPopup = popup;
+
+    // Define menu items
+    const menuItems = [
+      {
+        icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 21 1.9-5.7a8.5 8.5 0 1 1 3.8 3.8z"/></svg>`,
+        title: 'Fale com o Suporte',
+        description: 'Tire suas dúvidas diretamente pelo WhatsApp.',
+        action: () => {
+          console.log('[PrinChat] Contact support clicked');
+          // TODO: Implement support link
+          popup.remove();
+          button.classList.remove('active');
+          this.helpPopup = null;
+        }
+      },
+      {
+        icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>`,
+        title: 'Central de Ajuda',
+        description: 'Acesse nossos tutoriais e guias completos.',
+        action: () => {
+          console.log('[PrinChat] Help center clicked');
+          // TODO: Implement help center link
+          popup.remove();
+          button.classList.remove('active');
+          this.helpPopup = null;
+        }
+      },
+      {
+        icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>`,
+        title: 'Sugerir uma melhoria',
+        description: 'Tem uma ideia? Adoraríamos ouvir você!',
+        action: () => {
+          console.log('[PrinChat] Suggest improvement clicked');
+          // TODO: Implement feedback form
+          popup.remove();
+          button.classList.remove('active');
+          this.helpPopup = null;
+        }
+      }
+    ];
+
+    // Build popup HTML
+    popup.innerHTML = `
+      <div class="princhat-help-popup-header">
+        <h3>Precisa de Ajuda?</h3>
+        <button class="princhat-popup-close-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="princhat-help-menu">
+        ${menuItems.map(item => `
+          <div class="princhat-help-menu-item">
+            <div class="princhat-help-menu-icon">
+              ${item.icon}
+            </div>
+            <div class="princhat-help-menu-item-content">
+              <div class="princhat-help-menu-item-title">${item.title}</div>
+              <div class="princhat-help-menu-item-description">${item.description}</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+
+    // Position popup below button
+    const rect = button.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.top = `${rect.bottom + 8}px`;
+    popup.style.right = `${window.innerWidth - rect.right}px`;
+
+    document.body.appendChild(popup);
+    button.classList.add('active');
+
+    // Add click handlers for menu items
+    const menuItemElements = popup.querySelectorAll('.princhat-help-menu-item');
+    menuItems.forEach((item, index) => {
+      menuItemElements[index].addEventListener('click', item.action);
+    });
+
+    // Add close button handler
+    const closeBtn = popup.querySelector('.princhat-popup-close-btn');
+    closeBtn?.addEventListener('click', () => {
+      popup.remove();
+      button.classList.remove('active');
+      this.helpPopup = null;
+    });
+
+    // Close popup when clicking outside
+    const closePopup = (e: MouseEvent) => {
+      if (!popup.contains(e.target as Node) && !button.contains(e.target as Node)) {
+        popup.remove();
+        button.classList.remove('active');
+        this.helpPopup = null;
+        document.removeEventListener('click', closePopup);
+      }
+    };
+
+    // Add listener after a short delay to prevent immediate closure
+    setTimeout(() => {
+      document.addEventListener('click', closePopup);
+    }, 100);
+  }
+
+  /**
+   * Toggle schedule list popup
+   */
+  private toggleScheduleListPopup(button: HTMLElement) {
+    if (this.scheduleListPopup) {
+      this.scheduleListPopup.remove();
+      this.scheduleListPopup = null;
+      return;
+    }
+
+    const popup = document.createElement('div');
+    popup.className = 'princhat-schedule-list-popup';
+    this.scheduleListPopup = popup;
+
+    popup.innerHTML = `
+      <div class="princhat-schedule-list-header">
+        <h3>Lista de agendamentos</h3>
+        <button class="princhat-popup-close-btn">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="princhat-schedule-list-content">
+        <div class="princhat-schedule-list-empty">
+          <div class="princhat-schedule-list-empty-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+            </svg>
+          </div>
+          <div class="princhat-schedule-list-empty-title">Nenhum agendamento</div>
+          <div class="princhat-schedule-list-empty-subtitle">Não há mensagens ou scripts agendados para este contato.</div>
+        </div>
+      </div>
+      <div class="princhat-schedule-list-footer">
+        <button class="princhat-schedule-list-create-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+          Criar novo
+        </button>
+      </div>
+    `;
+
+    const rect = button.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.top = `${rect.bottom + 8}px`;
+    popup.style.right = `${window.innerWidth - rect.right}px`;
+    document.body.appendChild(popup);
+
+    const closeBtn = popup.querySelector('.princhat-popup-close-btn');
+    closeBtn?.addEventListener('click', () => {
+      popup.remove();
+      this.scheduleListPopup = null;
+    });
+
+    const createBtn = popup.querySelector('.princhat-schedule-list-create-btn');
+    createBtn?.addEventListener('click', () => {
+      popup.remove();
+      this.scheduleListPopup = null;
+      this.openScheduleCreationModal();
+    });
+
+    const closePopup = (e: MouseEvent) => {
+      if (!popup.contains(e.target as Node) && !button.contains(e.target as Node)) {
+        popup.remove();
+        this.scheduleListPopup = null;
+        document.removeEventListener('click', closePopup);
+      }
+    };
+
+    setTimeout(() => document.addEventListener('click', closePopup), 100);
+  }
+
+  /**
+   * Open schedule creation modal
+   */
+  private openScheduleCreationModal() {
+    if (this.scheduleCreationModal) {
+      this.scheduleCreationModal.remove();
+      this.scheduleCreationModal = null;
+      return;
+    }
+
+    const state = {
+      contentType: 'message' as 'message' | 'script',
+      filterType: 'all' as 'all' | 'text' | 'audio' | 'image' | 'file' | 'script',
+      searchText: '',
+      selectedId: '',
+      date: '',
+      time: ''
+    };
+
+    const now = new Date();
+    now.setHours(now.getHours() + 1, 0, 0, 0);
+    state.date = now.toISOString().split('T')[0];
+    state.time = `${String(now.getHours()).padStart(2, '0')}:00`;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'princhat-modal-overlay';
+    this.scheduleCreationModal = overlay;
+
+    const modal = document.createElement('div');
+    modal.className = 'princhat-schedule-modal';
+
+    const getIcon = (type: string) => {
+      const icons: Record<string, string> = {
+        text: '<path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>',
+        audio: '<path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>',
+        image: '<path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>',
+        video: '<path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>',
+        file: '<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/>',
+        script: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>'
+      };
+      return icons[type] || icons.text;
+    };
+
+    const buildList = (): string => {
+      let items: any[] = state.contentType === 'message' ? this.messages : this.scripts;
+
+      if (state.contentType === 'message' && state.filterType !== 'all') {
+        items = items.filter((m: Message) => m.type === state.filterType);
+      }
+
+      if (state.searchText) {
+        const search = state.searchText.toLowerCase();
+        items = items.filter((item: Message | Script) => {
+          const text = state.contentType === 'message' ? (item as Message).content : (item as Script).name;
+          return text.toLowerCase().includes(search);
+        });
+      }
+
+      if (items.length === 0) {
+        return '<div class="princhat-item-empty">Nenhum item encontrado</div>';
+      }
+
+      return items.map((item: Message | Script) => {
+        const icon = state.contentType === 'message' ? getIcon((item as Message).type) : getIcon('script');
+        const text = state.contentType === 'message'
+          ? (item as Message).content.substring(0, 60) + ((item as Message).content.length > 60 ? '...' : '')
+          : (item as Script).name;
+
+        return `
+          <div class="princhat-item-row" data-id="${item.id}">
+            <svg class="princhat-item-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">${icon}</svg>
+            <span class="princhat-item-text">${text}</span>
+          </div>
+        `;
+      }).join('');
+    };
+
+    const updateList = () => {
+      const list = modal.querySelector('[data-list]') as HTMLElement;
+      if (list) {
+        list.innerHTML = buildList();
+        attachItemListeners();
+      }
+    };
+
+    const attachItemListeners = () => {
+      const items = modal.querySelectorAll('.princhat-item-row');
+      items.forEach(item => {
+        item.addEventListener('click', () => {
+          items.forEach(i => i.classList.remove('active'));
+          item.classList.add('active');
+          state.selectedId = (item as HTMLElement).dataset.id || '';
+          updatePreview();
+        });
+      });
+    };
+
+    const updatePreview = () => {
+      const preview = modal.querySelector('[data-preview]') as HTMLElement;
+      const btn = modal.querySelector('[data-action="schedule"]') as HTMLButtonElement;
+
+      if (!state.selectedId || !state.date || !state.time) {
+        if (preview) preview.style.display = 'none';
+        if (btn) btn.disabled = true;
+        return;
+      }
+
+      const item = state.contentType === 'message'
+        ? this.messages.find(m => m.id === state.selectedId)
+        : this.scripts.find(s => s.id === state.selectedId);
+
+      if (!item) return;
+
+      const scheduleDate = new Date(`${state.date}T${state.time}`);
+      const formatted = scheduleDate.toLocaleDateString('pt-BR', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+
+      const text = state.contentType === 'message'
+        ? (item as Message).content.substring(0, 80)
+        : `${(item as Script).name} (${(item as Script).steps.length} passos)`;
+
+      if (preview) {
+        preview.innerHTML = `<strong>${text}</strong> • ${formatted}`;
+        preview.style.display = 'block';
+      }
+
+      const nowCheck = new Date();
+      const isValid = scheduleDate > nowCheck;
+      if (btn) btn.disabled = !isValid;
+    };
+
+    modal.innerHTML = `
+      <div class="princhat-modal-header">
+        <h3>Agendar nova mensagem</h3>
+        <button class="princhat-popup-close-btn">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="princhat-modal-body">
+        <div class="princhat-section-label">Escolha o que será enviado</div>
+        
+        <div class="princhat-icon-filters">
+          <button class="princhat-icon-filter active" data-filter="all">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>
+            </svg>
+          </button>
+          <button class="princhat-icon-filter" data-filter="text">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+          </button>
+          <button class="princhat-icon-filter" data-filter="audio">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>
+            </svg>
+          </button>
+          <button class="princhat-icon-filter" data-filter="image">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>
+            </svg>
+          </button>
+          <button class="princhat-icon-filter" data-filter="file">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><line x1="10" x2="14" y1="12" y2="12"/><line x1="10" x2="14" y1="16" y2="16"/>
+            </svg>
+          </button>
+          <button class="princhat-icon-filter" data-filter="script">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="princhat-custom-dropdown" data-dropdown>
+          <button class="princhat-dropdown-trigger" data-dropdown-trigger>
+            <span data-dropdown-label>Selecione</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+          <div class="princhat-dropdown-panel" data-dropdown-panel style="display:none">
+            <div class="princhat-dropdown-search">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+              </svg>
+              <input type="text" placeholder="Pesquisar..." data-dropdown-search />
+            </div>
+            <div class="princhat-dropdown-list" data-dropdown-list></div>
+          </div>
+        </div>
+
+        <div class="princhat-time-shortcuts">
+          <button class="princhat-time-tag princhat-time-reset" data-reset>Redefinir</button>
+          <button class="princhat-time-tag" data-add-min="30">+30min</button>
+          <button class="princhat-time-tag" data-add-min="60">+1h</button>
+          <button class="princhat-time-tag" data-add-min="720">+12h</button>
+          <button class="princhat-time-tag" data-add-days="1">+1 dia</button>
+          <button class="princhat-time-tag" data-add-days="7">+1 semana</button>
+        </div>
+
+        <div class="princhat-datetime-row">
+          <input type="date" class="princhat-datetime-input" value="${state.date}" data-field="date" />
+          <input type="time" class="princhat-datetime-input" value="${state.time}" data-field="time" />
+        </div>
+
+        <div class="princhat-preview-inline" style="display:none" data-preview></div>
+      </div>
+      <div class="princhat-modal-footer-right">
+        <button class="princhat-schedule-btn" disabled data-action="schedule">Agendar</button>
+      </div>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    attachItemListeners();
+
+    const filterBtns = modal.querySelectorAll('[data-filter]');
+    filterBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        filterBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        state.filterType = (btn as HTMLElement).dataset.filter as any;
+        state.selectedId = '';
+        updateList();
+        updatePreview();
+      });
+    });
+
+    // Dropdown functionality
+    const dropdownTrigger = modal.querySelector('[data-dropdown-trigger]') as HTMLElement;
+    const dropdownPanel = modal.querySelector('[data-dropdown-panel]') as HTMLElement;
+    const dropdownLabel = modal.querySelector('[data-dropdown-label]') as HTMLElement;
+    const dropdownList = modal.querySelector('[data-dropdown-list]') as HTMLElement;
+    const dropdownSearchInput = modal.querySelector('[data-dropdown-search]') as HTMLInputElement;
+
+    const buildDropdownList = (searchText = '') => {
+      // Get messages and scripts separately
+      let messages = this.messages;
+      let scripts = this.scripts;
+
+      // Apply type filter to messages
+      if (state.filterType !== 'all') {
+        messages = messages.filter((m: Message) => m.type === state.filterType);
+      }
+
+      // Apply search to both
+      if (searchText) {
+        const search = searchText.toLowerCase();
+        messages = messages.filter((m: Message) => (m.name || m.content).toLowerCase().includes(search));
+        scripts = scripts.filter((s: Script) => s.name.toLowerCase().includes(search));
+      }
+
+      // Build HTML: messages first, then scripts
+      let html = '';
+
+      // Add messages
+      if (messages.length > 0) {
+        html += messages.map((msg: Message) => {
+          const icon = getIcon(msg.type);
+          const text = msg.name || msg.content.substring(0, 60) + (msg.content.length > 60 ? '...' : '');
+          return `
+            <div class="princhat-dropdown-item" data-id="${msg.id}" data-type="message">
+              <svg class="princhat-item-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">${icon}</svg>
+              <span>${text}</span>
+            </div>
+          `;
+        }).join('');
+      }
+
+      // Add scripts at the end (only if filter is 'all' or 'script')
+      if (scripts.length > 0 && (state.filterType === 'all' || state.filterType === 'script')) {
+        if (messages.length > 0) {
+          html += '<div class="princhat-dropdown-divider"></div>';
+        }
+        html += scripts.map((script: Script) => {
+          const icon = getIcon('script');
+          return `
+            <div class="princhat-dropdown-item" data-id="${script.id}" data-type="script">
+              <svg class="princhat-item-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">${icon}</svg>
+              <span>${script.name}</span>
+            </div>
+          `;
+        }).join('');
+      }
+
+      if (!html) {
+        return '<div class="princhat-dropdown-empty">Nenhum item encontrado</div>';
+      }
+
+      return html;
+    };
+
+    const updateDropdownList = (searchText = '') => {
+      dropdownList.innerHTML = buildDropdownList(searchText);
+
+      const items = dropdownList.querySelectorAll('.princhat-dropdown-item');
+      items.forEach(item => {
+        item.addEventListener('click', () => {
+          const id = (item as HTMLElement).dataset.id || '';
+          const itemType = (item as HTMLElement).dataset.type as 'message' | 'script';
+
+          state.selectedId = id;
+          state.contentType = itemType;
+
+          const selectedItem = itemType === 'message'
+            ? this.messages.find(m => m.id === id)
+            : this.scripts.find(s => s.id === id);
+
+          if (selectedItem) {
+            const text = itemType === 'message'
+              ? (selectedItem as Message).content.substring(0, 40) + ((selectedItem as Message).content.length > 40 ? '...' : '')
+              : (selectedItem as Script).name;
+            dropdownLabel.textContent = text;
+          }
+
+          dropdownPanel.style.display = 'none';
+          updatePreview();
+        });
+      });
+    };
+
+    dropdownTrigger?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = dropdownPanel.style.display !== 'none';
+
+      if (isOpen) {
+        dropdownPanel.style.display = 'none';
+      } else {
+        // Position dropdown fixed relative to trigger button
+        const triggerRect = dropdownTrigger.getBoundingClientRect();
+        dropdownPanel.style.top = `${triggerRect.bottom + 4}px`;
+        dropdownPanel.style.left = `${triggerRect.left}px`;
+        dropdownPanel.style.width = `${triggerRect.width}px`;
+        dropdownPanel.style.display = 'block';
+
+        updateDropdownList();
+        dropdownSearchInput.value = '';
+      }
+    });
+
+    dropdownSearchInput?.addEventListener('input', () => {
+      updateDropdownList(dropdownSearchInput.value);
+    });
+
+    const closeDropdownOnOutsideClick = (e: MouseEvent) => {
+      if (!dropdownPanel.contains(e.target as Node) && !dropdownTrigger.contains(e.target as Node)) {
+        dropdownPanel.style.display = 'none';
+      }
+    };
+    document.addEventListener('click', closeDropdownOnOutsideClick);
+
+    const searchInput = modal.querySelector('[data-search]') as HTMLInputElement;
+    searchInput?.addEventListener('input', () => {
+      state.searchText = searchInput.value;
+      updateList();
+    });
+
+    const dateInput = modal.querySelector('[data-field="date"]') as HTMLInputElement;
+    const timeInput = modal.querySelector('[data-field="time"]') as HTMLInputElement;
+    dateInput?.addEventListener('change', () => {
+      state.date = dateInput.value;
+      updatePreview();
+    });
+    timeInput?.addEventListener('change', () => {
+      state.time = timeInput.value;
+      updatePreview();
+    });
+
+    const timeTags = modal.querySelectorAll('[data-add-min], [data-add-days], [data-reset]');
+    timeTags.forEach(tag => {
+      tag.addEventListener('click', () => {
+        if ((tag as HTMLElement).dataset.reset !== undefined) {
+          const defaultTime = new Date();
+          defaultTime.setHours(defaultTime.getHours() + 1, 0, 0, 0);
+          state.date = defaultTime.toISOString().split('T')[0];
+          state.time = `${String(defaultTime.getHours()).padStart(2, '0')}:00`;
+        } else {
+          const current = new Date(`${state.date}T${state.time}`);
+          const addMin = (tag as HTMLElement).dataset.addMin;
+          const addDays = (tag as HTMLElement).dataset.addDays;
+
+          if (addMin) current.setMinutes(current.getMinutes() + parseInt(addMin));
+          if (addDays) current.setDate(current.getDate() + parseInt(addDays));
+
+          state.date = current.toISOString().split('T')[0];
+          state.time = `${String(current.getHours()).padStart(2, '0')}:${String(current.getMinutes()).padStart(2, '0')}`;
+        }
+
+        if (dateInput) dateInput.value = state.date;
+        if (timeInput) timeInput.value = state.time;
+        updatePreview();
+      });
+    });
+
+    const scheduleBtn = modal.querySelector('[data-action="schedule"]') as HTMLButtonElement;
+    scheduleBtn?.addEventListener('click', () => {
+      console.log('[PrinChat UI] Creating schedule:', state);
+      alert('Agendamento criado!');
+      overlay.remove();
+      this.scheduleCreationModal = null;
+    });
+
+    const closeBtn = modal.querySelector('.princhat-popup-close-btn');
+    closeBtn?.addEventListener('click', () => {
+      overlay.remove();
+      this.scheduleCreationModal = null;
+    });
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        overlay.remove();
+        this.scheduleCreationModal = null;
+      }
+    });
+
+    updatePreview();
+  }
+
+  /**
+   * Toggle subscription popup for managing message signatures
+   */
+  private async toggleSubscriptionPopup(button: HTMLElement) {
+    // If popup already exists, close it
+    if (this.subscriptionPopup) {
+      this.subscriptionPopup.remove();
+      button.classList.remove('active');
+      this.subscriptionPopup = null;
+      return;
+    }
+
+    // Load signatures from database
+    console.log('[PrinChat] toggleSubscriptionPopup: Loading signatures...');
+    await this.loadSignatures();
+    console.log(`[PrinChat] toggleSubscriptionPopup: Building popup with ${this.signatures.length} signatures`);
+
+    // Create popup
+    const popup = document.createElement('div');
+    popup.className = 'princhat-subscription-popup';
+    this.subscriptionPopup = popup;
+
+    // Build popup HTML based on signatures availability
+    if (this.signatures.length === 0) {
+      // Empty state
+      popup.innerHTML = `
+        <div class="princhat-subscription-popup-header">
+          <h3>Mensagem com assinatura</h3>
+          <button class="princhat-popup-close-btn">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+        <div class="princhat-subscription-empty">
+          <div class="princhat-subscription-icon-wrapper">
+            <div class="princhat-subscription-icon-circle-outer"></div>
+            <div class="princhat-subscription-icon-circle-middle"></div>
+            <div class="princhat-subscription-icon-circle-inner">
+              <div class="princhat-subscription-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 20h9"/>
+                  <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+          <div class="princhat-subscription-empty-title">Nenhuma assinatura adicionada!</div>
+          <div class="princhat-subscription-empty-description">
+            Comece a enviar mensagens para seus contatos com uma assinatura personalizada, basta criar uma nova assinatura.
+          </div>
+          <button class="princhat-subscription-new-btn">Nova assinatura</button>
+        </div>
+      `;
+    } else {
+      // Signature list state
+      const signatureCards = this.signatures.map(sig => `
+        <div class="princhat-signature-card" data-sig-id="${sig.id}">
+          <div class="princhat-signature-info">
+            <span class="princhat-signature-text">${this.escapeHtml(sig.text)}</span>
+          </div>
+          <div class="princhat-signature-actions">
+            <label class="princhat-signature-toggle">
+              <input type="checkbox" ${sig.isActive ? 'checked' : ''} data-sig-id="${sig.id}">
+              <span class="princhat-toggle-slider"></span>
+            </label>
+            <button class="princhat-signature-edit-btn" data-sig-id="${sig.id}">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 20h9"/>
+                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+              </svg>
+            </button>
+            <button class="princhat-signature-delete-btn" data-sig-id="${sig.id}">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 6h18"/>
+                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
+                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      `).join('');
+
+      popup.innerHTML = `
+        <div class="princhat-subscription-popup-header">
+          <h3>Mensagem com assinatura</h3>
+          <button class="princhat-popup-close-btn">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+        <div class="princhat-signature-list">
+          ${signatureCards}
+        </div>
+        <div class="princhat-subscription-footer">
+          <button class="princhat-subscription-new-btn">Nova assinatura</button>
+        </div>
+      `;
+    }
+
+    // Position popup below button
+    const rect = button.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.top = `${rect.bottom + 8}px`;
+    popup.style.right = `${window.innerWidth - rect.right}px`;
+
+    document.body.appendChild(popup);
+    button.classList.add('active');
+
+    // Add close button handler
+    const closeBtn = popup.querySelector('.princhat-popup-close-btn');
+    closeBtn?.addEventListener('click', () => {
+      popup.remove();
+      button.classList.remove('active');
+      this.subscriptionPopup = null;
+    });
+
+    // Add "Nova assinatura" button handler
+    const newBtn = popup.querySelector('.princhat-subscription-new-btn');
+    newBtn?.addEventListener('click', () => {
+      console.log('[PrinChat] Nova assinatura clicked');
+      this.openSubscriptionFormModal();
+    });
+
+    // Add toggle handlers
+    const toggleInputs = popup.querySelectorAll('.princhat-signature-toggle input');
+    toggleInputs.forEach(input => {
+      input.addEventListener('change', async (e) => {
+        const target = e.target as HTMLInputElement;
+        const sigId = target.getAttribute('data-sig-id');
+        if (sigId) {
+          if (target.checked) {
+            // IMMEDIATELY uncheck all other checkboxes for instant visual feedback
+            toggleInputs.forEach(otherInput => {
+              if (otherInput !== target) {
+                (otherInput as HTMLInputElement).checked = false;
+              }
+            });
+
+            // Activating: use SET_ACTIVE_SIGNATURE to ensure only one is active in DB
+            console.log(`[PrinChat] Activating signature ${sigId}, will deactivate all others`);
+            const response = await this.requestFromContentScript({
+              type: 'SET_ACTIVE_SIGNATURE',
+              payload: { id: sigId }
+            });
+            if (response && response.success) {
+              await this.loadSignatures();
+              console.log('[PrinChat] Signature activated successfully');
+            } else {
+              console.error('[PrinChat] Failed to activate signature');
+              // Revert checkbox on failure
+              target.checked = false;
+            }
+          } else {
+            // Deactivating: just toggle it off
+            console.log(`[PrinChat] Deactivating signature ${sigId}`);
+            await this.toggleSignatureActive(sigId, false);
+          }
+        }
+      });
+    });
+
+    // Add delete button handlers
+    const deleteButtons = popup.querySelectorAll('.princhat-signature-delete-btn');
+    deleteButtons.forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation(); // Prevent event bubbling
+        const sigId = btn.getAttribute('data-sig-id');
+        if (sigId) {
+          // Show custom confirmation modal instead of browser confirm
+          this.showDeleteConfirmation(sigId);
+        }
+      });
+    });
+
+    // Add edit button handlers
+    const editButtons = popup.querySelectorAll('.princhat-signature-edit-btn');
+    editButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const sigId = btn.getAttribute('data-sig-id');
+        if (sigId) {
+          this.editSignature(sigId);
+        }
+      });
+    });
+
+    // Close popup when clicking outside
+    const closePopup = (e: MouseEvent) => {
+      if (!popup.contains(e.target as Node) && !button.contains(e.target as Node)) {
+        popup.remove();
+        button.classList.remove('active');
+        this.subscriptionPopup = null;
+        document.removeEventListener('click', closePopup);
+      }
+    };
+
+    // Add listener after a short delay to prevent immediate closure
+    setTimeout(() => {
+      document.addEventListener('click', closePopup);
+    }, 100);
+  }
+
+  /**
+   * Escape HTML to prevent XSS
+   */
+  private escapeHtml(text: string): string {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+
+  /**
+   * Open subscription form modal for creating new signature
+   */
+  private openSubscriptionFormModal() {
+    // Close if already open
+    if (this.subscriptionFormModal) {
+      this.closeSubscriptionFormModal();
+      return;
+    }
+
+    // Create modal state
+    const formState = {
+      signatureText: '',
+      spacing: 1,
+      formatting: {
+        bold: false,
+        italic: false,
+        strikethrough: false,
+        monospace: false
+      }
+    };
+
+    // Create overlay
+    const overlay = document.createElement('div');
+    overlay.className = 'princhat-modal-overlay';
+    this.subscriptionFormModal = overlay;
+
+    // Store formState on modal for access during edit (AFTER modal is created)
+    (overlay as any).__formState = formState;
+
+    // Create modal
+    const modal = document.createElement('div');
+    modal.className = 'princhat-subscription-form-modal';
+
+    // Build modal HTML
+    modal.innerHTML = `
+      <div class="princhat-modal-header">
+        <h3>Adicionar nova</h3>
+        <button class="princhat-popup-close-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="princhat-modal-body">
+        <!-- Signature Input -->
+        <div class="princhat-form-field">
+          <label class="princhat-form-label">Assinatura</label>
+          <input 
+            type="text" 
+            class="princhat-form-input" 
+            placeholder="Adicione uma assinatura"
+            data-field="signature"
+          />
+        </div>
+
+        <!-- Formatting -->
+        <div class="princhat-form-field">
+          <label class="princhat-form-label">Formatação</label>
+          <div class="princhat-formatting-buttons">
+            <button class="princhat-format-btn" data-format="bold">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"></path>
+                <path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"></path>
+              </svg>
+              Negrito
+            </button>
+            <button class="princhat-format-btn" data-format="italic">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="19" y1="4" x2="10" y2="4"></line>
+                <line x1="14" y1="20" x2="5" y2="20"></line>
+                <line x1="15" y1="4" x2="9" y2="20"></line>
+              </svg>
+              Itálico
+            </button>
+            <button class="princhat-format-btn" data-format="strikethrough">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M16 4H9a3 3 0 0 0-2.83 4"></path>
+                <path d="M14 12a4 4 0 0 1 0 8H6"></path>
+                <line x1="4" y1="12" x2="20" y2="12"></line>
+              </svg>
+              Tachado
+            </button>
+            <button class="princhat-format-btn" data-format="monospace">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="4 7 4 4 20 4 20 7"></polyline>
+                <line x1="9" y1="20" x2="15" y2="20"></line>
+                <line x1="12" y1="4" x2="12" y2="20"></line>
+              </svg>
+              Monoespaçado
+            </button>
+          </div>
+        </div>
+
+        <!-- Spacing -->
+        <div class="princhat-form-field">
+          <label class="princhat-form-label">Espaçamento</label>
+          <input 
+            type="number" 
+            class="princhat-spacing-input" 
+            min="1" 
+            max="10" 
+            value="1"
+            data-field="spacing"
+          />
+        </div>
+
+        <!-- Preview -->
+        <div class="princhat-preview-section">
+          <span class="princhat-preview-label">Pré-visualização</span>
+          <div class="princhat-preview-content" data-preview></div>
+        </div>
+      </div>
+      <div class="princhat-modal-footer">
+        <button class="princhat-modal-add-btn" disabled data-action="add">
+          Adicionar
+        </button>
+      </div>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // Get elements
+    const signatureInput = modal.querySelector('[data-field="signature"]') as HTMLInputElement;
+    const spacingInput = modal.querySelector('[data-field="spacing"]') as HTMLInputElement;
+    const formatButtons = modal.querySelectorAll('.princhat-format-btn');
+    const previewSection = modal.querySelector('.princhat-preview-section') as HTMLElement;
+    const previewContent = modal.querySelector('[data-preview]') as HTMLElement;
+    const addButton = modal.querySelector('[data-action="add"]') as HTMLButtonElement;
+    const closeBtn = modal.querySelector('.princhat-popup-close-btn');
+
+    // Update preview function
+    const updatePreview = () => {
+      const text = formState.signatureText;
+
+      // Show/hide preview section based on text
+      if (text.trim()) {
+        previewSection.style.display = 'block';
+
+        // Build formatting classes and formatted HTML
+        let formattedText = text;
+        const classes = [];
+
+        if (formState.formatting.bold) {
+          formattedText = `<strong>${formattedText}</strong>`;
+          classes.push('bold');
+        }
+        if (formState.formatting.italic) {
+          formattedText = `<em>${formattedText}</em>`;
+          classes.push('italic');
+        }
+        if (formState.formatting.strikethrough) {
+          formattedText = `<s>${formattedText}</s>`;
+          classes.push('strikethrough');
+        }
+        if (formState.formatting.monospace) {
+          formattedText = `<code>${formattedText}</code>`;
+          classes.push('monospace');
+        }
+
+        // Apply spacing (line breaks) - spacing value = number of <br> tags
+        const spacing = '<br>'.repeat(formState.spacing);
+
+        // Build HTML: formatted signature at beginning + spacing + example message
+        previewContent.innerHTML = `<span class="princhat-signature-formatted ${classes.join(' ')}">${formattedText}</span>:${spacing}Olá, tudo bem? Esta é uma mensagem de exemplo para que você veja como sua assinatura será exibida quando enviada junto com uma mensagem.`;
+      } else {
+        // Hide preview when empty
+        previewSection.style.display = 'none';
+      }
+
+      // Enable/disable add button
+      addButton.disabled = !text.trim();
+    };
+
+    // Store updatePreview on overlay (subscriptionFormModal) for access during edit
+    (overlay as any).__updatePreview = updatePreview;
+
+    // Signature input handler
+    signatureInput.addEventListener('input', (e) => {
+      formState.signatureText = (e.target as HTMLInputElement).value;
+      updatePreview();
+    });
+
+    // Spacing input handler
+    spacingInput.addEventListener('input', (e) => {
+      const value = parseInt((e.target as HTMLInputElement).value) || 1;
+      formState.spacing = Math.max(1, Math.min(10, value));
+      updatePreview();
+    });
+
+    // Format button handlers
+    formatButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const format = btn.getAttribute('data-format') as keyof typeof formState.formatting;
+        formState.formatting[format] = !formState.formatting[format];
+        btn.classList.toggle('active', formState.formatting[format]);
+        updatePreview();
+      });
+    });
+
+    // Close button handler
+    closeBtn?.addEventListener('click', () => {
+      this.closeSubscriptionFormModal();
+    });
+
+    // Add button handler
+    addButton.addEventListener('click', async () => {
+      try {
+        const now = Date.now();
+
+        // When editing, preserve original createdAt and isActive
+        let signatureData: any;
+
+        if (this.editingSignatureId) {
+          // Editing existing signature - get original first
+          const existingResponse = await this.requestFromContentScript({
+            type: 'GET_SIGNATURE',
+            payload: { id: this.editingSignatureId }
+          });
+
+          if (existingResponse && existingResponse.success && existingResponse.data) {
+            // Preserve original values, only update what changed
+            signatureData = {
+              ...existingResponse.data,
+              text: formState.signatureText,
+              formatting: formState.formatting,
+              spacing: formState.spacing,
+              updatedAt: now
+              // Keep original: id, isActive, createdAt
+            };
+          } else {
+            throw new Error('Failed to get original signature');
+          }
+
+          this.editingSignatureId = null;
+        } else {
+          // Creating new signature
+          signatureData = {
+            id: `sig_${now}_${Math.random().toString(36).substr(2, 9)}`,
+            text: formState.signatureText,
+            formatting: formState.formatting,
+            spacing: formState.spacing,
+            isActive: false,
+            createdAt: now,
+            updatedAt: now
+          };
+        }
+
+        const response = await this.requestFromContentScript({
+          type: 'SAVE_SIGNATURE',
+          payload: signatureData
+        });
+
+        if (response && response.success) {
+          // Close modal
+          this.closeSubscriptionFormModal();
+
+          // Refresh subscription popup if open
+          const subButton = document.querySelector('[data-action="subscription"]') as HTMLElement;
+          if (subButton && this.subscriptionPopup) {
+            this.subscriptionPopup.remove();
+            this.subscriptionPopup = null;
+            await this.toggleSubscriptionPopup(subButton);
+          }
+        } else {
+          throw new Error(response?.error || 'Failed to save');
+        }
+      } catch (error) {
+        console.error('[PrinChat] Error saving signature:', error);
+        alert('Erro ao salvar assinatura');
+      }
+    });
+
+    // Close on overlay click
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        this.closeSubscriptionFormModal();
+      }
+    });
+
+    // Close on Esc key
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        this.closeSubscriptionFormModal();
+        document.removeEventListener('keydown', handleEsc);
+      }
+    };
+    document.addEventListener('keydown', handleEsc);
+
+    // Initial preview update
+    updatePreview();
+  }
+
+  /**
+   * Close subscription form modal
+   */
+  private closeSubscriptionFormModal() {
+    if (this.subscriptionFormModal) {
+      this.subscriptionFormModal.remove();
+      this.subscriptionFormModal = null;
+    }
+  }
+
+  /**
+   * Load signatures from database via message passing
+   */
+  private async loadSignatures() {
+    try {
+      console.log('[PrinChat] Loading signatures from database...');
+      const response = await this.requestFromContentScript({
+        type: 'GET_SIGNATURES'
+      });
+      if (response && response.success) {
+        this.signatures = response.data || [];
+        console.log(`[PrinChat] Loaded ${this.signatures.length} signatures`);
+      } else {
+        console.log('[PrinChat] Failed to load signatures, initializing empty array.');
+        this.signatures = [];
+      }
+    } catch (error) {
+      console.error('[PrinChat] Error loading signatures:', error);
+      this.signatures = [];
+    }
+  }
+
+  /**
+   * Show delete confirmation modal (custom, not browser confirm)
+   */
+  private showDeleteConfirmation(id: string) {
+    // Create overlay
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+    `;
+
+    // Create modal
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+      background: #2a2a2a;
+      border: 1px solid #3a3a3a;
+      border-radius: 8px;
+      padding: 24px;
+      max-width: 400px;
+      width: 90%;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    `;
+
+    modal.innerHTML = `
+      <div style="margin-bottom: 16px;">
+        <h3 style="margin: 0 0 8px 0; font-size: 18px; font-weight: 600; color: #ffffff;">
+          Excluir assinatura
+        </h3>
+        <p style="margin: 0; font-size: 14px; color: #9e9e9e;">
+          Tem certeza que deseja excluir esta assinatura? Esta ação não pode ser desfeita.
+        </p>
+      </div>
+      <div style="display: flex; gap: 12px; justify-content: flex-end;">
+        <button class="cancel-btn" style="
+          padding: 8px 20px;
+          border: 1px solid #3a3a3a;
+          background: transparent;
+          color: white;
+          border-radius: 8px;
+          cursor: pointer;
+          font-size: 11px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          transition: all 0.2s;
+        ">CANCELAR</button>
+        <button class="confirm-btn" style="
+          padding: 8px 20px;
+          border: none;
+          background: #f44336;
+          color: white;
+          border-radius: 8px;
+          cursor: pointer;
+          font-size: 11px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          transition: all 0.2s;
+        ">EXCLUIR</button>
+      </div>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // Add event listeners
+    const cancelBtn = modal.querySelector('.cancel-btn') as HTMLElement;
+    const confirmBtn = modal.querySelector('.confirm-btn') as HTMLElement;
+
+    const closeModal = () => overlay.remove();
+
+    // Add hover effects
+    if (cancelBtn) {
+      cancelBtn.addEventListener('mouseenter', () => {
+        cancelBtn.style.background = 'var(--bg-hover)';
+        cancelBtn.style.borderColor = '#e91e63';
+      });
+      cancelBtn.addEventListener('mouseleave', () => {
+        cancelBtn.style.background = 'transparent';
+        cancelBtn.style.borderColor = 'var(--border-color)';
+      });
+    }
+
+    if (confirmBtn) {
+      confirmBtn.addEventListener('mouseenter', () => {
+        confirmBtn.style.background = '#c62828';
+      });
+      confirmBtn.addEventListener('mouseleave', () => {
+        confirmBtn.style.background = '#f44336';
+      });
+    }
+
+    cancelBtn?.addEventListener('click', closeModal);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeModal();
+    });
+
+    confirmBtn?.addEventListener('click', () => {
+      closeModal();
+      this.deleteSignature(id);
+    });
+  }
+
+  /**
+   * Delete signature via message passing
+   */
+  private async deleteSignature(id: string) {
+    try {
+      const response = await this.requestFromContentScript({
+        type: 'DELETE_SIGNATURE',
+        payload: { id }
+      });
+
+      if (response && response.success) {
+        console.log('[PrinChat] Signature deleted successfully, reloading...');
+        await this.loadSignatures();
+
+        // Refresh subscription popup if open
+        if (this.subscriptionPopup) {
+          // Find and remove the deleted signature card directly
+          const cardToRemove = this.subscriptionPopup.querySelector(`.princhat-signature-card[data-sig-id="${id}"]`);
+          if (cardToRemove) {
+            console.log('[PrinChat] Removing deleted signature card from popup');
+            cardToRemove.remove();
+          } else {
+            console.log('[PrinChat] Card not found, might need to rebuild');
+          }
+
+          // If no signatures left, rebuild to show empty state
+          if (this.signatures.length === 0) {
+            const button = document.querySelector('[data-action="subscription"]') as HTMLElement;
+            if (button) {
+              this.subscriptionPopup.remove();
+              this.subscriptionPopup = null;
+              button.classList.remove('active');
+              await this.toggleSubscriptionPopup(button);
+            }
+          }
+        }
+      } else {
+        throw new Error(response?.error || 'Failed to delete');
+      }
+    } catch (error) {
+      console.error('[PrinChat] Error deleting signature:', error);
+      alert('Erro ao deletar assinatura');
+    }
+  }
+
+  /**
+   * Toggle signature active state via message passing
+   */
+  private async toggleSignatureActive(id: string, isActive: boolean) {
+    try {
+      const response = await this.requestFromContentScript({
+        type: 'TOGGLE_SIGNATURE_ACTIVE',
+        payload: { id, isActive }
+      });
+
+      if (response && response.success) {
+        await this.loadSignatures();
+
+        // Refresh subscription popup if open
+        if (this.subscriptionPopup) {
+          const button = document.querySelector('[data-action="subscription"]') as HTMLElement;
+          if (button) {
+            this.subscriptionPopup.remove();
+            this.subscriptionPopup = null;
+            await this.toggleSubscriptionPopup(button);
+          }
+        }
+      } else {
+        throw new Error(response?.error || 'Failed to toggle');
+      }
+    } catch (error) {
+      console.error('[PrinChat] Error toggling signature:', error);
+      alert('Erro ao ativar/desativar assinatura');
+    }
+  }
+
+  /**
+   * Edit existing signature
+   */
+  private async editSignature(id: string) {
+    try {
+      this.editingSignatureId = id;
+      const response = await this.requestFromContentScript({
+        type: 'GET_SIGNATURE',
+        payload: { id }
+      });
+
+      if (response && response.success && response.data) {
+        // Close subscription popup
+        if (this.subscriptionPopup) {
+          this.subscriptionPopup.remove();
+          this.subscriptionPopup = null;
+        }
+
+        // Open form modal with signature data
+        this.openSubscriptionFormModalWithData(response.data);
+      }
+    } catch (error) {
+      console.error('[PrinChat] Error editing signature:', error);
+      alert('Erro ao editar assinatura');
+    }
+  }
+
+  /**
+   * Open subscription form modal with existing signature data
+   */
+  private openSubscriptionFormModalWithData(signature: Signature) {
+    // Open the modal first
+    this.openSubscriptionFormModal();
+
+    // Wait a tick for DOM to be ready, then populate fields
+    setTimeout(() => {
+      const modal = this.subscriptionFormModal;
+      if (!modal) return;
+
+      // Get form elements
+      const signatureInput = modal.querySelector('[data-field="signature"]') as HTMLInputElement;
+      const spacingInput = modal.querySelector('[data-field="spacing"]') as HTMLInputElement;
+      const formatButtons = modal.querySelectorAll('.princhat-format-btn');
+      const addButton = modal.querySelector('[data-action="add"]') as HTMLButtonElement;
+
+      // CRITICAL: Update formState first so event listeners work correctly
+      const formState = (modal as any).__formState;
+      if (formState) {
+        formState.signatureText = signature.text;
+        formState.spacing = signature.spacing || 1;
+        formState.formatting = { ...signature.formatting };
+      }
+
+      // Populate signature text
+      if (signatureInput) {
+        signatureInput.value = signature.text;
+      }
+
+      // Populate spacing
+      if (spacingInput) {
+        spacingInput.value = String(signature.spacing || 1);
+      }
+
+      // Populate formatting buttons
+      formatButtons.forEach(btn => {
+        const format = btn.getAttribute('data-format');
+        if (format && signature.formatting && signature.formatting[format as keyof typeof signature.formatting]) {
+          btn.classList.add('active');
+        }
+      });
+
+      // Update button text to "Salvar"
+      if (addButton) {
+        addButton.textContent = 'Salvar';
+        addButton.disabled = false;
+      }
+
+      // Update modal title
+      const modalTitle = modal.querySelector('.princhat-modal-header h3');
+      if (modalTitle) {
+        modalTitle.textContent = 'Editar assinatura';
+      }
+
+      // Trigger preview update using the overlay's updatePreview function
+      // This makes the preview dynamic and connected to formState changes
+      const updatePreviewFunc = (this.subscriptionFormModal as any).__updatePreview;
+      if (updatePreviewFunc) {
+        updatePreviewFunc();
+      }
+    }, 50);
+  }
+
+  /**
+   * Toggle executions popup (contains script + message execution popups)
+   */
+  private toggleExecutionsPopup(button: HTMLElement) {
+    const existingPopup = document.querySelector('.princhat-executions-popup');
+
+    if (existingPopup) {
+      // Close popup
+      existingPopup.remove();
+      button.classList.remove('active');
+      return;
+    }
+
+    // Create popup container
+    const popup = document.createElement('div');
+    popup.className = 'princhat-executions-popup';
+
+    // Header with title and action icons
+    const header = document.createElement('div');
+    header.className = 'princhat-executions-header';
+    header.innerHTML = `
+      <h3>Execuções</h3>
+      <div class="princhat-executions-actions">
+        <button class="princhat-executions-pin" title="Fixar popup">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" x2="12" y1="17" y2="22"/>
+            <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>
+          </svg>
+        </button>
+        <button class="princhat-executions-detach" title="Desprender para tela">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+          </svg>
+        </button>
+        <button class="princhat-popup-close-btn princhat-executions-close" title="Fechar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+    `;
+    popup.appendChild(header);
+
+    // Content container for both popups
+    const content = document.createElement('div');
+    content.className = 'princhat-executions-content';
+    popup.appendChild(content);
+
+    // Check if there are any executions
+    const hasScripts = this.runningScripts.size > 0;
+    const hasMessages = this.runningMessages.size > 0;
+    const hasCompleted = this.completedScripts.length > 0 || this.completedMessages.length > 0;
+
+    if (!hasScripts && !hasMessages && !hasCompleted) {
+      // Empty state
+      const emptyState = document.createElement('div');
+      emptyState.className = 'princhat-executions-empty';
+      emptyState.textContent = 'Nenhuma execução em andamento';
+      content.appendChild(emptyState);
+    } else {
+      // ALWAYS render both sections (even if empty) to support real-time updates
+      // This ensures that when first message/script starts after popup opens,
+      // the section exists and can be updated by updateMessageStatusPopup/updateStatusPopup
+
+      const scriptsContainer = this.renderScriptExecutions();
+      if (scriptsContainer) {
+        content.appendChild(scriptsContainer);
+      }
+
+      const messagesContainer = this.renderMessageExecutions();
+      if (messagesContainer) {
+        content.appendChild(messagesContainer);
+      }
+    }
+
+    // Position popup below button
+    const rect = button.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.top = `${rect.bottom + 8}px`;
+    popup.style.right = `${window.innerWidth - rect.right}px`;
+
+    document.body.appendChild(popup);
+    button.classList.add('active');
+
+    // Store reference for updates
+    this.executionsPopup = popup;
+
+    // Action buttons event listeners
+    const pinBtn = header.querySelector('.princhat-executions-pin');
+    const detachBtn = header.querySelector('.princhat-executions-detach');
+    const closeBtn = header.querySelector('.princhat-executions-close');
+
+    let isPinned = false;
+
+    pinBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      isPinned = !isPinned;
+      pinBtn.classList.toggle('active', isPinned);
+      console.log('[PrinChat UI] Executions popup pinned:', isPinned);
+    });
+
+    detachBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      console.log('[PrinChat UI] Detaching executions popup to floating mode');
+      // TODO: Implement detach functionality
+      alert('Funcionalidade "desprender" será implementada em breve!');
+    });
+
+    closeBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      popup.remove();
+      button.classList.remove('active');
+      this.executionsPopup = null;
+      document.removeEventListener('click', closePopup);
+    });
+
+    // Close popup when clicking outside (unless pinned)
+    const closePopup = (e: MouseEvent) => {
+      // Don't close if pinned
+      if (isPinned) {
+        return;
+      }
+
+      if (!popup.contains(e.target as Node) && !button.contains(e.target as Node)) {
+        popup.remove();
+        button.classList.remove('active');
+        this.executionsPopup = null;
+        document.removeEventListener('click', closePopup);
+      }
+    };
+
+    // Add listener after a short delay to prevent immediate closure
+    setTimeout(() => {
+      document.addEventListener('click', closePopup);
+    }, 100);
+  }
+
+  /**
+   * Render script executions for the executions popup
+   */
+  private renderScriptExecutions(): HTMLElement | null {
+    // Create container with ORIGINAL popup structure
+    const container = document.createElement('div');
+    container.className = 'princhat-script-popup-inline'; // Special class for inline rendering
+
+    // Build HTML matching original popup structure
+    container.innerHTML = `
+      <!-- Seção EM ENVIO -->
+      <div class="princhat-script-section">
+        <div class="princhat-script-section-header">
+          <span class="princhat-script-section-title">EM ENVIO (SCRIPTS/GATILHOS)</span>
+          <button class="princhat-script-btn-discrete" data-action="cancel-all">Cancelar Todos</button>
+        </div>
+        <div class="princhat-script-section-body" data-section="running"></div>
+      </div>
+
+      <!-- Seção ENVIO CONCLUÍDO -->
+      <div class="princhat-script-section">
+        <div class="princhat-script-section-header">
+          <span class="princhat-script-section-title">ENVIO CONCLUÍDO</span>
+          <button class="princhat-script-btn-discrete" data-action="clear-all">Limpar Lista</button>
+        </div>
+        <div class="princhat-script-section-body" data-section="completed"></div>
+      </div>
+    `;
+
+    // Populate running scripts using ORIGINAL method
+    const runningSection = container.querySelector('[data-section="running"]');
+    if (runningSection) {
+      const runningArray = Array.from(this.runningScripts.values()).reverse();
+      runningArray.forEach((scriptExec) => {
+        const card = this.createScriptCard(scriptExec, false);
+        runningSection.appendChild(card);
+      });
+    }
+
+    // Populate completed scripts using ORIGINAL method  
+    const completedSection = container.querySelector('[data-section="completed"]');
+    if (completedSection) {
+      const completedReversed = [...this.completedScripts].reverse();
+      completedReversed.forEach((scriptExec) => {
+        const card = this.createScriptCard(scriptExec, true);
+        completedSection.appendChild(card);
+      });
+    }
+
+    // Add event listeners for buttons
+    const cancelAllBtn = container.querySelector('[data-action="cancel-all"]');
+    cancelAllBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.cancelAllScripts();
+    });
+
+    const clearAllBtn = container.querySelector('[data-action="clear-all"]');
+    clearAllBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.clearAllCompleted();
+    });
+
+    return container;
+  }
+
+  /**
+   * Render message executions for the executions popup
+   */
+  private renderMessageExecutions(): HTMLElement | null {
+    // Create container with ORIGINAL popup structure
+    const container = document.createElement('div');
+    container.className = 'princhat-message-popup-inline'; // Special class for inline rendering
+
+    // Build HTML matching original popup structure
+    container.innerHTML = `
+      <!-- Seção EM ENVIO -->
+      <div class="princhat-message-section">
+        <div class="princhat-message-section-header">
+          <span class="princhat-message-section-title">EM ENVIO (MENSAGENS)</span>
+          <button class="princhat-message-btn-discrete" data-action="cancel-all-messages">Cancelar Todos</button>
+        </div>
+        <div class="princhat-message-section-body" data-section="running-messages"></div>
+      </div>
+
+      <!-- Seção ENVIO CONCLUÍDO -->
+      <div class="princhat-message-section">
+        <div class="princhat-message-section-header">
+          <span class="princhat-message-section-title">ENVIO CONCLUÍDO</span>
+          <button class="princhat-message-btn-discrete" data-action="clear-all-messages">Limpar Lista</button>
+        </div>
+        <div class="princhat-message-section-body" data-section="completed-messages"></div>
+      </div>
+    `;
+
+    // Populate running messages using ORIGINAL method
+    const runningSection = container.querySelector('[data-section="running-messages"]');
+    if (runningSection) {
+      const runningArray = Array.from(this.runningMessages.values()).reverse();
+      runningArray.forEach((msgExec) => {
+        const card = this.createMessageCard(msgExec, false);
+        runningSection.appendChild(card);
+      });
+    }
+
+    // Populate completed messages using ORIGINAL method
+    const completedSection = container.querySelector('[data-section="completed-messages"]');
+    if (completedSection) {
+      const completedReversed = [...this.completedMessages].reverse();
+      completedReversed.forEach((msgExec) => {
+        const card = this.createMessageCard(msgExec, true);
+        completedSection.appendChild(card);
+      });
+    }
+
+    // Add event listeners for buttons
+    const cancelAllBtn = container.querySelector('[data-action="cancel-all-messages"]');
+    cancelAllBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.cancelAllMessages();
+    });
+
+    const clearAllBtn = container.querySelector('[data-action="clear-all-messages"]');
+    clearAllBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.clearAllCompletedMessages();
+    });
+
+    return container;
+  }
+
+  /**
+   * Create execution card for a script
+   */
+  // @ts-expect-error - Keeping for potential future use
+  private createScriptExecutionCard(scriptExec: any): HTMLElement {
+    const card = document.createElement('div');
+    card.className = 'princhat-execution-card';
+    card.innerHTML = `
+      <div class="princhat-execution-card-name">${scriptExec.scriptName || scriptExec.name || 'Script'}</div>
+      <div class="princhat-execution-card-status">${scriptExec.status || 'Executando...'}</div>
+    `;
+    return card;
+  }
+
+  /**
+   * Create execution card for a message
+   */
+  // @ts-expect-error - Keeping for potential future use
+  private createMessageExecutionCard(msgExec: any): HTMLElement {
+    const card = document.createElement('div');
+    card.className = 'princhat-execution-card';
+
+    // Safely get message preview
+    let messagePreview = 'Mensagem';
+    if (msgExec.message?.text) {
+      messagePreview = msgExec.message.text.substring(0, 30) + (msgExec.message.text.length > 30 ? '...' : '');
+    } else if (msgExec.message?.caption) {
+      messagePreview = msgExec.message.caption.substring(0, 30) + '...';
+    } else if (msgExec.messageText) {
+      messagePreview = msgExec.messageText.substring(0, 30) + (msgExec.messageText.length > 30 ? '...' : '');
+    }
+
+    card.innerHTML = `
+      <div class="princhat-execution-card-name">${messagePreview}</div>
+      <div class="princhat-execution-card-status">${msgExec.status || 'Enviando...'}</div>
+    `;
+    return card;
+  }
+
+  /**
+   * Update executions badge in header
+   */
+  private updateExecutionsBadge() {
+    const button = document.querySelector('.princhat-header-icon-btn[data-executions-badge="true"]');
+    if (!button) return;
+
+    const badge = button.querySelector('.princhat-executions-badge');
+    if (!badge) return;
+
+    // Calculate total executions
+    const totalExecutions = this.runningScripts.size + this.runningMessages.size;
+
+    // Update badge
+    badge.textContent = totalExecutions.toString();
+
+    // Show/hide based on count and apply animation class
+    if (totalExecutions > 0) {
+      (badge as HTMLElement).style.display = 'flex';
+      button.classList.add('has-executions');
+    } else {
+      (badge as HTMLElement).style.display = 'none';
+      button.classList.remove('has-executions');
+    }
+  }
+
+  /**
+   * Update executions popup content (if open)
+   */
+  // @ts-expect-error - Deprecated, keeping for reference
+  private updateExecutionsPopup() {
+    if (!this.executionsPopup) return;
+
+    // Find content container
+    const content = this.executionsPopup.querySelector('.princhat-executions-content');
+    if (!content) return;
+
+    // Clear current content
+    content.innerHTML = '';
+
+    // Check if there are any executions
+    const hasScripts = this.runningScripts.size > 0 || this.completedScripts.length > 0;
+    const hasMessages = this.runningMessages.size > 0 || this.completedMessages.length > 0;
+
+    if (!hasScripts && !hasMessages) {
+      // Empty state
+      const emptyState = document.createElement('div');
+      emptyState.className = 'princhat-executions-empty';
+      emptyState.textContent = 'Nenhuma execução em andamento';
+      content.appendChild(emptyState);
+    } else {
+      // Render script popup inside if there are scripts
+      if (hasScripts) {
+        const scriptsContainer = this.renderScriptExecutions();
+        if (scriptsContainer) {
+          content.appendChild(scriptsContainer);
+        }
+      }
+
+      // Render message popup inside if there are messages  
+      if (hasMessages) {
+        const messagesContainer = this.renderMessageExecutions();
+        if (messagesContainer) {
+          content.appendChild(messagesContainer);
+        }
+      }
+    }
+  }
+
   private listenForPopupMessages() {
     window.addEventListener('message', (event) => {
       if (!event.data) return;
 
-      if (event.data.type === 'PRINCHAT_POPUP_PIN_TOGGLE') {
-        const pinned = event.data.pinned;
-        console.log('[PrinChat UI] Popup pinned state changed:', pinned);
-        this.setPopupPinned(pinned);
+      // Handle pin toggle from popup iframe
+      if (event.data?.type === 'PRINCHAT_POPUP_PIN_TOGGLE') {
+        console.log('[PrinChat UI] Received pin toggle:', event.data.pinned);
+        this.setPopupPinned(event.data.pinned);
+      }
+
+      // Handle close popup from iframe
+      if (event.data?.type === 'PRINCHAT_CLOSE_POPUP') {
+        console.log('[PrinChat UI] Received close popup request from iframe');
+        this.toggleHeaderPopup(false);
       } else if (event.data.type === 'PRINCHAT_TOGGLE_FAB_MODE') {
         const floating = event.data.floating;
         console.log('[PrinChat UI] Floating mode toggled by user:', floating);
@@ -2393,9 +4878,9 @@ class WhatsAppUIOverlay {
         tooltip: 'Nova Mensagem'
       },
       {
-        name: 'edit',
+        name: 'subscription',
         svg: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
-        tooltip: 'Editar'
+        tooltip: 'Assinaturas'
       },
       {
         name: 'help',
@@ -2417,12 +4902,24 @@ class WhatsAppUIOverlay {
       button.title = icon.tooltip;
       button.dataset.action = icon.name;
 
-      // Add notification badge for notifications button (FAKE for preview)
+      // Add notification badge for notifications button with 9+ logic
       if (icon.name === 'notifications') {
         const badge = document.createElement('span');
         badge.className = 'princhat-notification-badge';
-        badge.textContent = '3'; // Fake count
+        const count = 10; // Initial count (matches fake notifications)
+        badge.textContent = count > 9 ? '9+' : count.toString();
         button.appendChild(badge);
+      }
+
+      // Add executions badge for refresh button (dynamic count)
+      if (icon.name === 'refresh') {
+        const badge = document.createElement('span');
+        badge.className = 'princhat-executions-badge';
+        badge.textContent = '0';
+        badge.style.display = 'none'; // Hidden when 0
+        button.appendChild(badge);
+        // Store reference for updates
+        button.dataset.executionsBadge = 'true';
       }
 
       // Add click handler
@@ -2434,9 +4931,26 @@ class WhatsAppUIOverlay {
           // Changed: Toggle header popup instead of opening options page
           this.toggleHeaderPopup();
           // chrome.runtime.sendMessage({ action: 'OPEN_OPTIONS_PAGE', tab: 'messages' });
+        } else if (icon.name === 'refresh') {
+          console.log(`[PrinChat UI] Executions clicked`);
+          console.log(`[PrinChat UI] this.toggleExecutionsPopup exists?`, typeof this.toggleExecutionsPopup);
+          try {
+            this.toggleExecutionsPopup(button);
+          } catch (error) {
+            console.error('[PrinChat UI] ❌ Error calling toggleExecutionsPopup:', error);
+          }
         } else if (icon.name === 'notifications') {
           console.log(`[PrinChat UI] Notifications clicked`);
           this.toggleNotificationsDropdown(button);
+        } else if (icon.name === 'new-message') {
+          console.log(`[PrinChat UI] New message clicked`);
+          this.toggleDirectChatPopup(button);
+        } else if (icon.name === 'help') {
+          console.log(`[PrinChat UI] Help clicked`);
+          this.toggleHelpPopup(button);
+        } else if (icon.name === 'subscription') {
+          console.log(`[PrinChat UI] Subscription clicked`);
+          this.toggleSubscriptionPopup(button);
         } else {
           console.log(`[PrinChat UI] Action not implemented yet: ${icon.name}`);
         }
@@ -2547,8 +5061,8 @@ class WhatsAppUIOverlay {
 
     profileBtn.appendChild(profileImg);
     profileBtn.addEventListener('click', () => {
-      console.log('[PrinChat UI] Profile clicked');
-      chrome.runtime.sendMessage({ action: 'OPEN_OPTIONS_PAGE', tab: 'settings' });
+      console.log('[PrinChat UI] Profile clicked - opening dropdown');
+      this.toggleProfileDropdown(profileBtn);
     });
 
     rightSection.appendChild(profileBtn);
@@ -2618,6 +5132,12 @@ class WhatsAppUIOverlay {
       console.log('[PrinChat UI] Chat changed detected, invalidating cache');
       this.invalidateChatCache();
       this.lastKnownChatElement = currentChatElement;
+
+      // Re-inject schedule button when chat changes
+      setTimeout(() => {
+        console.log('[PrinChat UI] Attempting to inject schedule button after chat change...');
+        this.injectScheduleButton();
+      }, 500); // Wait for DOM to stabilize
     } else if (!currentChatElement && this.lastKnownChatElement) {
       // Chat closed
       console.log('[PrinChat UI] Chat closed, invalidating cache');
@@ -2693,17 +5213,21 @@ class WhatsAppUIOverlay {
       this.runningScripts.set(scriptExecution.id, scriptExecution);
       this.startScriptTimer(scriptExecution.id);
 
+      // DISABLED: Floating popup - now shown in header executions popup
       // Only create/show popup if enabled in settings
-      if (this.showScriptExecutionPopup) {
-        // Create popup if not exists
-        if (!this.statusPopup) {
-          this.createStatusPopup();
-        }
+      // if (this.showScriptExecutionPopup) {
+      //   // Create popup if not exists
+      //   if (!this.statusPopup) {
+      //     this.createStatusPopup();
+      //   }
+      //
+      //   this.updateStatusPopup();
+      // } else {
+      //   console.log('[PrinChat UI] Script execution popup is disabled in settings');
+      // }
 
-        this.updateStatusPopup();
-      } else {
-        console.log('[PrinChat UI] Script execution popup is disabled in settings');
-      }
+      // Update badge and executions popup
+      this.updateStatusPopup(); // Already updates executions popup
     });
 
     // Listen for script progress
@@ -2778,14 +5302,19 @@ class WhatsAppUIOverlay {
       }
 
       // Only create/show popup if enabled in settings
-      if (this.showMessageExecutionPopup) {
-        if (!this.messageStatusPopup) {
-          this.createMessageStatusPopup();
-        }
-        this.updateMessageStatusPopup();
-      } else {
-        console.log('[PrinChat UI] Message execution popup is disabled in settings');
-      }
+      // DISABLED: Floating popup - now shown in header executions popup
+      // if (this.showMessageExecutionPopup) {
+      //   if (!this.messageStatusPopup) {
+      //     this.createMessageStatusPopup();
+      //   }
+      //   this.updateMessageStatusPopup();
+      // } else {
+      //   console.log('[PrinChat UI] Message execution popup is disabled in settings');
+      // }
+
+      // Update badge and executions popup
+      this.updateExecutionsBadge();
+      this.updateMessageStatusPopup(); // Updates executions popup
     });
 
     // Listen for message completion
@@ -2856,10 +5385,21 @@ class WhatsAppUIOverlay {
       // Only count if not paused
       if (msgExec && msgExec.status === 'sending' && execution && !execution.isPaused) {
         msgExec.elapsedSeconds++;
+
+        // Update timer in floating popup (if exists)
         const card = this.messageStatusPopup?.querySelector(`[data-message-id="${messageId}"]`);
         const timerEl = card?.querySelector('.princhat-script-card-timer');
         if (timerEl) {
           timerEl.textContent = `${msgExec.elapsedSeconds}s`;
+        }
+
+        // ALSO update timer in executions popup (if exists and open)
+        if (this.executionsPopup) {
+          const execCard = this.executionsPopup.querySelector(`[data-message-id="${messageId}"]`);
+          const execTimerEl = execCard?.querySelector('.princhat-script-card-timer');
+          if (execTimerEl) {
+            execTimerEl.textContent = `${msgExec.elapsedSeconds}s`;
+          }
         }
       }
     }, 1000);
@@ -2945,12 +5485,13 @@ class WhatsAppUIOverlay {
             console.log('[PrinChat UI] Hiding status popup (disabled in settings)');
             this.closeStatusPopup();
           }
+          // DISABLED: Floating popup - now shown in header executions popup
           // If popup was just enabled and there are running scripts, show it
-          else if (this.showScriptExecutionPopup && this.runningScripts.size > 0 && !this.statusPopup) {
-            console.log('[PrinChat UI] Creating status popup (enabled in settings with running scripts)');
-            this.createStatusPopup();
-            this.updateStatusPopup();
-          }
+          // else if (this.showScriptExecutionPopup && this.runningScripts.size > 0 && !this.statusPopup) {
+          //   console.log('[PrinChat UI] Creating status popup (enabled in settings with running scripts)');
+          //   this.createStatusPopup();
+          //   this.updateStatusPopup();
+          // }
         }
 
         if (settings.showMessageExecutionPopup !== undefined) {
@@ -3015,6 +5556,107 @@ class WhatsAppUIOverlay {
     this.loadData().then(() => {
       this.createShortcutBar();
     });
+  }
+
+  /**
+   * Inject schedule button into WhatsApp chat header
+   */
+  private injectScheduleButton() {
+    try {
+      // Find chat header
+      const chatHeader = document.querySelector('#main > header');
+      if (!chatHeader) {
+        console.log('[PrinChat UI] Chat header not found, will retry when chat is opened');
+        return;
+      }
+
+      // Check if button already exists
+      if (chatHeader.querySelector('.princhat-schedule-button')) {
+        console.log('[PrinChat UI] Schedule button already exists');
+        return;
+      }
+
+      // Find the actions container - it's the div that contains the search and more options buttons
+      // Looking for the parent div that contains all action buttons
+      const actionsContainer = chatHeader.querySelector('div.x78zum5.x6s0dn4.x1afcbsf.x14ug900');
+      if (!actionsContainer) {
+        console.log('[PrinChat UI] Actions container not found in header');
+        console.log('[PrinChat UI] Header HTML:', chatHeader.innerHTML.substring(0, 500));
+        return;
+      }
+
+      // Create schedule button
+      const scheduleButton = document.createElement('button');
+      scheduleButton.className = 'princhat-schedule-button';
+      scheduleButton.title = 'Agendar mensagem para este contato';
+      scheduleButton.innerHTML = `
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <polyline points="12 6 12 12 16 14"/>
+        </svg>
+        <span>Agendar</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="princhat-schedule-plus-icon">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+      `;
+
+
+      // Add click event
+      scheduleButton.addEventListener('click', (e) => {
+        e.stopPropagation();
+        console.log('[PrinChat UI] Schedule button clicked');
+        this.toggleScheduleListPopup(scheduleButton);
+      });
+
+      // Insert button at the beginning of actions container
+      actionsContainer.insertBefore(scheduleButton, actionsContainer.firstChild);
+      console.log('[PrinChat UI] ✅ Schedule button injected successfully');
+    } catch (error: any) {
+      console.error('[PrinChat UI] Error injecting schedule button:', error?.message || error);
+    }
+  }
+
+  /**
+   * Monitor chat header changes and re-inject button when chat changes
+   */
+  private monitorChatHeaderChanges() {
+    try {
+      let debounceTimer: NodeJS.Timeout | null = null;
+
+      // Observer for chat header changes
+      const observer = new MutationObserver(() => {
+        // Debounce to avoid excessive calls
+        if (debounceTimer) {
+          clearTimeout(debounceTimer);
+        }
+
+        debounceTimer = setTimeout(() => {
+          // Try to inject if chat header exists but button doesn't
+          const chatHeader = document.querySelector('#main > header');
+          if (chatHeader) {
+            const buttonExists = chatHeader.querySelector('.princhat-schedule-button');
+            if (!buttonExists) {
+              console.log('[PrinChat UI] Chat header detected without button, injecting...');
+              this.injectScheduleButton();
+            }
+          }
+        }, 300); // Wait 300ms after last mutation
+      });
+
+      // Observe the main container for changes
+      const mainContainer = document.querySelector('#main');
+      if (mainContainer) {
+        observer.observe(mainContainer, {
+          childList: true,
+          subtree: true
+        });
+        console.log('[PrinChat UI] ✓ Chat header monitor active');
+      } else {
+        console.log('[PrinChat UI] Main container not found for monitoring');
+      }
+    } catch (error: any) {
+      console.error('[PrinChat UI] Error setting up chat header monitor:', error?.message || error);
+    }
   }
 }
 

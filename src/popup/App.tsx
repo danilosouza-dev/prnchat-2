@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Settings,
   Grid,
   Mic,
-  MessageCircle,
+  MessageSquare,
   Camera,
   FileText,
   Search,
@@ -14,7 +13,6 @@ import {
   ChevronDown,
   ChevronUp,
   Pin,
-  PinOff,
   Move
 } from 'lucide-react';
 import { Message, Script, Folder, MessageType, ScriptExecutionState } from '@/types';
@@ -616,7 +614,7 @@ const App: React.FC = () => {
       case 'audio':
         return <Mic size={16} />;
       case 'text':
-        return <MessageCircle size={16} />;
+        return <MessageSquare size={16} />;
       case 'image':
         return <Camera size={16} />;
       case 'video':
@@ -638,7 +636,7 @@ const App: React.FC = () => {
               onClick={togglePin}
               title={isPinned ? "Desafixar popup" : "Fixar popup"}
             >
-              {isPinned ? <PinOff size={18} /> : <Pin size={18} />}
+              <Pin size={18} />
             </button>
           )}
 
@@ -650,9 +648,20 @@ const App: React.FC = () => {
             <Move size={18} />
           </button>
 
-          <button className="icon-btn" onClick={openOptions} title="Configurações">
-            <Settings size={18} />
-          </button>
+          {!isFloating && (
+            <button
+              className="icon-btn"
+              onClick={() => {
+                // Close popup by sending message to parent
+                window.parent.postMessage({ type: 'PRINCHAT_CLOSE_POPUP' }, '*');
+              }}
+              title="Fechar"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18">
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+            </button>
+          )}
         </div>
       </header>
 
@@ -711,7 +720,7 @@ const App: React.FC = () => {
             onClick={() => setMediaFilter('text')}
             title="Textos"
           >
-            <MessageCircle size={18} />
+            <MessageSquare size={18} />
           </button>
           <button
             className={`tool-btn ${mediaFilter === 'image' ? 'active' : ''}`}
