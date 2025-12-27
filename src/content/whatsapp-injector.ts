@@ -819,6 +819,14 @@
             console.log('[PrinChat] ✅ Data change event dispatched to UI overlay');
           }
 
+          // Handle schedule changes - trigger button update
+          if (changes.schedules) {
+            console.log('[PrinChat] 📅 Schedules changed in storage!');
+            console.log('[PrinChat] Dispatching PrinChatSchedulesChanged event...');
+            document.dispatchEvent(new CustomEvent('PrinChatSchedulesChanged'));
+            console.log('[PrinChat] ✅ Schedules change event dispatched');
+          }
+
           // Handle view mode changes (Header vs Floating)
           if (changes.princhat_view_mode) {
             const newMode = changes.princhat_view_mode.newValue || 'header';
@@ -1051,6 +1059,17 @@
     }
 
     private async handleAction(action: any): Promise<any> {
+      // Handle schedule execution notification (bypass isReady check)
+      if (action.type === 'SCHEDULE_EXECUTED') {
+        console.log('[PrinChat] 🔔 SCHEDULE_EXECUTED received, notifying overlay via document event');
+        // Use document.dispatchEvent to communicate with main world
+        document.dispatchEvent(new CustomEvent('PrinChatScheduleExecuted', {
+          detail: { scheduleId: action.payload?.scheduleId }
+        }));
+        console.log('[PrinChat] ✅ PrinChatScheduleExecuted event dispatched');
+        return { success: true };
+      }
+
       if (!this.isReady && action.type !== 'CHECK_WHATSAPP_READY') {
         console.error('[PrinChat] WhatsApp Web is not ready! Action:', action.type);
         return { success: false, error: 'WhatsApp Web is not ready' };
@@ -1060,13 +1079,13 @@
 
       switch (action.type) {
         case 'SEND_SINGLE_MESSAGE':
-          // Route popup/FAB messages through overlay's sendSingleMessage()
+          // Route popup/FAB/schedule messages through overlay's sendSingleMessage()
           // This ensures they show the execution popup like footer shortcuts do
-          // Payload now contains only messageId to avoid chrome.tabs.sendMessage size limits
-          console.log('[PrinChat] Routing popup message through overlay:', action.payload);
+          console.log('[PrinChat] Routing message through overlay:', action.payload);
           document.dispatchEvent(new CustomEvent('PrinChatSendSingleMessageFromPopup', {
             detail: {
-              messageId: action.payload.messageId
+              messageId: action.payload.messageId,
+              chatId: action.payload.chatId  // Pass chatId for scheduled messages
             }
           }));
           // Return success immediately - overlay will handle the actual sending
@@ -1209,6 +1228,13 @@
 
         case 'GET_ACTIVE_CHAT':
           return await this.getActiveChat();
+
+        case 'SAVE_SCHEDULE':
+        case 'GET_SCHEDULES_BY_CHAT':
+        case 'DELETE_SCHEDULE':
+          // Forward schedule operations to background service worker
+          console.log('[PrinChat] Forwarding schedule operation to background:', action.type);
+          return await chrome.runtime.sendMessage(action);
 
         case 'SET_ACTIVE_SIGNATURE':
         case 'TOGGLE_SIGNATURE_ACTIVE':

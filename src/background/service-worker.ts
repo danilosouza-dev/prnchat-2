@@ -27,6 +27,16 @@ class BackgroundService {
     // Listen for messages from popup/options/content
     chrome.runtime.onMessage.addListener(this.handleMessage.bind(this));
 
+    // Listen for alarms (ONLY ONCE during init)
+    chrome.alarms.onAlarm.addListener(async (alarm) => {
+      // Handle schedule-specific alarms
+      if (alarm.name.startsWith('schedule-')) {
+        const scheduleId = alarm.name.replace('schedule-', '');
+        console.log('[PrinChat] Alarm fired for schedule:', scheduleId);
+        await this.executeSchedule(scheduleId);
+      }
+    });
+
     // Clean up when tabs are closed
     chrome.tabs.onRemoved.addListener((tabId) => {
       console.log('[PrinChat] Tab closed:', tabId);
@@ -35,6 +45,9 @@ class BackgroundService {
 
     // Initialize database
     await db.init();
+
+    // Set up schedule checker alarm (every minute)
+    await this.setupScheduleChecker();
 
     // Set up triggers monitoring (if enabled)
     // This is a beta feature and will be implemented in future versions
@@ -193,6 +206,34 @@ class BackgroundService {
           .then((scriptData) => sendResponse({ success: true, data: scriptData }))
           .catch((error) => sendResponse({ success: false, error: error.message }));
         return true; // Keep channel open for async response
+
+      case 'SAVE_SCHEDULE':
+        db.saveSchedule(message.payload)
+          .then(async () => {
+            // Create a specific alarm for this schedule
+            await this.createScheduleAlarm(message.payload);
+            sendResponse({ success: true });
+          })
+          .catch((error) => sendResponse({ success: false, error: error.message }));
+        return true;
+
+      case 'GET_SCHEDULES_BY_CHAT':
+        db.getSchedulesByChatId(message.payload.chatId)
+          .then((schedules) => sendResponse({ success: true, data: schedules }))
+          .catch((error) => sendResponse({ success: false, error: error.message }));
+        return true;
+
+      case 'DELETE_SCHEDULE':
+        db.deleteSchedule(message.payload.id)
+          .then(async () => {
+            // Cancel the alarm for this schedule
+            const alarmName = `schedule-${message.payload.id}`;
+            await chrome.alarms.clear(alarmName);
+            console.log('[PrinChat] Canceled alarm:', alarmName);
+            sendResponse({ success: true });
+          })
+          .catch((error) => sendResponse({ success: false, error: error.message }));
+        return true;
 
       case 'OPEN_OPTIONS':
         // Open options page (from profile dropdown)
@@ -568,6 +609,125 @@ class BackgroundService {
 
     console.log('[PrinChat] Script prepared with', stepsWithMessages.length, 'steps containing message data');
     return result;
+  }
+
+  /**
+   * Set up schedule checker alarm
+   * Checks every minute for schedules that are due
+   */
+  private async setupScheduleChecker() {
+    console.log('[PrinChat] Setting up schedule alarms...');
+
+    // Create alarms for all existing pending schedules
+    const pendingSchedules = await db.getAllPendingSchedules();
+    console.log(`[PrinChat] Found ${pendingSchedules.length} pending schedules`);
+
+    for (const schedule of pendingSchedules) {
+      await this.createScheduleAlarm(schedule);
+    }
+
+    console.log('[PrinChat] Schedule alarms created');
+  }
+
+  /**
+   * Create a specific alarm for a schedule
+   */
+  private async createScheduleAlarm(schedule: any) {
+    const alarmName = `schedule-${schedule.id}`;
+    const now = Date.now();
+
+    // Only create alarm if schedule is in the future
+    if (schedule.scheduledTime > now) {
+      console.log(`[PrinChat] Creating alarm for schedule ${schedule.id} at ${new Date(schedule.scheduledTime).toLocaleString()}`);
+
+      chrome.alarms.create(alarmName, {
+        when: schedule.scheduledTime
+      });
+    } else {
+      console.log(`[PrinChat] Schedule ${schedule.id} is already due, executing immediately`);
+      await this.executeSchedule(schedule.id);
+    }
+  }
+
+  /**
+   * Execute a single schedule by ID
+   */
+  private async executeSchedule(scheduleId: string) {
+    try {
+      console.log('[PrinChat] Executing schedule:', scheduleId);
+
+      // Get the schedule
+      const schedule = await db.getSchedule(scheduleId);
+      if (!schedule || schedule.status !== 'pending') {
+        console.log('[PrinChat] Schedule not found or already processed:', scheduleId);
+        return;
+      }
+
+      // DELETE schedule instead of marking completed - triggers storage change event
+      await db.deleteSchedule(scheduleId);
+      console.log('[PrinChat] Schedule deleted (executed):', scheduleId);
+
+      // Find the WhatsApp tab
+      const tabs = await chrome.tabs.query({ url: 'https://web.whatsapp.com/*' });
+      if (tabs.length === 0) {
+        console.warn('[PrinChat] No WhatsApp tab found');
+        await db.updateScheduleStatus(scheduleId, 'failed');
+        return;
+      }
+
+      const tab = tabs[0];
+
+      // Get the item (message or script)
+      let item: any;
+      if (schedule.type === 'message') {
+        item = await db.getMessage(schedule.itemId);
+      } else {
+        item = await db.getScript(schedule.itemId);
+      }
+
+      if (!item) {
+        console.warn('[PrinChat] Item not found for schedule:', scheduleId);
+        await db.updateScheduleStatus(scheduleId, 'failed');
+        return;
+      }
+
+      // Send execution request
+      if (schedule.type === 'message') {
+        await chrome.tabs.sendMessage(tab.id!, {
+          type: 'SEND_SINGLE_MESSAGE',
+          payload: {
+            messageId: item.id,
+            chatId: schedule.chatId
+          }
+        });
+      } else {
+        await chrome.tabs.sendMessage(tab.id!, {
+          type: 'EXECUTE_SCRIPT',
+          payload: {
+            scriptId: item.id,
+            chatId: schedule.chatId
+          }
+        });
+      }
+
+      console.log('[PrinChat] Schedule executed successfully:', scheduleId);
+
+      // Notify content script
+      console.log('[PrinChat] 📨 Attempting to send SCHEDULE_EXECUTED to tab:', tab.id);
+      try {
+        await chrome.tabs.sendMessage(tab.id!, {
+          type: 'SCHEDULE_EXECUTED',
+          payload: { scheduleId }
+        });
+        console.log('[PrinChat] ✅ SCHEDULE_EXECUTED message sent successfully');
+      } catch (e) {
+        console.error('[PrinChat] ❌ Failed to send SCHEDULE_EXECUTED:', e);
+      }
+
+    } catch (error) {
+      console.error('[PrinChat] Error executing schedule:', scheduleId, error);
+      await db.updateScheduleStatus(scheduleId, 'failed');
+    }
   }
 
 
