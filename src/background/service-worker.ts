@@ -12,6 +12,7 @@ import { db } from '../storage/db';
 
 class BackgroundService {
   private injectedTabs = new Set<number>();
+  private executingSchedules = new Set<string>(); // Track schedules currently executing
 
   constructor() {
     this.init();
@@ -656,16 +657,31 @@ class BackgroundService {
     try {
       console.log('[PrinChat] Executing schedule:', scheduleId);
 
+      // Check if already executing (prevent race condition)
+      if (this.executingSchedules.has(scheduleId)) {
+        console.log('[PrinChat] ⚠️ Schedule already executing, skipping duplicate:', scheduleId);
+        return;
+      }
+
+      // Mark as executing
+      this.executingSchedules.add(scheduleId);
+
       // Get the schedule
       const schedule = await db.getSchedule(scheduleId);
       if (!schedule || schedule.status !== 'pending') {
         console.log('[PrinChat] Schedule not found or already processed:', scheduleId);
+        this.executingSchedules.delete(scheduleId); // Clean up lock
         return;
       }
 
-      // DELETE schedule instead of marking completed - triggers storage change event
-      await db.deleteSchedule(scheduleId);
-      console.log('[PrinChat] Schedule deleted (executed):', scheduleId);
+      // Mark as completed instead of deleting - so it appears in "Enviados" section
+      await db.updateScheduleStatus(scheduleId, 'completed');
+      console.log('[PrinChat] Schedule marked as completed:', scheduleId);
+
+      // Clear the alarm immediately after deleting schedule
+      const alarmName = `schedule-${scheduleId}`;
+      await chrome.alarms.clear(alarmName);
+      console.log('[PrinChat] Alarm cleared:', alarmName);
 
       // Find the WhatsApp tab
       const tabs = await chrome.tabs.query({ url: 'https://web.whatsapp.com/*' });
@@ -727,6 +743,10 @@ class BackgroundService {
     } catch (error) {
       console.error('[PrinChat] Error executing schedule:', scheduleId, error);
       await db.updateScheduleStatus(scheduleId, 'failed');
+    } finally {
+      // Always remove from executing set
+      this.executingSchedules.delete(scheduleId);
+      console.log('[PrinChat] Execution lock released for:', scheduleId);
     }
   }
 

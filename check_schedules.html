@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head><title>Check Schedules</title></head>
+<body>
+<h1>Schedules no IndexedDB</h1>
+<div id="result"></div>
+<script>
+const request = indexedDB.open('PrinChatDB', 1);
+request.onsuccess = (e) => {
+  const db = e.target.result;
+  const tx = db.transaction('schedules', 'readonly');
+  const store = tx.objectStore('schedules');
+  const all = store.getAll();
+  all.onsuccess = () => {
+    document.getElementById('result').innerHTML = '<pre>' + JSON.stringify(all.result, null, 2) + '</pre>';
+  };
+};
+</script>
+</body>
+</html>

@@ -103,8 +103,9 @@ export interface Schedule {
   chatName: string;
   type: 'message' | 'script';
   itemId: string; // messageId or scriptId
+  itemName: string; // Name of message or script
   scheduledTime: number; // timestamp
-  status: 'pending' | 'completed' | 'failed';
+  status: 'pending' | 'paused' | 'completed' | 'cancelled' | 'failed';
   createdAt: number;
   updatedAt: number;
 }
