@@ -104,9 +104,10 @@ class WhatsAppUIOverlay {
   private profileDropdown: HTMLElement | null = null; // Profile dropdown menu
   private helpPopup: HTMLElement | null = null; // Help popup
   private subscriptionPopup: HTMLElement | null = null; // Subscription popup
-  private subscriptionFormModal: HTMLElement | null = null; // Subscription form modal
+  private subscribeFormModal: HTMLElement | null = null; // Subscription form modal
   private scheduleListPopup: HTMLElement | null = null; // Schedule list popup
   private scheduleCreationModal: HTMLElement | null = null; // Schedule creation modal
+  private scheduleDeleteConfirmationModal: HTMLElement | null = null; // Schedule delete confirmation modal
   private tooltip: HTMLElement | null = null;
   private scripts: Script[] = [];
   private messages: Message[] = [];
@@ -3335,16 +3336,18 @@ class WhatsAppUIOverlay {
             break;
 
           case 'edit':
-            // TODO: Implement edit functionality - open modal with pre-filled data
-            alert('Funcionalidade de editar será implementada em breve!');
+            // Find schedule from loaded schedules array
+            const scheduleToEdit = schedules.find(s => s.id === scheduleId);
+            if (scheduleToEdit) {
+              this.openScheduleCreationModal(scheduleToEdit);
+            } else {
+              console.error('[PrinChat UI] Schedule not found for edit:', scheduleId);
+              alert('Erro ao carregar agendamento para edição');
+            }
             break;
 
           case 'delete':
-            if (confirm('Deseja cancelar este agendamento?')) {
-              await this.deleteSchedule(scheduleId);
-              popup.remove();
-              this.scheduleListPopup = null;
-            }
+            this.showScheduleDeleteConfirmation(scheduleId);
             break;
         }
       });
@@ -3353,6 +3356,11 @@ class WhatsAppUIOverlay {
     const closePopup = (e: MouseEvent) => {
       // Don't close if clicking inside modal
       if (this.scheduleCreationModal && this.scheduleCreationModal.contains(e.target as Node)) {
+        return;
+      }
+
+      // Don't close if clicking inside delete confirmation modal
+      if (this.scheduleDeleteConfirmationModal && this.scheduleDeleteConfirmationModal.contains(e.target as Node)) {
         return;
       }
 
@@ -3384,6 +3392,129 @@ class WhatsAppUIOverlay {
   }
 
   /**
+   * Show custom delete confirmation modal for schedules
+   */
+  private showScheduleDeleteConfirmation(scheduleId: string) {
+    // Create overlay
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10001;
+    `;
+
+    // Create modal
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+      background: #2a2a2a;
+      border: 1px solid #3a3a3a;
+      border-radius: 8px;
+      padding: 24px;
+      max-width: 400px;
+      width: 90%;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    `;
+
+    modal.innerHTML = `
+      <div style="margin-bottom: 16px;">
+        <h3 style="margin: 0 0 8px 0; font-size: 18px; font-weight: 600; color: #ffffff;">
+          Cancelar agendamento
+        </h3>
+        <p style="margin: 0; font-size: 14px; color: #9e9e9e;">
+          Tem certeza que deseja cancelar este agendamento? Esta ação não pode ser desfeita.
+        </p>
+      </div>
+      <div style="display: flex; gap: 12px; justify-content: flex-end;">
+        <button class="cancel-btn" style="
+          padding: 8px 20px;
+          border: 1px solid #3a3a3a;
+          background: transparent;
+          color: white;
+          border-radius: 8px;
+          cursor: pointer;
+          font-size: 11px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          transition: all 0.2s;
+        ">CANCELAR</button>
+        <button class="confirm-btn" style="
+          padding: 8px 20px;
+          border: none;
+          background: #f44336;
+          color: white;
+          border-radius: 8px;
+          cursor: pointer;
+          font-size: 11px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          transition: all 0.2s;
+        ">EXCLUIR</button>
+      </div>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // Track modal reference
+    this.scheduleDeleteConfirmationModal = overlay;
+
+    // Add event listeners
+    const cancelBtn = modal.querySelector('.cancel-btn') as HTMLElement;
+    const confirmBtn = modal.querySelector('.confirm-btn') as HTMLElement;
+
+    const closeModal = () => {
+      overlay.remove();
+      this.scheduleDeleteConfirmationModal = null;
+    };
+
+    // Add hover effects
+    if (cancelBtn) {
+      cancelBtn.addEventListener('mouseenter', () => {
+        cancelBtn.style.background = 'var(--bg-hover)';
+        cancelBtn.style.borderColor = '#e91e63';
+      });
+      cancelBtn.addEventListener('mouseleave', () => {
+        cancelBtn.style.background = 'transparent';
+        cancelBtn.style.borderColor = 'var(--border-color)';
+      });
+    }
+
+    if (confirmBtn) {
+      confirmBtn.addEventListener('mouseenter', () => {
+        confirmBtn.style.background = '#c62828';
+      });
+      confirmBtn.addEventListener('mouseleave', () => {
+        confirmBtn.style.background = '#f44336';
+      });
+    }
+
+    cancelBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeModal();
+    });
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeModal();
+    });
+
+    confirmBtn?.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      closeModal();
+      await this.deleteSchedule(scheduleId);
+      await this.refreshScheduleListPopup();
+    });
+  }
+
+  /**
    * Delete a schedule
    */
   private async deleteSchedule(scheduleId: string) {
@@ -3400,28 +3531,191 @@ class WhatsAppUIOverlay {
   }
 
   /**
-   * Open schedule creation modal
+   * Refresh schedule list popup content in-place (without closing)
    */
-  private openScheduleCreationModal() {
+  private async refreshScheduleListPopup() {
+    if (!this.scheduleListPopup) {
+      console.log('[PrinChat UI] No schedule popup to refresh');
+      return;
+    }
+
+    console.log('[PrinChat UI] Refreshing schedule list popup...');
+
+    // Get active chat ID
+    const chatId = await this.getActiveChatId() || '';
+
+    // Get chat photo and name
+    let chatPhoto = '';
+    let chatName = 'Chat';
+    try {
+      const chatResponse = await this.requestFromContentScript({ type: 'GET_ACTIVE_CHAT' });
+      chatPhoto = chatResponse?.data?.chatPhoto || '';
+      chatName = chatResponse?.data?.chatName || chatResponse?.data?.name || 'Chat';
+    } catch (e) {
+      console.log('[PrinChat UI] Could not get chat info:', e);
+    }
+
+    // Load schedules for this chat
+    const response = await this.requestFromContentScript({
+      type: 'GET_SCHEDULES_BY_CHAT',
+      payload: { chatId }
+    });
+
+    const schedules: Schedule[] = response?.data || [];
+
+    // Categorize schedules
+    const pending = schedules.filter(s => s.status === 'pending');
+    const paused = schedules.filter(s => s.status === 'paused');
+    const completed = schedules.filter(s => s.status === 'completed');
+    const failed = schedules.filter(s => s.status === 'failed');
+
+    // Build schedule list HTML
+    let scheduleListHTML = '';
+    if (schedules.length === 0) {
+      scheduleListHTML = `
+        <div class="princhat-schedule-list-empty">
+          <div class="princhat-schedule-list-empty-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+            </svg>
+          </div>
+          <div class="princhat-schedule-list-empty-title">Nenhum agendamento</div>
+          <div class="princhat-schedule-list-empty-subtitle">Crie seu primeiro agendamento</div>
+        </div>
+      `;
+    } else {
+      if (pending.length > 0) {
+        scheduleListHTML += `
+          <div class="princhat-schedule-section">
+            <div class="princhat-schedule-section-header">
+              <span>Pendentes</span>
+              <span class="princhat-schedule-section-count">${pending.length}</span>
+            </div>
+            ${pending.map(s => this.buildScheduleCardHTML(s, chatPhoto, chatName)).join('')}
+          </div>
+        `;
+      }
+
+      if (paused.length > 0) {
+        scheduleListHTML += `
+          <div class="princhat-schedule-section">
+            <div class="princhat-schedule-section-header">
+              <span>Pausados</span>
+              <span class="princhat-schedule-section-count">${paused.length}</span>
+            </div>
+            ${paused.map(s => this.buildScheduleCardHTML(s, chatPhoto, chatName)).join('')}
+          </div>
+        `;
+      }
+
+      if (completed.length > 0) {
+        scheduleListHTML += `
+          <div class="princhat-schedule-section">
+            <div class="princhat-schedule-section-header">
+              <span>Enviados</span>
+              <span class="princhat-schedule-section-count">${completed.length}</span>
+            </div>
+            ${completed.map(s => this.buildScheduleCardHTML(s, chatPhoto, chatName)).join('')}
+          </div>
+        `;
+      }
+
+      if (failed.length > 0) {
+        scheduleListHTML += `
+          <div class="princhat-schedule-section">
+            <div class="princhat-schedule-section-header">
+              <span>Falhados</span>
+              <span class="princhat-schedule-section-count">${failed.length}</span>
+            </div>
+            ${failed.map(s => this.buildScheduleCardHTML(s, chatPhoto, chatName)).join('')}
+          </div>
+        `;
+      }
+    }
+
+    // Update content area
+    const contentArea = this.scheduleListPopup.querySelector('.princhat-schedule-list-content');
+    if (contentArea) {
+      contentArea.innerHTML = scheduleListHTML;
+
+      // Re-attach event listeners for action buttons
+      const actionButtons = contentArea.querySelectorAll('[data-action]');
+      actionButtons.forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const action = (btn as HTMLElement).dataset.action;
+          const scheduleId = (btn as HTMLElement).dataset.scheduleId;
+
+          if (!scheduleId) return;
+
+          switch (action) {
+            case 'pause':
+              const card = btn.closest('.princhat-script-card');
+              if (!card) return
+
+                ;
+
+              const isPaused = card.classList.contains('paused');
+              const newStatus = isPaused ? 'running' : 'paused';
+
+              await this.updateScheduleStatus(scheduleId, newStatus);
+              await this.refreshScheduleListPopup();
+              break;
+
+            case 'edit':
+              const scheduleToEdit2 = schedules.find(s => s.id === scheduleId);
+              if (scheduleToEdit2) {
+                this.openScheduleCreationModal(scheduleToEdit2);
+              } else {
+                alert('Erro ao carregar agendamento para edição');
+              }
+              break;
+
+            case 'delete':
+              this.showScheduleDeleteConfirmation(scheduleId);
+              break;
+          }
+        });
+      });
+
+      console.log('[PrinChat UI] Schedule popup refreshed successfully');
+    }
+  }
+
+  /**
+   * Open schedule creation modal
+   * @param scheduleToEdit Optional schedule to edit (opens in edit mode if provided)
+   */
+  private openScheduleCreationModal(scheduleToEdit?: Schedule) {
     if (this.scheduleCreationModal) {
       this.scheduleCreationModal.remove();
       this.scheduleCreationModal = null;
       return;
     }
 
+    const isEditMode = !!scheduleToEdit;
+    console.log('[PrinChat UI] Opening schedule modal in', isEditMode ? 'EDIT' : 'CREATE', 'mode');
+
     const state = {
-      contentType: 'message' as 'message' | 'script',
+      contentType: (scheduleToEdit?.type || 'message') as 'message' | 'script',
       filterType: 'all' as 'all' | 'text' | 'audio' | 'image' | 'file' | 'script',
       searchText: '',
-      selectedId: '',
+      selectedId: scheduleToEdit?.itemId || '',
       date: '',
       time: ''
     };
 
-    const now = new Date();
-    now.setHours(now.getHours() + 1, 0, 0, 0);
-    state.date = now.toISOString().split('T')[0];
-    state.time = `${String(now.getHours()).padStart(2, '0')}:00`;
+    // Initialize date/time from schedule or default to +1 hour
+    if (isEditMode && scheduleToEdit) {
+      const scheduleDate = new Date(scheduleToEdit.scheduledTime);
+      state.date = scheduleDate.toISOString().split('T')[0];
+      state.time = `${String(scheduleDate.getHours()).padStart(2, '0')}:${String(scheduleDate.getMinutes()).padStart(2, '0')}`;
+    } else {
+      const now = new Date();
+      now.setHours(now.getHours() + 1, 0, 0, 0);
+      state.date = now.toISOString().split('T')[0];
+      state.time = `${String(now.getHours()).padStart(2, '0')}:00`;
+    }
 
     const overlay = document.createElement('div');
     overlay.className = 'princhat-modal-overlay';
@@ -3537,7 +3831,7 @@ class WhatsAppUIOverlay {
 
     modal.innerHTML = `
       <div class="princhat-modal-header">
-        <h3>Agendar nova mensagem</h3>
+        <h3>${isEditMode ? 'Editar agendamento' : 'Agendar nova mensagem'}</h3>
         <button class="princhat-popup-close-btn">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -3615,7 +3909,7 @@ class WhatsAppUIOverlay {
         <div class="princhat-preview-inline" style="display:none" data-preview></div>
       </div>
       <div class="princhat-modal-footer-right">
-        <button class="princhat-schedule-btn" disabled data-action="schedule">Agendar</button>
+        <button class="princhat-schedule-btn" disabled data-action="schedule">${isEditMode ? 'Salvar alterações' : 'Agendar'}</button>
       </div>
     `;
 
@@ -3752,6 +4046,23 @@ class WhatsAppUIOverlay {
       updateDropdownList(dropdownSearchInput.value);
     });
 
+    // Pre-select item in dropdown if in edit mode
+    if (isEditMode && scheduleToEdit && state.selectedId) {
+      const selectedItem = state.contentType === 'message'
+        ? this.messages.find(m => m.id === state.selectedId)
+        : this.scripts.find(s => s.id === state.selectedId);
+
+      if (selectedItem && dropdownLabel) {
+        const text = state.contentType === 'message'
+          ? (selectedItem as Message).content.substring(0, 40) + ((selectedItem as Message).content.length > 40 ? '...' : '')
+          : (selectedItem as Script).name;
+        dropdownLabel.textContent = text;
+      }
+
+      // Trigger initial preview update
+      updatePreview();
+    }
+
     const closeDropdownOnOutsideClick = (e: MouseEvent) => {
       if (!dropdownPanel.contains(e.target as Node) && !dropdownTrigger.contains(e.target as Node)) {
         dropdownPanel.style.display = 'none';
@@ -3821,21 +4132,38 @@ class WhatsAppUIOverlay {
 
         // Create schedule object
         const scheduleTime = new Date(`${state.date}T${state.time}`).getTime();
-        const schedule: Schedule = {
-          id: `schedule-${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          chatId: chatId,
-          chatName: activeChatName,
-          type: state.contentType,
-          itemId: state.selectedId,
-          scheduledTime: scheduleTime,
-          status: 'pending',
-          createdAt: Date.now(),
-          updatedAt: Date.now()
-        };
 
-        console.log('[PrinChat UI] Schedule object created:', schedule);
+        let schedule: Schedule;
 
-        // Save to database via content script event system
+        if (isEditMode && scheduleToEdit) {
+          // UPDATE mode: preserve ID and original createdAt
+          schedule = {
+            ...scheduleToEdit,
+            chatId: chatId,
+            chatName: activeChatName,
+            type: state.contentType,
+            itemId: state.selectedId,
+            scheduledTime: scheduleTime,
+            updatedAt: Date.now()
+          };
+          console.log('[PrinChat UI] Updating schedule:', schedule);
+        } else {
+          // CREATE mode: generate new ID
+          schedule = {
+            id: `schedule-${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            chatId: chatId,
+            chatName: activeChatName,
+            type: state.contentType,
+            itemId: state.selectedId,
+            scheduledTime: scheduleTime,
+            status: 'pending',
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+          };
+          console.log('[PrinChat UI] Creating new schedule:', schedule);
+        }
+
+        // Save to database (db.put handles both create and update)
         const response = await this.requestFromContentScript({
           type: 'SAVE_SCHEDULE',
           payload: schedule
@@ -3847,7 +4175,7 @@ class WhatsAppUIOverlay {
           throw new Error(response?.error || 'Failed to save schedule');
         }
 
-        console.log('[PrinChat UI] Schedule saved successfully!');
+        console.log(`[PrinChat UI] Schedule ${isEditMode ? 'updated' : 'created'} successfully!`);
 
         // Close modal
         overlay.remove();
@@ -3856,14 +4184,17 @@ class WhatsAppUIOverlay {
         // Update schedule button (check if should transform to icon)
         await this.updateScheduleButton();
 
-        // Refresh schedule list if popup is currently open
+        // Intelligent popup refresh/reopen logic
         if (this.scheduleListPopup) {
-          const button = document.querySelector('.princhat-schedule-button') as HTMLElement;
-          if (button) {
-            // Close and reopen to refresh
-            this.scheduleListPopup.remove();
-            this.scheduleListPopup = null;
-            await this.toggleScheduleListPopup(button);
+          // Popup is open, just refresh it
+          console.log('[PrinChat UI] Popup is open, refreshing...');
+          await this.refreshScheduleListPopup();
+        } else {
+          // Popup was closed, check if button exists and reopen
+          const scheduleButton = document.querySelector('.princhat-schedule-button') as HTMLElement;
+          if (scheduleButton) {
+            console.log('[PrinChat UI] Popup was closed, reopening with fresh data...');
+            await this.toggleScheduleListPopup(scheduleButton);
           }
         }
       } catch (error) {
@@ -4109,7 +4440,7 @@ class WhatsAppUIOverlay {
    */
   private openSubscriptionFormModal() {
     // Close if already open
-    if (this.subscriptionFormModal) {
+    if (this.subscribeFormModal) {
       this.closeSubscriptionFormModal();
       return;
     }
@@ -4129,7 +4460,7 @@ class WhatsAppUIOverlay {
     // Create overlay
     const overlay = document.createElement('div');
     overlay.className = 'princhat-modal-overlay';
-    this.subscriptionFormModal = overlay;
+    this.subscribeFormModal = overlay;
 
     // Store formState on modal for access during edit (AFTER modal is created)
     (overlay as any).__formState = formState;
@@ -4403,9 +4734,9 @@ class WhatsAppUIOverlay {
    * Close subscription form modal
    */
   private closeSubscriptionFormModal() {
-    if (this.subscriptionFormModal) {
-      this.subscriptionFormModal.remove();
-      this.subscriptionFormModal = null;
+    if (this.subscribeFormModal) {
+      this.subscribeFormModal.remove();
+      this.subscribeFormModal = null;
     }
   }
 
@@ -4654,7 +4985,7 @@ class WhatsAppUIOverlay {
 
     // Wait a tick for DOM to be ready, then populate fields
     setTimeout(() => {
-      const modal = this.subscriptionFormModal;
+      const modal = this.subscribeFormModal;
       if (!modal) return;
 
       // Get form elements
@@ -4682,7 +5013,7 @@ class WhatsAppUIOverlay {
       }
 
       // Populate formatting buttons
-      formatButtons.forEach(btn => {
+      formatButtons.forEach((btn: Element) => {
         const format = btn.getAttribute('data-format');
         if (format && signature.formatting && signature.formatting[format as keyof typeof signature.formatting]) {
           btn.classList.add('active');
@@ -4703,7 +5034,7 @@ class WhatsAppUIOverlay {
 
       // Trigger preview update using the overlay's updatePreview function
       // This makes the preview dynamic and connected to formState changes
-      const updatePreviewFunc = (this.subscriptionFormModal as any).__updatePreview;
+      const updatePreviewFunc = (this.subscribeFormModal as any).__updatePreview;
       if (updatePreviewFunc) {
         updatePreviewFunc();
       }
@@ -6027,9 +6358,12 @@ class WhatsAppUIOverlay {
       });
 
       const schedules: Schedule[] = response?.data || [];
-      const scheduleCount = schedules.length;
 
-      console.log('[PrinChat UI] Schedule count for this chat:', scheduleCount);
+      // Count only pending and paused schedules (not completed or failed)
+      const activeSchedules = schedules.filter(s => s.status === 'pending' || s.status === 'paused');
+      const scheduleCount = activeSchedules.length;
+
+      console.log('[PrinChat UI] Active schedule count for this chat:', scheduleCount, '(total:', schedules.length, ')');
 
       // Find existing button
       const existingButton = chatHeader.querySelector('.princhat-schedule-button') as HTMLElement;
@@ -6120,9 +6454,14 @@ class WhatsAppUIOverlay {
       });
 
       // Listen for schedule execution from injector via document
-      document.addEventListener('PrinChatScheduleExecuted', () => {
+      document.addEventListener('PrinChatScheduleExecuted', async () => {
         console.log('[PrinChat UI] 🔔 PrinChatScheduleExecuted from injector!');
-        this.updateScheduleButton();
+        await this.updateScheduleButton();
+
+        // Refresh popup if open
+        if (this.scheduleListPopup) {
+          await this.refreshScheduleListPopup();
+        }
       });
 
       console.log('[PrinChat UI] ✅ Schedule change listener registered');
