@@ -1916,6 +1916,12 @@ body[data-princhat-chat-active="true"] .princhat-shortcut-bar {
   background: rgba(100, 181, 246, 0.1);
 }
 
+/* Orange timer for paused schedules */
+.princhat-script-card-timer.paused {
+  color: #ff9800;
+  background: rgba(255, 152, 0, 0.1);
+}
+
 /* Green timer with check for completed */
 .princhat-script-card-timer.completed {
   color: #4caf50;
@@ -2077,6 +2083,12 @@ button.princhat-script-btn-icon[data-action="delete"] {
   height: 12px;
 }
 
+/* Larger icon for resume/play button */
+.princhat-script-btn-icon[data-action="resume"] svg {
+  width: 14px;
+  height: 14px;
+}
+
 /* Running state - green with spinning border */
 .princhat-script-btn-icon.running {
   color: #00a884;
@@ -2117,8 +2129,15 @@ button.princhat-script-btn-icon[data-action="delete"] {
   opacity: 0.8;
 }
 
-/* Default hover only for icons without state class */
-.princhat-script-btn-icon:not(.running):not(.paused):hover {
+/* Resume hover - green like running (default color is gray) */
+.princhat-script-btn-icon[data-action="resume"]:hover {
+  background: rgba(0, 168, 132, 0.15);
+  color: #00a884;
+  opacity: 0.8;
+}
+
+/* Default hover only for icons without state class or specific action */
+.princhat-script-btn-icon:not(.running):not(.paused):not([data-action="resume"]):hover {
   background: rgba(233, 30, 99, 0.1);
   color: #e91e63;
   border-color: rgba(233, 30, 99, 0.3);

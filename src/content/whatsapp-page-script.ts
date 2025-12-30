@@ -12,14 +12,11 @@
   const MAX_VIDEO_SIZE_MB = 16; // WhatsApp video size limit
 
   const scriptVersion = 'v2.0-' + Date.now();
+  console.log('[PrinChat Page] Starting initialization, version:', scriptVersion);
 
+  // Always allow execution - we'll handle duplicate listeners individually
+  // This ensures the script runs after page reload/navigation
   (window as any).__PRINCHAT_VERSION__ = scriptVersion;
-
-  // Prevent multiple injections
-  if ((window as any).__PRINCHAT_INJECTED__) {
-    return;
-  }
-  (window as any).__PRINCHAT_INJECTED__ = true;
 
   // Debug panel (only in debug mode)
   if (DEBUG_MODE) {

@@ -49,7 +49,7 @@ interface Schedule {
   type: 'message' | 'script';
   itemId: string;
   scheduledTime: number;
-  status: 'pending' | 'paused' | 'completed' | 'failed';
+  status: 'pending' | 'paused' | 'completed' | 'cancelled' | 'failed';
   createdAt: number;
   updatedAt: number;
 }
@@ -142,6 +142,9 @@ class WhatsAppUIOverlay {
 
   // MutationObserver to detect script popup size changes
   private scriptPopupObserver: MutationObserver | null = null;
+
+  // Schedule timer interval for real-time updates
+  private scheduleTimerInterval: NodeJS.Timeout | null = null;
 
   constructor() {
     this.init();
@@ -659,23 +662,46 @@ class WhatsAppUIOverlay {
       return this.cachedChatId;
     }
 
-    // Fetch fresh chat ID
+    // Fetch fresh chat ID with retry
     console.log('[PrinChat UI] Fetching active chat (cache expired or empty)...');
-    const chatResponse = await this.requestFromContentScript({
-      type: 'GET_ACTIVE_CHAT'
-    }, 15000);
 
-    if (!chatResponse || !chatResponse.success || !chatResponse.data?.chatId) {
-      console.error('[PrinChat UI] Nenhum chat ativo selecionado');
-      return null;
+    let attempts = 0;
+    const maxAttempts = 3;
+
+    while (attempts < maxAttempts) {
+      attempts++;
+      console.log(`[PrinChat UI] Attempt ${attempts}/${maxAttempts} to get active chat...`);
+
+      try {
+        const chatResponse = await this.requestFromContentScript({
+          type: 'GET_ACTIVE_CHAT'
+        }, 20000); // Increased to 20s to allow page script to initialize after reload
+
+        if (chatResponse && chatResponse.success && chatResponse.data?.chatId) {
+          // Update cache
+          this.cachedChatId = chatResponse.data.chatId;
+          this.cachedChatTimestamp = now;
+          console.log('[PrinChat UI] Chat ID cached:', this.cachedChatId);
+          return this.cachedChatId;
+        }
+
+        console.warn(`[PrinChat UI] Attempt ${attempts} failed:`, chatResponse?.error || 'No chat data');
+
+        // Wait before retry (except on last attempt)
+        if (attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      } catch (error) {
+        console.error(`[PrinChat UI] Attempt ${attempts} error:`, error);
+        if (attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
     }
 
-    // Update cache
-    this.cachedChatId = chatResponse.data.chatId;
-    this.cachedChatTimestamp = now;
-    console.log('[PrinChat UI] Chat ID cached:', this.cachedChatId);
-
-    return this.cachedChatId;
+    console.error('[PrinChat UI] ❌ Falha ao obter chat ativo após', maxAttempts, 'tentativas');
+    console.error('[PrinChat UI] 💡 Dica: Certifique-se de que um chat está aberto no WhatsApp Web');
+    return null;
   }
 
   /**
@@ -3035,9 +3061,11 @@ class WhatsAppUIOverlay {
     // Calculate relative time based on status
     let relativeTime = '';
 
-    // Failed schedules show "Falhado"
+    // Calculate relative time and status
     if (schedule.status === 'failed') {
       relativeTime = 'Falhado';
+    } else if (schedule.status === 'paused') {
+      relativeTime = 'Pausado';
     } else {
       const now = Date.now();
       const diff = schedule.scheduledTime - now;
@@ -3093,6 +3121,10 @@ class WhatsAppUIOverlay {
           Enviado
         </span>
       `;
+    } else if (schedule.status === 'paused') {
+      // Orange for paused schedules
+      timerClass += ' paused';
+      timerHTML = `<span class="${timerClass}">${relativeTime}</span>`;
     } else {
       // Blue for all pending schedules
       timerClass += ' pending';
@@ -3117,11 +3149,15 @@ class WhatsAppUIOverlay {
           </div>
         </div>
         <div class="princhat-schedule-card-actions">
-          <button class="princhat-script-btn-icon running" data-action="pause" data-schedule-id="${schedule.id}" title="Pausar">
+          ${schedule.status === 'pending' || schedule.status === 'paused' ? `
+          <button class="princhat-script-btn-icon ${schedule.status === 'pending' ? 'running' : ''}" data-action="${schedule.status === 'paused' ? 'resume' : 'pause'}" data-schedule-id="${schedule.id}" title="${schedule.status === 'paused' ? 'Retomar' : 'Pausar'}">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
+              ${schedule.status === 'paused'
+          ? '<path d="M8 5v14l11-7z"/>'
+          : '<path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>'}
             </svg>
           </button>
+          ` : ''}
           <button class="princhat-script-btn-icon" data-action="edit" data-schedule-id="${schedule.id}" title="Editar">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
               <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
@@ -3180,6 +3216,7 @@ class WhatsAppUIOverlay {
     const pending = schedules.filter(s => s.status === 'pending');
     const paused = schedules.filter(s => s.status === 'paused');
     const completed = schedules.filter(s => s.status === 'completed');
+    const cancelled = schedules.filter(s => s.status === 'cancelled');
     const failed = schedules.filter(s => s.status === 'failed');
 
     console.log('[PrinChat UI] Schedule statuses:', {
@@ -3187,6 +3224,7 @@ class WhatsAppUIOverlay {
       pending: pending.length,
       paused: paused.length,
       completed: completed.length,
+      cancelled: cancelled.length,
       failed: failed.length
     });
 
@@ -3205,7 +3243,7 @@ class WhatsAppUIOverlay {
         </div>
       `;
     } else {
-      // Build sections
+      // Build sections in order: Pending, Paused, Completed, Cancelled, Failed
       if (pending.length > 0) {
         scheduleListHTML += `
           <div class="princhat-schedule-section">
@@ -3238,6 +3276,18 @@ class WhatsAppUIOverlay {
               <span class="princhat-schedule-section-count">${completed.length}</span>
             </div>
             ${completed.map(s => this.buildScheduleCardHTML(s, chatPhoto, chatName)).join('')}
+          </div>
+        `;
+      }
+
+      if (cancelled.length > 0) {
+        scheduleListHTML += `
+          <div class="princhat-schedule-section">
+            <div class="princhat-schedule-section-header">
+              <span>Cancelados</span>
+              <span class="princhat-schedule-section-count">${cancelled.length}</span>
+            </div>
+            ${cancelled.map(s => this.buildScheduleCardHTML(s, chatPhoto, chatName)).join('')}
           </div>
         `;
       }
@@ -3287,6 +3337,11 @@ class WhatsAppUIOverlay {
     closeBtn?.addEventListener('click', () => {
       popup.remove();
       this.scheduleListPopup = null;
+      // Clear timer interval when closing popup
+      if (this.scheduleTimerInterval) {
+        clearInterval(this.scheduleTimerInterval);
+        this.scheduleTimerInterval = null;
+      }
     });
 
     const createBtn = popup.querySelector('.princhat-schedule-list-create-btn');
@@ -3306,33 +3361,143 @@ class WhatsAppUIOverlay {
 
         switch (action) {
           case 'pause':
-            const card = btn.closest('.princhat-script-card');
-            if (!card) return;
+          case 'resume':
+            // Determine new status
+            const newStatus = action === 'pause' ? 'paused' : 'pending';
 
-            const isPaused = card.classList.contains('paused');
-            const newStatus = isPaused ? 'running' : 'paused';
-            const newAction = isPaused ? 'pause' : 'resume';
-            const newTitle = isPaused ? 'Pausar' : 'Retomar';
-            const newIcon = isPaused ? '<path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>' : '<path d="M8 5v14l11-7z"/>';
-
-            card.classList.toggle('paused', !isPaused);
-            card.querySelector('.princhat-script-card-timer')?.classList.toggle('running', !isPaused);
-            card.querySelector('.princhat-script-card-timer')?.classList.toggle('paused', isPaused);
-
-            const pauseButton = card.querySelector('[data-action="pause"], [data-action="resume"]') as HTMLElement;
-            if (pauseButton) {
-              pauseButton.dataset.action = newAction;
-              pauseButton.title = newTitle;
-              pauseButton.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">${newIcon}</svg>`;
-              pauseButton.classList.toggle('running', !isPaused);
-              pauseButton.classList.toggle('paused', isPaused);
-            }
-
+            // Update database
             await this.updateScheduleStatus(scheduleId, newStatus);
-            // Re-open popup to refresh the list and ensure timer updates correctly
-            this.scheduleListPopup?.remove();
-            this.scheduleListPopup = null;
-            this.toggleScheduleListPopup(button); // Re-open with updated data
+
+            // Find the schedule in our local data
+            const scheduleIndex = schedules.findIndex(s => s.id === scheduleId);
+            if (scheduleIndex >= 0) {
+              schedules[scheduleIndex].status = newStatus;
+
+              // Update the card in place without reloading popup
+              const card = btn.closest('.princhat-script-card');
+              if (card) {
+                // Determine section movement
+                const oldSection = card.closest('.princhat-schedule-section');
+                const targetSectionName = newStatus === 'paused' ? 'Pausados' : 'Pendentes';
+
+                // Find or create target section
+                let targetSection = Array.from(popup.querySelectorAll('.princhat-schedule-section')).find(section => {
+                  const header = section.querySelector('.princhat-schedule-section-header span');
+                  return header?.textContent === targetSectionName;
+                });
+
+                // If target section doesn't exist, create it
+                if (!targetSection) {
+                  const scheduleList = popup.querySelector('.princhat-schedule-list-content');
+                  if (scheduleList) {
+                    const newSectionHTML = `
+                      <div class="princhat-schedule-section">
+                        <div class="princhat-schedule-section-header">
+                          <span>${targetSectionName}</span>
+                          <span class="princhat-schedule-section-count">0</span>
+                        </div>
+                      </div>
+                    `;
+
+                    // Insert section in correct order (Pending, Paused, Completed, Cancelled, Failed)
+                    const sectionOrder = ['Pendentes', 'Pausados', 'Enviados', 'Cancelados', 'Falhados'];
+                    const targetIndex = sectionOrder.indexOf(targetSectionName);
+                    const sections = Array.from(scheduleList.querySelectorAll('.princhat-schedule-section'));
+
+                    let inserted = false;
+                    for (const section of sections) {
+                      const header = section.querySelector('.princhat-schedule-section-header span');
+                      const sectionName = header?.textContent || '';
+                      const sectionIndex = sectionOrder.indexOf(sectionName);
+
+                      if (sectionIndex > targetIndex) {
+                        section.insertAdjacentHTML('beforebegin', newSectionHTML);
+                        inserted = true;
+                        break;
+                      }
+                    }
+
+                    if (!inserted) {
+                      scheduleList.insertAdjacentHTML('beforeend', newSectionHTML);
+                    }
+
+                    targetSection = Array.from(scheduleList.querySelectorAll('.princhat-schedule-section')).find(section => {
+                      const header = section.querySelector('.princhat-schedule-section-header span');
+                      return header?.textContent === targetSectionName;
+                    });
+                  }
+                }
+
+                // Move card to target section
+                if (targetSection && oldSection !== targetSection) {
+                  targetSection.appendChild(card);
+
+                  // Update section counts
+                  const updateSectionCount = (section: Element) => {
+                    const cards = section.querySelectorAll('.princhat-script-card');
+                    const countEl = section.querySelector('.princhat-schedule-section-count');
+                    if (countEl) {
+                      countEl.textContent = String(cards.length);
+                    }
+
+                    // Remove section if empty
+                    if (cards.length === 0) {
+                      section.remove();
+                    }
+                  };
+
+                  if (oldSection) updateSectionCount(oldSection);
+                  updateSectionCount(targetSection);
+                }
+
+                // Update the card UI (button and timer)
+                const pauseBtn = card.querySelector('[data-action="pause"], [data-action="resume"]') as HTMLElement;
+                const timerEl = card.querySelector('.princhat-script-card-timer');
+
+                if (pauseBtn) {
+                  const isPaused = newStatus === 'paused';
+                  pauseBtn.dataset.action = isPaused ? 'resume' : 'pause';
+                  pauseBtn.title = isPaused ? 'Retomar' : 'Pausar';
+                  pauseBtn.innerHTML = isPaused
+                    ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>'
+                    : '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/></svg>';
+
+                  if (isPaused) {
+                    pauseBtn.classList.remove('running');
+                  } else {
+                    pauseBtn.classList.add('running');
+                  }
+                }
+
+                if (timerEl) {
+                  timerEl.classList.remove('pending', 'paused');
+                  if (newStatus === 'paused') {
+                    timerEl.classList.add('paused');
+                    timerEl.textContent = 'Pausado';
+                  } else {
+                    timerEl.classList.add('pending');
+                    // Recalculate time
+                    const schedule = schedules[scheduleIndex];
+                    const now = Date.now();
+                    const diff = schedule.scheduledTime - now;
+                    if (diff < 0) {
+                      timerEl.textContent = 'Atrasado';
+                    } else {
+                      const minutes = Math.floor(diff / 60000);
+                      const hours = Math.floor(minutes / 60);
+                      const days = Math.floor(hours / 24);
+                      if (days > 0) {
+                        timerEl.textContent = `daqui ${days}d`;
+                      } else if (hours > 0) {
+                        timerEl.textContent = `daqui ${hours}h`;
+                      } else {
+                        timerEl.textContent = minutes > 0 ? `daqui ${minutes}min` : 'Agora';
+                      }
+                    }
+                  }
+                }
+              }
+            }
             break;
 
           case 'edit':
@@ -3372,6 +3537,49 @@ class WhatsAppUIOverlay {
     };
 
     setTimeout(() => document.addEventListener('click', closePopup), 100);
+
+    // Update timers in real-time (every second)
+    this.scheduleTimerInterval = setInterval(() => {
+      if (!this.scheduleListPopup) {
+        // Popup was closed, clear interval
+        if (this.scheduleTimerInterval) {
+          clearInterval(this.scheduleTimerInterval);
+          this.scheduleTimerInterval = null;
+        }
+        return;
+      }
+
+      // Update all pending schedule timers
+      const timerElements = popup.querySelectorAll('.princhat-script-card-timer.pending');
+      timerElements.forEach((timerEl) => {
+        const card = timerEl.closest('[data-schedule-id]');
+        if (!card) return;
+
+        const scheduleId = (card as HTMLElement).dataset.scheduleId;
+        const schedule = schedules.find(s => s.id === scheduleId);
+        if (!schedule || schedule.status !== 'pending') return;
+
+        // Recalculate relative time
+        const now = Date.now();
+        const diff = schedule.scheduledTime - now;
+
+        if (diff < 0) {
+          timerEl.textContent = 'Atrasado';
+        } else {
+          const minutes = Math.floor(diff / 60000);
+          const hours = Math.floor(minutes / 60);
+          const days = Math.floor(hours / 24);
+
+          if (days > 0) {
+            timerEl.textContent = `daqui ${days}d`;
+          } else if (hours > 0) {
+            timerEl.textContent = `daqui ${hours}h`;
+          } else {
+            timerEl.textContent = minutes > 0 ? `daqui ${minutes}min` : 'Agora';
+          }
+        }
+      });
+    }, 1000); // Update every second
   }
 
   /**
@@ -3563,13 +3771,14 @@ class WhatsAppUIOverlay {
 
     const schedules: Schedule[] = response?.data || [];
 
-    // Categorize schedules
+    // Categorize schedules by status
     const pending = schedules.filter(s => s.status === 'pending');
     const paused = schedules.filter(s => s.status === 'paused');
     const completed = schedules.filter(s => s.status === 'completed');
+    const cancelled = schedules.filter(s => s.status === 'cancelled');
     const failed = schedules.filter(s => s.status === 'failed');
 
-    // Build schedule list HTML
+    // Build schedule list HTML with sections
     let scheduleListHTML = '';
     if (schedules.length === 0) {
       scheduleListHTML = `
@@ -3584,6 +3793,7 @@ class WhatsAppUIOverlay {
         </div>
       `;
     } else {
+      // Build sections in order: Pending, Paused, Completed, Cancelled, Failed
       if (pending.length > 0) {
         scheduleListHTML += `
           <div class="princhat-schedule-section">
@@ -3620,6 +3830,18 @@ class WhatsAppUIOverlay {
         `;
       }
 
+      if (cancelled.length > 0) {
+        scheduleListHTML += `
+          <div class="princhat-schedule-section">
+            <div class="princhat-schedule-section-header">
+              <span>Cancelados</span>
+              <span class="princhat-schedule-section-count">${cancelled.length}</span>
+            </div>
+            ${cancelled.map(s => this.buildScheduleCardHTML(s, chatPhoto, chatName)).join('')}
+          </div>
+        `;
+      }
+
       if (failed.length > 0) {
         scheduleListHTML += `
           <div class="princhat-schedule-section">
@@ -3638,7 +3860,7 @@ class WhatsAppUIOverlay {
     if (contentArea) {
       contentArea.innerHTML = scheduleListHTML;
 
-      // Re-attach event listeners for action buttons
+      // Re-attach event listeners for action buttons with SAME logic as main popup
       const actionButtons = contentArea.querySelectorAll('[data-action]');
       actionButtons.forEach(btn => {
         btn.addEventListener('click', async (e) => {
@@ -3648,24 +3870,24 @@ class WhatsAppUIOverlay {
 
           if (!scheduleId) return;
 
+          const popup = this.scheduleListPopup;
+          if (!popup) return;
+
           switch (action) {
             case 'pause':
-              const card = btn.closest('.princhat-script-card');
-              if (!card) return
-
-                ;
-
-              const isPaused = card.classList.contains('paused');
-              const newStatus = isPaused ? 'running' : 'paused';
-
+            case 'resume':
+              // Use same incremental update logic as main popup
+              const newStatus = action === 'pause' ? 'paused' : 'pending';
               await this.updateScheduleStatus(scheduleId, newStatus);
+
+              // Refresh entire popup since we just edited
               await this.refreshScheduleListPopup();
               break;
 
             case 'edit':
-              const scheduleToEdit2 = schedules.find(s => s.id === scheduleId);
-              if (scheduleToEdit2) {
-                this.openScheduleCreationModal(scheduleToEdit2);
+              const scheduleToEdit = schedules.find(s => s.id === scheduleId);
+              if (scheduleToEdit) {
+                this.openScheduleCreationModal(scheduleToEdit);
               } else {
                 alert('Erro ao carregar agendamento para edição');
               }
@@ -3677,9 +3899,9 @@ class WhatsAppUIOverlay {
           }
         });
       });
-
-      console.log('[PrinChat UI] Schedule popup refreshed successfully');
     }
+
+    console.log('[PrinChat UI] Schedule list popup refreshed');
   }
 
   /**
@@ -4136,7 +4358,7 @@ class WhatsAppUIOverlay {
         let schedule: Schedule;
 
         if (isEditMode && scheduleToEdit) {
-          // UPDATE mode: preserve ID and original createdAt
+          // UPDATE mode: preserve ID and original createdAt, but reset status to pending
           schedule = {
             ...scheduleToEdit,
             chatId: chatId,
@@ -4144,6 +4366,7 @@ class WhatsAppUIOverlay {
             type: state.contentType,
             itemId: state.selectedId,
             scheduledTime: scheduleTime,
+            status: 'pending', // Reset to pending when editing (even if it was paused)
             updatedAt: Date.now()
           };
           console.log('[PrinChat UI] Updating schedule:', schedule);
