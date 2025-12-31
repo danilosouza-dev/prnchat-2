@@ -654,7 +654,9 @@
 
           if (message.type === 'GET_SCRIPTS_AND_MESSAGES' || message.type === 'GET_SETTINGS' || message.type === 'TOGGLE_SIDE_PANEL' ||
             message.type === 'GET_SIGNATURES' || message.type === 'SAVE_SIGNATURE' || message.type === 'DELETE_SIGNATURE' ||
-            message.type === 'GET_SIGNATURE' || message.type === 'TOGGLE_SIGNATURE_ACTIVE') {
+            message.type === 'GET_SIGNATURE' || message.type === 'TOGGLE_SIGNATURE_ACTIVE' ||
+            message.type === 'SAVE_SCHEDULE' || message.type === 'GET_SCHEDULES_BY_CHAT' || message.type === 'GET_ALL_SCHEDULES' ||
+            message.type === 'DELETE_SCHEDULE' || message.type === 'UPDATE_SCHEDULE_STATUS') {
             console.log('[PrinChat] Forwarding to background service worker...');
 
             // Check if extension context is still valid
@@ -1293,6 +1295,9 @@
 
         case 'GET_ACTIVE_CHAT':
           return await this.getActiveChat();
+
+        case 'GET_CHAT_INFO':
+          return await this.getChatInfo(action.payload?.chatId);
 
         case 'SAVE_SCHEDULE':
         case 'GET_SCHEDULES_BY_CHAT':

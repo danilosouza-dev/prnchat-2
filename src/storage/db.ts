@@ -694,6 +694,12 @@ class DatabaseService {
     return db.getAllFromIndex('schedules', 'by-status', 'paused');
   }
 
+  async getAllSchedules(): Promise<Schedule[]> {
+    const db = await this.init();
+    const schedules = await db.getAll('schedules');
+    // Sort by scheduled time
+    return schedules.sort((a, b) => a.scheduledTime - b.scheduledTime);
+  }
 
   async deleteSchedule(id: string): Promise<void> {
     const db = await this.init();

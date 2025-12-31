@@ -225,11 +225,8 @@ class BackgroundService {
         return true;
 
       case 'GET_ALL_SCHEDULES':
-        db.getAllPendingSchedules()
-          .then(async (schedules) => {
-            // Get all schedules (pending, paused, completed, etc.)
-            // For now, we'll just get pending schedules
-            // TODO: Add a db.getAllSchedules() method to get all statuses
+        db.getAllSchedules()
+          .then((schedules) => {
             sendResponse({ success: true, data: schedules });
           })
           .catch((error) => sendResponse({ success: false, error: error.message }));
