@@ -224,6 +224,17 @@ class BackgroundService {
           .catch((error) => sendResponse({ success: false, error: error.message }));
         return true;
 
+      case 'GET_ALL_SCHEDULES':
+        db.getAllPendingSchedules()
+          .then(async (schedules) => {
+            // Get all schedules (pending, paused, completed, etc.)
+            // For now, we'll just get pending schedules
+            // TODO: Add a db.getAllSchedules() method to get all statuses
+            sendResponse({ success: true, data: schedules });
+          })
+          .catch((error) => sendResponse({ success: false, error: error.message }));
+        return true;
+
       case 'DELETE_SCHEDULE':
         db.deleteSchedule(message.payload.id)
           .then(async () => {
