@@ -669,7 +669,7 @@ class DatabaseService {
     return db.getAllFromIndex('schedules', 'by-status', 'pending');
   }
 
-  async updateScheduleStatus(id: string, status: 'pending' | 'completed' | 'failed'): Promise<void> {
+  async updateScheduleStatus(id: string, status: 'pending' | 'paused' | 'completed' | 'cancelled' | 'failed'): Promise<void> {
     const db = await this.init();
     const schedule = await db.get('schedules', id);
 
@@ -687,6 +687,18 @@ class DatabaseService {
         });
       }
     }
+  }
+
+  async getPausedSchedules(): Promise<Schedule[]> {
+    const db = await this.init();
+    return db.getAllFromIndex('schedules', 'by-status', 'paused');
+  }
+
+  async getAllSchedules(): Promise<Schedule[]> {
+    const db = await this.init();
+    const schedules = await db.getAll('schedules');
+    // Sort by scheduled time
+    return schedules.sort((a, b) => a.scheduledTime - b.scheduledTime);
   }
 
   async deleteSchedule(id: string): Promise<void> {

@@ -224,6 +224,14 @@ class BackgroundService {
           .catch((error) => sendResponse({ success: false, error: error.message }));
         return true;
 
+      case 'GET_ALL_SCHEDULES':
+        db.getAllSchedules()
+          .then((schedules) => {
+            sendResponse({ success: true, data: schedules });
+          })
+          .catch((error) => sendResponse({ success: false, error: error.message }));
+        return true;
+
       case 'DELETE_SCHEDULE':
         db.deleteSchedule(message.payload.id)
           .then(async () => {
@@ -235,6 +243,44 @@ class BackgroundService {
           })
           .catch((error) => sendResponse({ success: false, error: error.message }));
         return true;
+
+      case 'UPDATE_SCHEDULE_STATUS':
+        (async () => {
+          try {
+            const { id, status } = message.payload;
+            await db.updateScheduleStatus(id, status);
+
+            // If changing to paused, clear the alarm
+            if (status === 'paused') {
+              const alarmName = `schedule-${id}`;
+              await chrome.alarms.clear(alarmName);
+              console.log('[PrinChat] Paused schedule, cleared alarm:', alarmName);
+            }
+
+            // If changing from paused to pending, check if we need to send immediately or create new alarm
+            if (status === 'pending') {
+              const schedule = await db.getSchedule(id);
+              if (schedule) {
+                const now = Date.now();
+                if (schedule.scheduledTime <= now) {
+                  // Time already passed - execute immediately
+                  console.log('[PrinChat] Resuming expired schedule, executing immediately:', id);
+                  await this.executeSchedule(id);
+                } else {
+                  // Time in future - create new alarm
+                  console.log('[PrinChat] Resuming schedule, creating new alarm:', id);
+                  await this.createScheduleAlarm(schedule);
+                }
+              }
+            }
+
+            sendResponse({ success: true });
+          } catch (error: any) {
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
 
       case 'OPEN_OPTIONS':
         // Open options page (from profile dropdown)
@@ -254,26 +300,22 @@ class BackgroundService {
    * The loader will then inject WPPConnect and page scripts via DOM
    */
   private async injectPageScripts(tabId: number) {
-    console.log('[PrinChat] Injecting loader script into tab:', tabId);
+    console.log('[PrinChat] 🔧 Injecting loader script into tab:', tabId);
 
-    // Prevent multiple injections
-    if (this.injectedTabs.has(tabId)) {
-      console.log('[PrinChat] Tab', tabId, 'already injected, skipping');
-      return;
-    }
+    // REMOVED: Prevention of multiple injections
+    // This was blocking reinjection after page navigation/reload
+    // The page script itself has guards to prevent duplicate execution
 
     try {
       // Inject the loader script which will load Store accessor and page script
-      console.log('[PrinChat] Injecting script loader...');
+      console.log('[PrinChat] 📥 Injecting script loader...');
       await chrome.scripting.executeScript({
         target: { tabId: tabId },
         world: 'MAIN',
         files: ['content/script-loader.js']
       });
 
-      // Mark tab as injected
-      this.injectedTabs.add(tabId);
-      console.log('[PrinChat] ✅ Loader script injected into tab', tabId);
+      console.log('[PrinChat] ✅ Loader script injected successfully into tab', tabId);
     } catch (error: any) {
       const errorMessage = error?.message || String(error);
       console.error('[PrinChat] ❌ Failed to inject loader into tab', tabId, ':', errorMessage, error);
@@ -619,12 +661,17 @@ class BackgroundService {
   private async setupScheduleChecker() {
     console.log('[PrinChat] Setting up schedule alarms...');
 
-    // Create alarms for all existing pending schedules
+    // Create alarms for all existing pending schedules (skip paused ones)
     const pendingSchedules = await db.getAllPendingSchedules();
     console.log(`[PrinChat] Found ${pendingSchedules.length} pending schedules`);
 
     for (const schedule of pendingSchedules) {
-      await this.createScheduleAlarm(schedule);
+      // Only create alarm if schedule is truly pending (not paused)
+      if (schedule.status === 'pending') {
+        await this.createScheduleAlarm(schedule);
+      } else {
+        console.log(`[PrinChat] Skipping ${schedule.status} schedule:`, schedule.id);
+      }
     }
 
     console.log('[PrinChat] Schedule alarms created');
@@ -668,9 +715,22 @@ class BackgroundService {
 
       // Get the schedule
       const schedule = await db.getSchedule(scheduleId);
-      if (!schedule || schedule.status !== 'pending') {
-        console.log('[PrinChat] Schedule not found or already processed:', scheduleId);
-        this.executingSchedules.delete(scheduleId); // Clean up lock
+      if (!schedule) {
+        console.log('[PrinChat] Schedule not found:', scheduleId);
+        this.executingSchedules.delete(scheduleId);
+        return;
+      }
+
+      // Don't execute if paused or already processed
+      if (schedule.status === 'paused') {
+        console.log('[PrinChat] Schedule is paused, skipping execution:', scheduleId);
+        this.executingSchedules.delete(scheduleId);
+        return;
+      }
+
+      if (schedule.status !== 'pending') {
+        console.log('[PrinChat] Schedule already processed:', scheduleId, 'status:', schedule.status);
+        this.executingSchedules.delete(scheduleId);
         return;
       }
 

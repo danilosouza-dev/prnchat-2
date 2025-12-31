@@ -510,6 +510,11 @@
       // Inject UI overlay
       await this.injectUIOverlay();
 
+      // CRITICAL: Add navigation listener to reinject scripts after SPA navigation
+      // WhatsApp is a SPA, so F5/reload doesn't trigger content script again
+      console.log('[PrinChat] Setting up navigation observer...');
+      this.setupNavigationObserver();
+
       // Listen for responses from page script
       document.addEventListener('PrinChatMessageSent', (event: any) => {
         console.log('[PrinChat] 📨 PrinChatMessageSent event received!', event.detail);
@@ -649,7 +654,9 @@
 
           if (message.type === 'GET_SCRIPTS_AND_MESSAGES' || message.type === 'GET_SETTINGS' || message.type === 'TOGGLE_SIDE_PANEL' ||
             message.type === 'GET_SIGNATURES' || message.type === 'SAVE_SIGNATURE' || message.type === 'DELETE_SIGNATURE' ||
-            message.type === 'GET_SIGNATURE' || message.type === 'TOGGLE_SIGNATURE_ACTIVE') {
+            message.type === 'GET_SIGNATURE' || message.type === 'TOGGLE_SIGNATURE_ACTIVE' ||
+            message.type === 'SAVE_SCHEDULE' || message.type === 'GET_SCHEDULES_BY_CHAT' || message.type === 'GET_ALL_SCHEDULES' ||
+            message.type === 'DELETE_SCHEDULE' || message.type === 'UPDATE_SCHEDULE_STATUS') {
             console.log('[PrinChat] Forwarding to background service worker...');
 
             // Check if extension context is still valid
@@ -909,19 +916,19 @@
     }
 
     private async injectScripts() {
-      console.log('[PrinChat] Preparing to inject scripts...');
+      console.log('[PrinChat] 🔧 Preparing to inject scripts...');
 
       try {
         // Check if extension context is still valid
         if (!chrome.runtime?.id) {
-          console.warn('[PrinChat] Extension context invalidated, cannot inject scripts');
+          console.error('[PrinChat] ❌ Extension context invalidated, cannot inject scripts');
           return;
         }
 
         // STEP 1: Create marker in DOM with extension ID
         // The loader script will use this to construct chrome-extension:// URLs
         const extensionId = chrome.runtime.id;
-        console.log('[PrinChat] Extension ID:', extensionId);
+        console.log('[PrinChat] 📋 Extension ID:', extensionId);
 
         const marker = document.createElement('div');
         marker.id = 'princhat-marker';
@@ -929,25 +936,44 @@
         marker.style.display = 'none';
         document.documentElement.appendChild(marker);
 
-        console.log('[PrinChat] Marker created with extension ID');
+        console.log('[PrinChat] ✅ Marker created with extension ID');
 
         // STEP 2: Ask service worker to inject the loader script
         // The loader is small and will then load WPPConnect + page script via DOM
+        console.log('[PrinChat] 📤 Sending INJECT_PAGE_SCRIPTS message to service worker...');
+
         const response = await chrome.runtime.sendMessage({
           type: 'INJECT_PAGE_SCRIPTS'
         });
 
+        console.log('[PrinChat] 📥 Service worker response:', response);
+
         if (response?.success) {
           console.log('[PrinChat] ✅ Loader injection requested successfully');
+
+          // Wait for scripts to load and check if they initialized
+          setTimeout(() => {
+            const injected = (window as any).__PRINCHAT_INJECTED__;
+            const version = (window as any).__PRINCHAT_VERSION__;
+            console.log('[PrinChat] 🔍 Post-injection check:', {
+              injected: !!injected,
+              version: version || 'not set'
+            });
+
+            if (!injected) {
+              console.error('[PrinChat] ⚠️ Page script did not initialize! Check if scripts were loaded.');
+            }
+          }, 5000);
         } else {
           console.error('[PrinChat] ❌ Failed to request injection:', response?.error);
         }
 
       } catch (error: any) {
+        console.error('[PrinChat] ❌ Exception during script injection:', error);
         if (error.message?.includes('Extension context invalidated')) {
-          console.warn('[PrinChat] Extension context invalidated during script injection');
+          console.error('[PrinChat] Extension context invalidated during script injection');
         } else {
-          console.error('[PrinChat] ❌ Error communicating with service worker:', error);
+          console.error('[PrinChat] Error communicating with service worker:', error);
         }
       }
     }
@@ -1056,6 +1082,47 @@
         };
         check();
       });
+    }
+
+    /**
+     * Setup observer to detect WhatsApp navigation and reinject scripts
+     * WhatsApp is a SPA, so page "reloads" don't trigger content_scripts again
+     */
+    private setupNavigationObserver() {
+      let lastUrl = location.href;
+      let lastInjectionTime = Date.now();
+
+      // Use both URL and DOM changes to detect navigation
+      const observer = new MutationObserver(() => {
+        const currentUrl = location.href;
+        const timeSinceLastInjection = Date.now() - lastInjectionTime;
+
+        // If URL changed or significant time passed, consider it a navigation
+        if (currentUrl !== lastUrl && timeSinceLastInjection > 5000) {
+          console.log('[PrinChat] Navigation detected!', 'Old:', lastUrl, 'New:', currentUrl);
+          lastUrl = currentUrl;
+          lastInjectionTime = Date.now();
+
+          // Reinject scripts after navigation
+          setTimeout(async () => {
+            console.log('[PrinChat] Reinjecting scripts after navigation...');
+            try {
+              await this.injectScripts();
+              console.log('[PrinChat] ✅ Scripts reinjected successfully');
+            } catch (error) {
+              console.error('[PrinChat] ❌ Error reinjecting scripts:', error);
+            }
+          }, 2000); // Wait 2s for WhatsApp to stabilize
+        }
+      });
+
+      // Observe the entire document for changes
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true
+      });
+
+      console.log('[PrinChat] ✅ Navigation observer active');
     }
 
     private async handleAction(action: any): Promise<any> {
@@ -1229,9 +1296,13 @@
         case 'GET_ACTIVE_CHAT':
           return await this.getActiveChat();
 
+        case 'GET_CHAT_INFO':
+          return await this.getChatInfo(action.payload?.chatId);
+
         case 'SAVE_SCHEDULE':
         case 'GET_SCHEDULES_BY_CHAT':
         case 'DELETE_SCHEDULE':
+        case 'UPDATE_SCHEDULE_STATUS':
           // Forward schedule operations to background service worker
           console.log('[PrinChat] Forwarding schedule operation to background:', action.type);
           return await chrome.runtime.sendMessage(action);
@@ -1802,7 +1873,7 @@
         const timeout = setTimeout(() => {
           console.log('[PrinChat Injector] ⏱️ getActiveChat() timeout - no response from page script');
           resolve({ success: false, error: 'Timeout' });
-        }, 5000); // Increased from 3000ms to 5000ms
+        }, 10000); // Increased from 3000ms to 5000ms
 
         const handler = (event: any) => {
           if (event.detail?.requestId === requestId) {
