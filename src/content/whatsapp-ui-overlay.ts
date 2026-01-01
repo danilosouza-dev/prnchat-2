@@ -3991,10 +3991,7 @@ class WhatsAppUIOverlay {
     this.globalSchedulesPopup = popup;
 
     // Position popup to the left of the button
-    const buttonRect = button.getBoundingClientRect();
-    const popupWidth = 500; // Match CSS width (same as chat popup)
-    // Position to the left of the button with more spacing
-    popup.style.left = `${buttonRect.left - popupWidth - 24}px`; // Increased from 12px to 24px
+    // Position is now controlled by CSS (.princhat-global-schedules-popup with left: 1165px)
 
     // Render initial content
     this.renderGlobalSchedulesContent('pending', '');
