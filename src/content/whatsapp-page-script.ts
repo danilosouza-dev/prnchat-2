@@ -17,6 +17,7 @@
   // Always allow execution - we'll handle duplicate listeners individually
   // This ensures the script runs after page reload/navigation
   (window as any).__PRINCHAT_VERSION__ = scriptVersion;
+  (window as any).__PRINCHAT_INJECTED__ = true;
 
   // Debug panel (only in debug mode)
   if (DEBUG_MODE) {

@@ -3224,14 +3224,16 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
 .princhat-global-schedules-popup {
   position: fixed;
   top: 80px;
-  left: auto;
-  right: auto;
+  left: 1165px;
+  /* Aligned below schedule icon */
+  /* Closer to the icon */
   width: 500px;
   max-height: 600px;
   background: #1f1f1f;
   border-radius: 12px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
   z-index: 10001;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;

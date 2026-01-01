@@ -4972,9 +4972,18 @@ class WhatsAppUIOverlay {
           this.globalSchedulesData = response?.data || [];
           this.renderGlobalSchedulesContent(this.globalSchedulesActiveTab, '');
         } else if (this.scheduleListPopup) {
-          // Popup is open, just refresh it
-          console.log('[PrinChat UI] Popup is open, refreshing...');
-          await this.refreshScheduleListPopup();
+          // Popup is open, rebuild it with fresh data (same pattern as global popup)
+          console.log('[PrinChat UI] Chat popup is open, rebuilding with fresh data...');
+
+          // Close current popup
+          this.scheduleListPopup.remove();
+          this.scheduleListPopup = null;
+
+          // Reopen with fresh data
+          const scheduleButton = document.querySelector('.princhat-schedule-button') as HTMLElement;
+          if (scheduleButton) {
+            await this.toggleScheduleListPopup(scheduleButton);
+          }
         } else {
           // Popup was closed, check if button exists and reopen
           const scheduleButton = document.querySelector('.princhat-schedule-button') as HTMLElement;
