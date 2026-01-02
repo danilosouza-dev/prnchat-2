@@ -3160,11 +3160,13 @@ class WhatsAppUIOverlay {
             </svg>
           </button>
           ` : ''}
+          ${schedule.status !== 'completed' ? `
           <button class="princhat-script-btn-icon" data-action="edit" data-schedule-id="${schedule.id}" title="Editar">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
               <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
             </svg>
           </button>
+          ` : ''}
           <button class="princhat-script-btn-icon" data-action="delete" data-schedule-id="${schedule.id}" title="Cancelar">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M18 6L6 18M6 6l12 12"/>
@@ -4359,11 +4361,13 @@ class WhatsAppUIOverlay {
             </svg>
           </button>
           ` : ''}
+          ${schedule.status !== 'completed' ? `
           <button class="princhat-script-btn-icon" data-action="edit" data-schedule-id="${schedule.id}" title="Editar">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
               <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
             </svg>
           </button>
+          ` : ''}
           <button class="princhat-script-btn-icon" data-action="delete" data-schedule-id="${schedule.id}" title="Cancelar">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M18 6L6 18M6 6l12 12"/>
@@ -4449,6 +4453,114 @@ class WhatsAppUIOverlay {
         console.log('[PrinChat UI] Schedule card clicked:', scheduleId);
         // Could navigate to chat here in future enhancement
       });
+    });
+  }
+
+  /**
+   * Helper to show a custom confirmation modal within the calendar context
+   */
+  private showCalendarConfirmationModal(title: string, message: string, onConfirm: () => Promise<void>) {
+    // Create overlay
+    const overlay = document.createElement('div');
+    overlay.className = 'princhat-calendar-modal-overlay';
+    overlay.style.zIndex = '100002'; // Higher than calendar modal (100000)
+
+    // Create modal
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+      background: #2a2a2a;
+      border: 1px solid #3a3a3a;
+      border-radius: 8px;
+      padding: 24px;
+      max-width: 400px;
+      width: 90%;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+      display: flex;
+      flex-direction: column;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    `;
+
+    modal.innerHTML = `
+      <div style="margin-bottom: 16px;">
+        <h3 style="margin: 0 0 8px 0; font-size: 18px; font-weight: 600; color: #ffffff;">${title}</h3>
+        <p style="margin: 0; font-size: 14px; color: #9e9e9e;">${message}</p>
+      </div>
+      <div style="display: flex; gap: 12px; justify-content: flex-end;">
+        <button class="cancel-btn" style="
+          padding: 8px 20px;
+          border: 1px solid #3a3a3a;
+          background: transparent;
+          color: white;
+          border-radius: 8px;
+          cursor: pointer;
+          font-size: 11px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          transition: all 0.2s;
+        ">CANCELAR</button>
+        <button class="confirm-btn" style="
+          padding: 8px 20px;
+          border: none;
+          background: #f44336;
+          color: white;
+          border-radius: 8px;
+          cursor: pointer;
+          font-size: 11px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          transition: all 0.2s;
+        ">EXCLUIR</button>
+      </div>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // Event listeners
+    const cancelBtn = modal.querySelector('.cancel-btn') as HTMLElement;
+    const confirmBtn = modal.querySelector('.confirm-btn') as HTMLElement;
+
+    const closeModal = () => {
+      overlay.remove();
+    };
+
+    // Hover effects
+    cancelBtn.addEventListener('mouseenter', () => {
+      cancelBtn.style.background = 'rgba(233, 30, 99, 0.1)';
+      cancelBtn.style.borderColor = '#e91e63';
+    });
+    cancelBtn.addEventListener('mouseleave', () => {
+      cancelBtn.style.background = 'transparent';
+      cancelBtn.style.borderColor = '#3a3a3a';
+    });
+
+    confirmBtn.addEventListener('mouseenter', () => {
+      confirmBtn.style.background = '#c62828';
+    });
+    confirmBtn.addEventListener('mouseleave', () => {
+      confirmBtn.style.background = '#f44336';
+    });
+
+    cancelBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeModal();
+    });
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeModal();
+    });
+
+    confirmBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      // Disable button to prevent double clicks
+      confirmBtn.style.opacity = '0.7';
+      confirmBtn.style.pointerEvents = 'none';
+      confirmBtn.textContent = 'EXCLUINDO...';
+
+      await onConfirm();
+      closeModal();
     });
   }
 
@@ -4585,7 +4697,7 @@ class WhatsAppUIOverlay {
         const newStatus = schedule.status === 'paused' ? 'pending' : 'paused';
         await this.requestFromContentScript({
           type: 'UPDATE_SCHEDULE_STATUS',
-          payload: { scheduleId, status: newStatus }
+          payload: { id: scheduleId, status: newStatus }
         });
         await renderCalendar();
 
@@ -4599,13 +4711,17 @@ class WhatsAppUIOverlay {
         }, 300);
 
       } else if (action === 'delete') {
-        if (confirm('Tem certeza que deseja cancelar este agendamento?')) {
-          await this.requestFromContentScript({
-            type: 'DELETE_SCHEDULE',
-            payload: { scheduleId }
-          });
-          await renderCalendar();
-        }
+        this.showCalendarConfirmationModal(
+          'Cancelar agendamento',
+          'Tem certeza que deseja cancelar este agendamento? Esta ação não pode ser desfeita.',
+          async () => {
+            await this.requestFromContentScript({
+              type: 'DELETE_SCHEDULE',
+              payload: { id: scheduleId }
+            });
+            await renderCalendar();
+          }
+        );
       }
     });
 
@@ -4613,18 +4729,50 @@ class WhatsAppUIOverlay {
     document.body.appendChild(overlay);
 
     overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) {
+      // Close on overlay click OR close button click
+      const target = e.target as HTMLElement;
+      if (target === overlay || target.closest('[data-action="close"]')) {
+        clearInterval(updateInterval);
         overlay.remove();
       }
     });
 
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        clearInterval(updateInterval);
         overlay.remove();
         document.removeEventListener('keydown', handleEsc);
       }
     };
     document.addEventListener('keydown', handleEsc);
+
+    // --- SMART POLLING FOR REAL-TIME UPDATES ---
+    // Check for updates every 2 seconds
+    const updateInterval = setInterval(async () => {
+      // If modal is closed (removed from DOM), stop polling
+      if (!overlay || !document.body.contains(overlay)) {
+        clearInterval(updateInterval);
+        return;
+      }
+
+      try {
+        const freshResponse = await this.requestFromContentScript({ type: 'GET_ALL_SCHEDULES' });
+        const freshSchedules: Schedule[] = freshResponse?.success ? (freshResponse.data || []) : [];
+
+        // Check difference by signature (id + status)
+        const currentSignature = allSchedules.map(s => s.id + s.status).sort().join('|');
+        const freshSignature = freshSchedules.map(s => s.id + s.status).sort().join('|');
+
+        if (currentSignature !== freshSignature) {
+          // Update data source
+          allSchedules = freshSchedules;
+          // Re-render
+          await renderCalendar();
+        }
+      } catch (err) {
+        // Silent error
+      }
+    }, 2000);
   }
 
   private buildCalendarGrid(year: number, month: number, selectedDate: Date, currentYear: number, currentMonth: number, currentDay: number, schedules: Schedule[]): string {
@@ -4791,16 +4939,21 @@ class WhatsAppUIOverlay {
     }
 
     const confirmMsg = `Tem certeza que deseja cancelar ${daySchedules.length} agendamento(s) do dia ${formattedDate}?`;
-    if (!confirm(confirmMsg)) return;
 
-    for (const schedule of daySchedules) {
-      await this.requestFromContentScript({
-        type: 'DELETE_SCHEDULE',
-        payload: { scheduleId: schedule.id }
-      });
-    }
+    this.showCalendarConfirmationModal(
+      'Cancelar agendamentos do dia',
+      confirmMsg,
+      async () => {
+        for (const schedule of daySchedules) {
+          await this.requestFromContentScript({
+            type: 'DELETE_SCHEDULE',
+            payload: { id: schedule.id }
+          });
+        }
 
-    reRenderCallback();
+        reRenderCallback();
+      }
+    );
   }
 
 
