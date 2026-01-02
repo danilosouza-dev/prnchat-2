@@ -2552,6 +2552,11 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
   width: 20px;
   height: 20px;
   color: #8696a0;
+  transition: color 0.2s ease;
+}
+
+.princhat-schedule-button.has-schedules:hover svg {
+  color: #e91e63;
 }
 
 /* Schedule badge */
@@ -2598,9 +2603,15 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
 .princhat-notes-button svg {
   width: 20px;
   height: 20px;
+  color: #8696a0;
+  stroke: #8696a0;
+  flex-shrink: 0;
+  transition: color 0.2s ease, stroke 0.2s ease;
+}
+
+.princhat-notes-button:hover svg {
   color: #e91e63;
   stroke: #e91e63;
-  flex-shrink: 0;
 }
 
 /* ==================== NOTES POPUP ==================== */
