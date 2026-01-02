@@ -3990,8 +3990,12 @@ class WhatsAppUIOverlay {
     document.body.appendChild(popup);
     this.globalSchedulesPopup = popup;
 
-    // Position popup to the left of the button
-    // Position is now controlled by CSS (.princhat-global-schedules-popup with left: 1165px)
+    // Position popup below button (same as other header popups)
+    const rect = button.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.top = `${rect.bottom + 8}px`;
+    popup.style.right = `${window.innerWidth - rect.right}px`;
+    popup.style.width = '500px'; // Fixed width like chat schedule popup
 
     // Render initial content
     this.renderGlobalSchedulesContent('pending', '');
@@ -4031,11 +4035,10 @@ class WhatsAppUIOverlay {
       }
     });
 
-    // Calendar button handler (placeholder for now)
+    // Calendar button handler
     const calendarBtn = popup.querySelector('.princhat-view-calendar-btn');
     calendarBtn?.addEventListener('click', () => {
-      console.log('[PrinChat UI] Calendar view - Coming soon!');
-      alert('Funcionalidade de calendário em breve!');
+      this.openScheduleCalendarModal();
     });
 
     // Close on outside click
@@ -4175,10 +4178,11 @@ class WhatsAppUIOverlay {
   /**
    * Build HTML for a global schedule card (shows chat info)
    */
-  private buildGlobalScheduleCardHTML(schedule: Schedule): string {
-    // Get chat name - use stored chatName or extract from chatId as fallback
-    let chatName = schedule.chatName || schedule.chatId.split('@')[0];
-    let chatPhoto = '';
+  private buildGlobalScheduleCardHTML(schedule: Schedule, chatName?: string, chatPhoto?: string): string {
+    // Use provided values or defaults
+    const displayName = chatName || schedule.chatName || schedule.chatId.split('@')[0];
+    const displayPhoto = chatPhoto || '';
+
 
     // Always fetch chat info to get real name and photo
     console.log('[PrinChat UI] Fetching chat info for', schedule.chatId, 'scheduleId:', schedule.id);
@@ -4263,10 +4267,10 @@ class WhatsAppUIOverlay {
       : (item as Script)?.name;
 
     // Photo HTML - use actual contact photo or placeholder
-    let photoHtml = `<div class="princhat-script-card-photo-placeholder">${chatName ? chatName.charAt(0).toUpperCase() : 'A'}</div>`;
+    let photoHtml = `<div class="princhat-script-card-photo-placeholder">${displayName ? displayName.charAt(0).toUpperCase() : 'A'}</div>`;
 
     // Asynchronously load chat photo if chatPhoto not already provided
-    if (!chatPhoto) {
+    if (!displayPhoto) {
       console.log('[PrinChat UI] Loading photo for chatId:', schedule.chatId, 'scheduleId:', schedule.id);
       this.requestFromContentScript({ type: 'GET_CHAT_PHOTO', payload: { chatId: schedule.chatId } })
         .then((response) => {
@@ -4449,6 +4453,358 @@ class WhatsAppUIOverlay {
   }
 
   /**
+   * Open custom schedule calendar modal
+   */
+  private async openScheduleCalendarModal() {
+    console.log('[PrinChat Calendar] Opening calendar modal');
+
+    const response = await this.requestFromContentScript({ type: 'GET_ALL_SCHEDULES' });
+    let allSchedules: Schedule[] = response?.success ? (response.data || []) : [];
+    let selectedDate = new Date();
+    let viewMonth = selectedDate.getMonth();
+    let viewYear = selectedDate.getFullYear();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'princhat-calendar-modal-overlay';
+
+    const modal = document.createElement('div');
+    modal.className = 'princhat-calendar-modal';
+
+    const renderCalendar = async () => {
+      const freshResponse = await this.requestFromContentScript({ type: 'GET_ALL_SCHEDULES' });
+      allSchedules = freshResponse?.success ? (freshResponse.data || []) : [];
+
+      const currentDate = new Date();
+      const currentYear = currentDate.getFullYear();
+      const currentMonth = currentDate.getMonth();
+      const currentDay = currentDate.getDate();
+
+      const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+        'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+
+      modal.innerHTML = `
+        <div class="princhat-calendar-header">
+          <div class="princhat-calendar-header-main">
+            <div class="princhat-calendar-title-section">
+              <h2 class="princhat-calendar-title">Central de Agendamentos - ${monthNames[viewMonth]}</h2>
+              <p class="princhat-calendar-subtitle">Visualize e gerencie seus envios programados</p>
+            </div>
+            <button class="princhat-calendar-close-btn"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+          </div>
+          <div class="princhat-calendar-search-bar">
+            <input type="text" class="princhat-calendar-search-input" placeholder="Pesquisar por contato ou conteúdo...">
+            <button class="princhat-calendar-cancel-day-btn">Cancelar agendamentos do dia</button>
+          </div>
+        </div>
+        
+        <div class="princhat-calendar-body">
+          <div class="princhat-calendar-left">
+            <div class="princhat-calendar-nav">
+              <button class="princhat-calendar-prev-month">&lt;</button>
+              <span class="princhat-calendar-month-year">${monthNames[viewMonth]} ${viewYear}</span>
+              <button class="princhat-calendar-next-month">&gt;</button>
+            </div>
+            <div class="princhat-calendar-weekdays">
+              <div>Dom</div><div>Seg</div><div>Ter</div><div>Qua</div><div>Qui</div><div>Sex</div><div>Sáb</div>
+            </div>
+            <div class="princhat-calendar-grid">
+              <div class="princhat-calendar-days">
+                ${this.buildCalendarGrid(viewYear, viewMonth, selectedDate, currentYear, currentMonth, currentDay, allSchedules)}
+              </div>
+            </div>
+          </div>
+          
+          <div class="princhat-calendar-right">
+            <div class="princhat-calendar-day-header">
+              <h3 class="princhat-calendar-day-title">${selectedDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })}</h3>
+            </div>
+            <div class="princhat-calendar-schedules-list">
+              ${await this.buildDaySchedulesHTML(selectedDate, allSchedules)}
+            </div>
+          </div>
+        </div>
+      `;
+
+      const closeBtn = modal.querySelector('.princhat-calendar-close-btn');
+      closeBtn?.addEventListener('click', () => {
+        overlay.remove();
+      });
+
+      const prevBtn = modal.querySelector('.princhat-calendar-prev-month');
+      prevBtn?.addEventListener('click', () => {
+        viewMonth--;
+        if (viewMonth < 0) {
+          viewMonth = 11;
+          viewYear--;
+        }
+        renderCalendar();
+      });
+
+      const nextBtn = modal.querySelector('.princhat-calendar-next-month');
+      nextBtn?.addEventListener('click', () => {
+        viewMonth++;
+        if (viewMonth > 11) {
+          viewMonth = 0;
+          viewYear++;
+        }
+        renderCalendar();
+      });
+
+      const dayCells = modal.querySelectorAll('.princhat-calendar-day:not(.other-month)');
+      dayCells.forEach(cell => {
+        cell.addEventListener('click', async () => {
+          const day = parseInt((cell as HTMLElement).dataset.day || '0');
+          selectedDate = new Date(viewYear, viewMonth, day);
+          renderCalendar();
+        });
+      });
+
+      const cancelDayBtn = modal.querySelector('.princhat-calendar-cancel-day-btn');
+      cancelDayBtn?.addEventListener('click', async () => {
+        await this.cancelDaySchedules(selectedDate, allSchedules, renderCalendar);
+      });
+    };
+
+    await renderCalendar();
+
+    modal.addEventListener('click', async (e) => {
+      const target = e.target as HTMLElement;
+      const button = target.closest('[data-action]') as HTMLElement;
+
+      if (!button) return;
+
+      const action = button.dataset.action;
+      const scheduleId = button.dataset.scheduleId;
+
+      if (!scheduleId || !action) return;
+
+      const schedule = allSchedules.find(s => s.id === scheduleId);
+      if (!schedule) return;
+
+      if (action === 'pause' || action === 'resume') {
+        const newStatus = schedule.status === 'paused' ? 'pending' : 'paused';
+        await this.requestFromContentScript({
+          type: 'UPDATE_SCHEDULE_STATUS',
+          payload: { scheduleId, status: newStatus }
+        });
+        await renderCalendar();
+
+      } else if (action === 'edit') {
+        this.openScheduleCreationModal(schedule);
+        const checkModalClosed = setInterval(() => {
+          if (!this.scheduleCreationModal) {
+            clearInterval(checkModalClosed);
+            renderCalendar();
+          }
+        }, 300);
+
+      } else if (action === 'delete') {
+        if (confirm('Tem certeza que deseja cancelar este agendamento?')) {
+          await this.requestFromContentScript({
+            type: 'DELETE_SCHEDULE',
+            payload: { scheduleId }
+          });
+          await renderCalendar();
+        }
+      }
+    });
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        overlay.remove();
+      }
+    });
+
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        overlay.remove();
+        document.removeEventListener('keydown', handleEsc);
+      }
+    };
+    document.addEventListener('keydown', handleEsc);
+  }
+
+  private buildCalendarGrid(year: number, month: number, selectedDate: Date, currentYear: number, currentMonth: number, currentDay: number, schedules: Schedule[]): string {
+    const firstDay = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const daysInPrevMonth = new Date(year, month, 0).getDate();
+
+    let daysHTML = '';
+
+    for (let i = firstDay - 1; i >= 0; i--) {
+      const day = daysInPrevMonth - i;
+      daysHTML += `<div class="princhat-calendar-day other-month"><span class="princhat-calendar-day-number">${day}</span></div>`;
+    }
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const isToday = year === currentYear && month === currentMonth && day === currentDay;
+      const isSelected = year === selectedDate.getFullYear() && month === selectedDate.getMonth() && day === selectedDate.getDate();
+
+      const daySchedules = schedules.filter(s => {
+        const scheduleDate = new Date(s.scheduledTime);
+        return scheduleDate.getFullYear() === year &&
+          scheduleDate.getMonth() === month &&
+          scheduleDate.getDate() === day;
+      });
+
+      const hasSchedules = daySchedules.length > 0;
+      const classes = ['princhat-calendar-day'];
+      if (isToday) classes.push('today');
+      if (isSelected) classes.push('selected');
+      if (hasSchedules) classes.push('has-schedules');
+
+      daysHTML += `
+        <div class="${classes.join(' ')}" data-day="${day}">
+          <span class="princhat-calendar-day-number">${day}</span>
+          ${hasSchedules ? `<div class="princhat-calendar-badge">${daySchedules.length}</div>` : ''}
+        </div>
+      `;
+    }
+
+    const totalCells = firstDay + daysInMonth;
+    const remainingCells = totalCells <= 35 ? 35 - totalCells : 42 - totalCells;
+    for (let day = 1; day <= remainingCells; day++) {
+      daysHTML += `<div class="princhat-calendar-day other-month"><span class="princhat-calendar-day-number">${day}</span></div>`;
+    }
+
+    return daysHTML;
+  }
+
+  private async buildDaySchedulesHTML(date: Date, schedules: Schedule[]): Promise<string> {
+    const daySchedules = schedules.filter(s => {
+      const scheduleDate = new Date(s.scheduledTime);
+      return scheduleDate.getFullYear() === date.getFullYear() &&
+        scheduleDate.getMonth() === date.getMonth() &&
+        scheduleDate.getDate() === date.getDate();
+    });
+
+    if (daySchedules.length === 0) {
+      return '<div class="princhat-calendar-empty">Nenhum agendamento neste dia</div>';
+    }
+
+    daySchedules.sort((a, b) => a.scheduledTime - b.scheduledTime);
+
+    const buildCardsWithChatInfo = async (schedulesList: Schedule[]): Promise<string> => {
+      const cards = await Promise.all(schedulesList.map(async (s) => {
+        const chatInfo = await this.requestFromContentScript({
+          type: 'GET_CHAT_INFO',
+          payload: { chatId: s.chatId }
+        });
+
+        const chatName = chatInfo?.data?.chatName || chatInfo?.name || s.chatId;
+        const chatPhoto = chatInfo?.data?.chatPhoto || chatInfo?.photo || '';
+
+        return this.buildGlobalScheduleCardHTML(s, chatName, chatPhoto);
+      }));
+
+      return cards.join('');
+    };
+
+    const pending = daySchedules.filter(s => s.status === 'pending');
+    const paused = daySchedules.filter(s => s.status === 'paused');
+    const completed = daySchedules.filter(s => s.status === 'completed');
+    const failed = daySchedules.filter(s => s.status === 'failed');
+    const cancelled = daySchedules.filter(s => s.status === 'cancelled');
+
+    let html = '';
+
+    if (pending.length > 0) {
+      html += `
+        <div class="princhat-calendar-section">
+          <div class="princhat-calendar-section-header">
+            <span class="princhat-calendar-section-title">PENDENTES</span>
+            <span class="princhat-calendar-section-count">${pending.length}</span>
+          </div>
+          ${await buildCardsWithChatInfo(pending)}
+        </div>
+      `;
+    }
+
+    if (paused.length > 0) {
+      html += `
+        <div class="princhat-calendar-section">
+          <div class="princhat-calendar-section-header">
+            <span class="princhat-calendar-section-title">PAUSADOS</span>
+            <span class="princhat-calendar-section-count">${paused.length}</span>
+          </div>
+          ${await buildCardsWithChatInfo(paused)}
+        </div>
+      `;
+    }
+
+    if (completed.length > 0) {
+      html += `
+        <div class="princhat-calendar-section">
+          <div class="princhat-calendar-section-header">
+            <span class="princhat-calendar-section-title">ENVIADOS</span>
+            <span class="princhat-calendar-section-count">${completed.length}</span>
+          </div>
+          ${await buildCardsWithChatInfo(completed)}
+        </div>
+      `;
+    }
+
+    if (failed.length > 0) {
+      html += `
+        <div class="princhat-calendar-section">
+          <div class="princhat-calendar-section-header">
+            <span class="princhat-calendar-section-title">FALHADOS</span>
+            <span class="princhat-calendar-section-count">${failed.length}</span>
+          </div>
+          ${await buildCardsWithChatInfo(failed)}
+        </div>
+      `;
+    }
+
+    if (cancelled.length > 0) {
+      html += `
+        <div class="princhat-calendar-section">
+          <div class="princhat-calendar-section-header">
+            <span class="princhat-calendar-section-title">CANCELADOS</span>
+            <span class="princhat-calendar-section-count">${cancelled.length}</span>
+          </div>
+          ${await buildCardsWithChatInfo(cancelled)}
+        </div>
+      `;
+    }
+
+    return html;
+  }
+
+  private async cancelDaySchedules(date: Date, allSchedules: Schedule[], reRenderCallback: () => void) {
+    const formattedDate = date.toLocaleDateString('pt-BR');
+
+    const daySchedules = allSchedules.filter(s => {
+      const scheduleDate = new Date(s.scheduledTime);
+      return scheduleDate.getFullYear() === date.getFullYear() &&
+        scheduleDate.getMonth() === date.getMonth() &&
+        scheduleDate.getDate() === date.getDate() &&
+        (s.status === 'pending' || s.status === 'paused');
+    });
+
+    if (daySchedules.length === 0) {
+      alert('Não há agendamentos pendentes ou pausados neste dia.');
+      return;
+    }
+
+    const confirmMsg = `Tem certeza que deseja cancelar ${daySchedules.length} agendamento(s) do dia ${formattedDate}?`;
+    if (!confirm(confirmMsg)) return;
+
+    for (const schedule of daySchedules) {
+      await this.requestFromContentScript({
+        type: 'DELETE_SCHEDULE',
+        payload: { scheduleId: schedule.id }
+      });
+    }
+
+    reRenderCallback();
+  }
+
+
+  /**
    * Open schedule creation modal
    * @param scheduleToEdit Optional schedule to edit (opens in edit mode if provided)
    */
@@ -4474,7 +4830,10 @@ class WhatsAppUIOverlay {
     // Initialize date/time from schedule or default to +1 hour
     if (isEditMode && scheduleToEdit) {
       const scheduleDate = new Date(scheduleToEdit.scheduledTime);
-      state.date = scheduleDate.toISOString().split('T')[0];
+      const year = scheduleDate.getFullYear();
+      const month = String(scheduleDate.getMonth() + 1).padStart(2, '0');
+      const day = String(scheduleDate.getDate()).padStart(2, '0');
+      state.date = `${year}-${month}-${day}`;
       state.time = `${String(scheduleDate.getHours()).padStart(2, '0')}:${String(scheduleDate.getMinutes()).padStart(2, '0')}`;
     } else {
       const now = new Date();
