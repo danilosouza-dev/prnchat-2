@@ -108,6 +108,7 @@ class WhatsAppUIOverlay {
   private scheduleListPopup: HTMLElement | null = null; // Schedule list popup
   private scheduleCreationModal: HTMLElement | null = null; // Schedule creation modal
   private scheduleDeleteConfirmationModal: HTMLElement | null = null; // Schedule delete confirmation modal
+  private notesPopup: HTMLElement | null = null; // Notes popup
   private tooltip: HTMLElement | null = null;
   private scripts: Script[] = [];
   private messages: Message[] = [];
@@ -212,6 +213,11 @@ class WhatsAppUIOverlay {
       console.log('[PrinChat UI] Step 12: Injecting schedule button...');
       this.injectScheduleButton();
       console.log('[PrinChat UI] ✓ Schedule button injected');
+
+      // Inject notes button into chat header
+      console.log('[PrinChat UI] Step 12.1: Injecting notes button...');
+      this.injectNotesButton();
+      console.log('[PrinChat UI] ✓ Notes button injected');
 
       // Monitor chat header changes
       console.log('[PrinChat UI] Step 13: Setting up chat header monitor...');
@@ -3584,6 +3590,99 @@ class WhatsAppUIOverlay {
         }
       });
     }, 1000); // Update every second
+  }
+
+  /**
+   * Toggle notes popup
+   */
+  private async toggleNotesPopup(button: HTMLElement) {
+    if (this.notesPopup) {
+      this.notesPopup.remove();
+      this.notesPopup = null;
+      return;
+    }
+
+    const popup = document.createElement('div');
+    popup.className = 'princhat-notes-popup';
+    this.notesPopup = popup;
+
+    // Get active chat ID and info
+    // const chatId = await this.getActiveChatId() || ''; // TODO: Will be used for notes storage
+
+    let chatPhoto = '';
+    let chatName = 'Chat';
+    try {
+      const chatResponse = await this.requestFromContentScript({ type: 'GET_ACTIVE_CHAT' });
+      chatPhoto = chatResponse?.data?.chatPhoto || '';
+      chatName = chatResponse?.data?.chatName || chatResponse?.data?.name || 'Chat';
+    } catch (e) {
+      console.log('[PrinChat UI] Could not get chat info:', e);
+    }
+
+    // TODO: Load notes from storage
+    const notes: any[] = []; // Placeholder
+
+    // Build popup HTML
+    popup.innerHTML = `
+      <div class="princhat-popup-header">
+        <div class="princhat-popup-header-content">
+          ${chatPhoto ? `<img src="${chatPhoto}" alt="" class="princhat-popup-chat-photo">` : '<div class="princhat-popup-chat-photo-placeholder">' + chatName.charAt(0).toUpperCase() + '</div>'}
+          <div>
+            <div class="princhat-popup-title">Notas - ${chatName}</div>
+            <div class="princhat-popup-subtitle">Anotações e observações do contato</div>
+          </div>
+        </div>
+        <button class="princhat-popup-close-btn" title="Fechar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="princhat-notes-content">
+        ${notes.length === 0 ? `
+          <div class="princhat-notes-empty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
+              <path d="M2 6h4"/>
+              <path d="M2 10h4"/>
+              <path d="M2 14h4"/>
+              <path d="M2 18h4"/>
+              <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>
+            </svg>
+            <p>Nenhuma nota criada</p>
+            <span>Clique em "Nova Nota" para adicionar</span>
+          </div>
+        ` : '<!-- Notes list will go here -->'}
+      </div>
+      <div class="princhat-notes-footer">
+        <button class="princhat-notes-new-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+          Nova Nota
+        </button>
+      </div>
+    `;
+
+    // Position popup
+    const rect = button.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.top = `${rect.bottom + 8}px`;
+    popup.style.right = `${window.innerWidth - rect.right}px`;
+    document.body.appendChild(popup);
+
+    // Event listeners
+    const closeBtn = popup.querySelector('.princhat-popup-close-btn');
+    closeBtn?.addEventListener('click', () => {
+      popup.remove();
+      this.notesPopup = null;
+    });
+
+    const newNoteBtn = popup.querySelector('.princhat-notes-new-btn');
+    newNoteBtn?.addEventListener('click', () => {
+      console.log('[PrinChat UI] New note button clicked - TODO: Open note modal');
+      // TODO: Open note creation modal
+    });
   }
 
   /**
@@ -7158,6 +7257,7 @@ class WhatsAppUIOverlay {
       setTimeout(() => {
         console.log('[PrinChat UI] Attempting to inject schedule button after chat change...');
         this.injectScheduleButton();
+        this.injectNotesButton();
       }, 500); // Wait for DOM to stabilize
     } else if (!currentChatElement && this.lastKnownChatElement) {
       // Chat closed
@@ -7635,6 +7735,67 @@ class WhatsAppUIOverlay {
       this.updateScheduleButton();
     } catch (error: any) {
       console.error('[PrinChat UI] Error injecting schedule button:', error?.message || error);
+    }
+  }
+
+  /**
+   * Inject notes button into WhatsApp chat header
+   */
+  private injectNotesButton() {
+    try {
+      // Find chat header
+      const chatHeader = document.querySelector('#main > header');
+      if (!chatHeader) {
+        console.log('[PrinChat UI] Chat header not found for notes button');
+        return;
+      }
+
+      // Check if button already exists
+      if (chatHeader.querySelector('.princhat-notes-button')) {
+        console.log('[PrinChat UI] Notes button already exists');
+        return;
+      }
+
+      // Find the actions container
+      const actionsContainer = chatHeader.querySelector('div.x78zum5.x6s0dn4.x1afcbsf.x14ug900');
+      if (!actionsContainer) {
+        console.log('[PrinChat UI] Actions container not found for notes button');
+        return;
+      }
+
+      // Create notes button
+      const notesButton = document.createElement('button');
+      notesButton.className = 'princhat-notes-button';
+      notesButton.title = 'Notas do contato';
+      notesButton.innerHTML = `
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
+          <path d="M2 6h4"/>
+          <path d="M2 10h4"/>
+          <path d="M2 14h4"/>
+          <path d="M2 18h4"/>
+          <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>
+        </svg>
+      `;
+
+      // Add click event (placeholder for now)
+      notesButton.addEventListener('click', (e) => {
+        e.stopPropagation();
+        console.log('[PrinChat UI] Notes button clicked');
+        this.toggleNotesPopup(notesButton);
+      });
+
+      // Insert button next to schedule button (or at beginning if schedule button doesn't exist)
+      const scheduleButton = actionsContainer.querySelector('.princhat-schedule-button');
+      if (scheduleButton && scheduleButton.nextSibling) {
+        actionsContainer.insertBefore(notesButton, scheduleButton.nextSibling);
+      } else {
+        actionsContainer.insertBefore(notesButton, actionsContainer.firstChild);
+      }
+
+      console.log('[PrinChat UI] ✅ Notes button injected successfully');
+    } catch (error: any) {
+      console.error('[PrinChat UI] Error injecting notes button:', error?.message || error);
     }
   }
 
