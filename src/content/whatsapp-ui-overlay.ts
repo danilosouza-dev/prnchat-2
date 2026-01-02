@@ -3184,6 +3184,36 @@ class WhatsAppUIOverlay {
   }
 
   /**
+   * Close all header global popups (except messages)
+   */
+  private closeHeaderPopups() {
+    if (this.executionsPopup) {
+      this.executionsPopup.remove();
+      this.executionsPopup = null;
+    }
+    if (this.directChatPopup) {
+      this.directChatPopup.remove();
+      this.directChatPopup = null;
+    }
+    if (this.profileDropdown) {
+      this.profileDropdown.remove();
+      this.profileDropdown = null;
+    }
+    if (this.helpPopup) {
+      this.helpPopup.remove();
+      this.helpPopup = null;
+    }
+    if (this.subscriptionPopup) {
+      this.subscriptionPopup.remove();
+      this.subscriptionPopup = null;
+    }
+    if (this.globalSchedulesPopup) {
+      this.globalSchedulesPopup.remove();
+      this.globalSchedulesPopup = null;
+    }
+  }
+
+  /**
    * Toggle schedule list popup
    */
   private async toggleScheduleListPopup(button: HTMLElement) {
@@ -3192,6 +3222,15 @@ class WhatsAppUIOverlay {
       this.scheduleListPopup = null;
       return;
     }
+
+    // Close notes popup if open
+    if (this.notesPopup) {
+      this.notesPopup.remove();
+      this.notesPopup = null;
+    }
+
+    // Close header global popups
+    this.closeHeaderPopups();
 
     const popup = document.createElement('div');
     popup.className = 'princhat-schedule-list-popup';
@@ -3602,6 +3641,15 @@ class WhatsAppUIOverlay {
       return;
     }
 
+    // Close schedule popup if open
+    if (this.scheduleListPopup) {
+      this.scheduleListPopup.remove();
+      this.scheduleListPopup = null;
+    }
+
+    // Close header global popups
+    this.closeHeaderPopups();
+
     const popup = document.createElement('div');
     popup.className = 'princhat-notes-popup';
     this.notesPopup = popup;
@@ -3672,10 +3720,15 @@ class WhatsAppUIOverlay {
     document.body.appendChild(popup);
 
     // Event listeners
+    let handleClickOutside: ((event: MouseEvent) => void) | null = null;
+
     const closeBtn = popup.querySelector('.princhat-popup-close-btn');
     closeBtn?.addEventListener('click', () => {
       popup.remove();
       this.notesPopup = null;
+      if (handleClickOutside) {
+        document.removeEventListener('click', handleClickOutside);
+      }
     });
 
     const newNoteBtn = popup.querySelector('.princhat-notes-new-btn');
@@ -3683,6 +3736,20 @@ class WhatsAppUIOverlay {
       console.log('[PrinChat UI] New note button clicked - TODO: Open note modal');
       // TODO: Open note creation modal
     });
+
+    // Close popup when clicking outside
+    handleClickOutside = (event: MouseEvent) => {
+      if (this.notesPopup && !this.notesPopup.contains(event.target as Node)) {
+        this.notesPopup.remove();
+        this.notesPopup = null;
+        document.removeEventListener('click', handleClickOutside!);
+      }
+    };
+
+    // Add listener after a small delay to avoid immediate closure from the button click
+    setTimeout(() => {
+      document.addEventListener('click', handleClickOutside!);
+    }, 100);
   }
 
   /**
