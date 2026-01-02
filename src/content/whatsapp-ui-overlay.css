@@ -2113,6 +2113,7 @@ button.princhat-script-btn-icon[data-action="delete"] {
   z-index: 1;
   width: 12px;
   height: 12px;
+  pointer-events: none;
 }
 
 /* Larger icon for resume/play button */
