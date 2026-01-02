@@ -3640,10 +3640,14 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
   color: #fff;
   font-size: 10px;
   font-weight: 600;
-  padding: 2px 5px;
-  border-radius: 10px;
-  min-width: 16px;
-  text-align: center;
+  padding: 0 4px;
+  border-radius: 99px;
+  min-width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
 }
 
 .princhat-calendar-right {

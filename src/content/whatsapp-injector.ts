@@ -1908,7 +1908,7 @@
 
     async getChatInfo(chatId: string): Promise<any> {
       return new Promise((resolve) => {
-        const requestId = `chat-info-${Date.now()}`;
+        const requestId = `chat-info-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
         const timeout = setTimeout(() => {
           resolve({ success: false, error: 'Timeout' });
         }, 3000);
