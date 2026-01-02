@@ -5371,7 +5371,7 @@ class WhatsAppUIOverlay {
         if ((tag as HTMLElement).dataset.reset !== undefined) {
           const defaultTime = new Date();
           defaultTime.setHours(defaultTime.getHours() + 1, 0, 0, 0);
-          state.date = defaultTime.toISOString().split('T')[0];
+          state.date = `${defaultTime.getFullYear()}-${String(defaultTime.getMonth() + 1).padStart(2, '0')}-${String(defaultTime.getDate()).padStart(2, '0')}`;
           state.time = `${String(defaultTime.getHours()).padStart(2, '0')}:00`;
         } else {
           const current = new Date(`${state.date}T${state.time}`);
@@ -5381,7 +5381,7 @@ class WhatsAppUIOverlay {
           if (addMin) current.setMinutes(current.getMinutes() + parseInt(addMin));
           if (addDays) current.setDate(current.getDate() + parseInt(addDays));
 
-          state.date = current.toISOString().split('T')[0];
+          state.date = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}-${String(current.getDate()).padStart(2, '0')}`;
           state.time = `${String(current.getHours()).padStart(2, '0')}:${String(current.getMinutes()).padStart(2, '0')}`;
         }
 
