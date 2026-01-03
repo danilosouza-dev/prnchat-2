@@ -650,14 +650,14 @@ const App: React.FC = () => {
 
           {!isFloating && (
             <button
-              className="icon-btn"
+              className="princhat-popup-close-btn"
               onClick={() => {
                 // Close popup by sending message to parent
                 window.parent.postMessage({ type: 'PRINCHAT_CLOSE_POPUP' }, '*');
               }}
               title="Fechar"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M18 6L6 18M6 6l12 12" />
               </svg>
             </button>

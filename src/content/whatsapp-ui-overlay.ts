@@ -3355,11 +3355,17 @@ class WhatsAppUIOverlay {
     }
 
     popup.innerHTML = `
-      <div class="princhat-schedule-list-header">
-        <h3>Lista de agendamentos</h3>
-        <button class="princhat-popup-close-btn">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+      <div class="princhat-popup-header">
+        <div class="princhat-popup-header-content">
+          ${chatPhoto ? `<img src="${chatPhoto}" alt="" class="princhat-popup-chat-photo">` : '<div class="princhat-popup-chat-photo-placeholder">' + chatName.charAt(0).toUpperCase() + '</div>'}
+          <div>
+            <div class="princhat-popup-title">Agendamentos - ${chatName}</div>
+            <div class="princhat-popup-subtitle">Agendamentos de mensagens e scripts</div>
+          </div>
+        </div>
+        <button class="princhat-popup-close-btn" title="Fechar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6L6 18M6 6l12 12"/>
           </svg>
         </button>
       </div>
