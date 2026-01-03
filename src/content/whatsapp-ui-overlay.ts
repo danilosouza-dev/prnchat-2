@@ -109,6 +109,7 @@ class WhatsAppUIOverlay {
   private scheduleCreationModal: HTMLElement | null = null; // Schedule creation modal
   private scheduleDeleteConfirmationModal: HTMLElement | null = null; // Schedule delete confirmation modal
   private notesPopup: HTMLElement | null = null; // Notes popup
+  private noteEditorModal: HTMLElement | null = null; // Note editor modal
   private tooltip: HTMLElement | null = null;
   private scripts: Script[] = [];
   private messages: Message[] = [];
@@ -3661,7 +3662,7 @@ class WhatsAppUIOverlay {
     this.notesPopup = popup;
 
     // Get active chat ID and info
-    // const chatId = await this.getActiveChatId() || ''; // TODO: Will be used for notes storage
+    const chatId = await this.getActiveChatId() || '';
 
     let chatPhoto = '';
     let chatName = 'Chat';
@@ -3738,9 +3739,9 @@ class WhatsAppUIOverlay {
     });
 
     const newNoteBtn = popup.querySelector('.princhat-notes-new-btn');
-    newNoteBtn?.addEventListener('click', () => {
-      console.log('[PrinChat UI] New note button clicked - TODO: Open note modal');
-      // TODO: Open note creation modal
+    newNoteBtn?.addEventListener('click', async () => {
+      console.log('[PrinChat UI] Opening note editor modal');
+      await this.openNoteEditorModal(chatId, chatName, chatPhoto);
     });
 
     // Close popup when clicking outside
@@ -3756,6 +3757,130 @@ class WhatsAppUIOverlay {
     setTimeout(() => {
       document.addEventListener('click', handleClickOutside!);
     }, 100);
+  }
+
+  /**
+   * Open note editor modal (for create or edit note)
+   */
+  private async openNoteEditorModal(chatId: string, chatName: string, chatPhoto?: string, existingNote?: any) {
+    // Close existing modal if open
+    if (this.noteEditorModal) {
+      this.noteEditorModal.remove();
+      this.noteEditorModal = null;
+    }
+
+    const modal = document.createElement('div');
+    modal.className = 'princhat-note-editor-modal';
+    this.noteEditorModal = modal;
+
+    const isEditing = !!existingNote;
+    const title = isEditing ? 'Editar Nota' : 'Nova Nota';
+
+    modal.innerHTML = `
+      <div class="princhat-note-modal-backdrop"></div>
+      <div class="princhat-note-modal-container">
+        <div class="princhat-note-modal-header">
+          <div class="princhat-note-modal-chat-info">
+            ${chatPhoto ? `<img src="${chatPhoto}" alt="" class="princhat-note-modal-chat-photo">` : `<div class="princhat-note-modal-chat-photo-placeholder">${chatName.charAt(0).toUpperCase()}</div>`}
+            <div>
+              <div class="princhat-note-modal-title">${title}</div>
+              <div class="princhat-note-modal-subtitle">${chatName}</div>
+            </div>
+          </div>
+          <button class="princhat-popup-close-btn princhat-note-modal-close" title="Fechar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        <div class="princhat-note-modal-title-input">
+          <input 
+            type="text" 
+            class="princhat-note-title-field" 
+            placeholder="Título da nota"
+            value="${existingNote?.title || ''}"
+            autofocus
+          />
+        </div>
+        <div class="princhat-note-modal-editor">
+          <textarea 
+            class="princhat-note-editor-textarea" 
+            placeholder="Digite sua nota aqui..."
+            autofocus
+          >${existingNote?.content || ''}</textarea>
+        </div>
+        <div class="princhat-note-modal-footer">
+          <button class="princhat-note-modal-cancel-btn">Cancelar</button>
+          <button class="princhat-note-modal-save-btn">Salvar</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // Event listeners
+    const closeBtn = modal.querySelector('.princhat-note-modal-close');
+    const cancelBtn = modal.querySelector('.princhat-note-modal-cancel-btn');
+    const saveBtn = modal.querySelector('.princhat-note-modal-save-btn');
+    const backdrop = modal.querySelector('.princhat-note-modal-backdrop');
+    const titleInput = modal.querySelector('.princhat-note-title-field') as HTMLInputElement;
+    const textarea = modal.querySelector('.princhat-note-editor-textarea') as HTMLTextAreaElement;
+
+    const closeModal = () => {
+      modal.remove();
+      this.noteEditorModal = null;
+    };
+
+    closeBtn?.addEventListener('click', closeModal);
+    cancelBtn?.addEventListener('click', closeModal);
+    backdrop?.addEventListener('click', closeModal);
+
+    saveBtn?.addEventListener('click', async () => {
+      const title = titleInput?.value.trim();
+      const content = textarea?.value.trim();
+
+      if (!title) {
+        alert('O título da nota não pode estar vazio');
+        titleInput?.focus();
+        return;
+      }
+
+      if (!content) {
+        alert('O conteúdo da nota não pode estar vazio');
+        textarea?.focus();
+        return;
+      }
+
+      try {
+        if (isEditing) {
+          // Update existing note
+          await this.requestFromContentScript({
+            type: 'UPDATE_NOTE',
+            payload: { id: existingNote.id, title, content }
+          });
+          console.log('[PrinChat UI] Note updated successfully');
+        } else {
+          // Create new note
+          await this.requestFromContentScript({
+            type: 'CREATE_NOTE',
+            payload: {
+              chatId,
+              chatName,
+              chatPhoto,
+              title,
+              content,
+            }
+          });
+          console.log('[PrinChat UI] Note created successfully');
+        }
+
+        closeModal();
+        // TODO: Refresh notes list in popup
+      } catch (error) {
+        console.error('[PrinChat UI] Error saving note:', error);
+        alert('Erro ao salvar nota');
+      }
+    });
   }
 
   /**

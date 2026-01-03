@@ -4,7 +4,7 @@
  */
 
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
-import type { Message, Script, Trigger, Tag, Folder, Settings, Signature, Schedule } from '@/types';
+import type { Message, Script, Trigger, Tag, Folder, Settings, Signature, Schedule, Note } from '@/types';
 
 interface PrinChatDB extends DBSchema {
   messages: {
@@ -65,12 +65,17 @@ interface PrinChatDB extends DBSchema {
     value: Schedule;
     indexes: { 'by-chatId': string; 'by-status': string; 'by-scheduledTime': number };
   };
+  notes: {
+    key: string;
+    value: Note;
+    indexes: { 'by-chatId': string; 'by-created': number };
+  };
 }
 
 class DatabaseService {
   private db: IDBPDatabase<PrinChatDB> | null = null;
   private readonly DB_NAME = 'princhat-db';
-  private readonly DB_VERSION = 6; // Updated to version 6 for schedules support
+  private readonly DB_VERSION = 7; // Updated to version 7 for notes support
 
   async init(): Promise<IDBPDatabase<PrinChatDB>> {
     console.log(`[PrinChat DB] Init called. DB: ${this.DB_NAME} v${this.DB_VERSION}`);
@@ -156,6 +161,13 @@ class DatabaseService {
           scheduleStore.createIndex('by-chatId', 'chatId');
           scheduleStore.createIndex('by-status', 'status');
           scheduleStore.createIndex('by-scheduledTime', 'scheduledTime');
+        }
+
+        // Notes store
+        if (!db.objectStoreNames.contains('notes')) {
+          const notesStore = db.createObjectStore('notes', { keyPath: 'id' });
+          notesStore.createIndex('by-chatId', 'chatId');
+          notesStore.createIndex('by-created', 'createdAt');
         }
       },
     });
@@ -711,6 +723,88 @@ class DatabaseService {
         schedules: Date.now()
       });
     }
+  }
+
+  // ==================== NOTES ====================
+  async createNote(note: Omit<Note, 'id' | 'createdAt' | 'updatedAt'>): Promise<Note> {
+    const db = await this.init();
+    const now = Date.now();
+
+    const newNote: Note = {
+      ...note,
+      id: `note_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await db.put('notes', newNote);
+    console.log('[PrinChat DB] Note created:', newNote.id);
+
+    // Trigger chrome.storage change event for real-time updates
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        notes: Date.now()
+      });
+    }
+
+    return newNote;
+  }
+
+  async getNotesByChatId(chatId: string): Promise<Note[]> {
+    const db = await this.init();
+    const notes = await db.getAllFromIndex('notes', 'by-chatId', chatId);
+    // Sort by creation date descending (newest first)
+    return notes.sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  async getNote(id: string): Promise<Note | undefined> {
+    const db = await this.init();
+    return db.get('notes', id);
+  }
+
+  async updateNote(id: string, updates: Partial<Omit<Note, 'id' | 'createdAt'>>): Promise<void> {
+    const db = await this.init();
+    const existingNote = await db.get('notes', id);
+
+    if (!existingNote) {
+      throw new Error(`Note with id ${id} not found`);
+    }
+
+    const updatedNote: Note = {
+      ...existingNote,
+      ...updates,
+      updatedAt: Date.now(),
+    };
+
+    await db.put('notes', updatedNote);
+    console.log('[PrinChat DB] Note updated:', id);
+
+    // Trigger chrome.storage change event for real-time updates
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        notes: Date.now()
+      });
+    }
+  }
+
+  async deleteNote(id: string): Promise<void> {
+    const db = await this.init();
+    await db.delete('notes', id);
+    console.log('[PrinChat DB] Note deleted:', id);
+
+    // Trigger chrome.storage change event for real-time updates
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        notes: Date.now()
+      });
+    }
+  }
+
+  async getAllNotes(): Promise<Note[]> {
+    const db = await this.init();
+    const notes = await db.getAll('notes');
+    // Sort by creation date descending (newest first)
+    return notes.sort((a, b) => b.createdAt - a.createdAt);
   }
 
   // ==================== UTILITY ====================
