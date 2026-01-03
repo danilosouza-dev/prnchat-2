@@ -2740,6 +2740,206 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
   height: 16px;
 }
 
+/* ==================== NOTE EDITOR MODAL ==================== */
+.princhat-note-editor-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 10002;
+  /* Above notes popup */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.princhat-note-modal-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+}
+
+.princhat-note-modal-container {
+  position: relative;
+  width: 700px;
+  max-width: 90vw;
+  max-height: 80vh;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  animation: modalSlideIn 0.2s ease-out;
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.princhat-note-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.princhat-note-modal-chat-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.princhat-note-modal-chat-photo {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.princhat-note-modal-chat-photo-placeholder {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #e91e63 0%, #f06292 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 600;
+  color: #ffffff;
+  flex-shrink: 0;
+}
+
+.princhat-note-modal-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+  margin: 0 0 4px 0;
+}
+
+.princhat-note-modal-subtitle {
+  font-size: 13px;
+  color: #888;
+  margin: 0;
+}
+
+.princhat-note-modal-title-input {
+  padding: 20px 20px 20px 20px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.princhat-note-title-field {
+  width: 100%;
+  background: #0d0d0d;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  padding: 12px 16px;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.princhat-note-title-field:focus {
+  border-color: #e91e63;
+}
+
+.princhat-note-title-field::placeholder {
+  color: #666;
+  font-weight: 400;
+}
+
+.princhat-note-modal-editor {
+  flex: 1;
+  padding: 20px;
+  overflow: hidden;
+  display: flex;
+}
+
+.princhat-note-editor-textarea {
+  width: 100%;
+  height: 100%;
+  min-height: 300px;
+  background: #0d0d0d;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  padding: 16px;
+  color: #fff;
+  font-size: 15px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
+  line-height: 1.6;
+  resize: none;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.princhat-note-editor-textarea:focus {
+  border-color: #e91e63;
+}
+
+.princhat-note-editor-textarea::placeholder {
+  color: #666;
+}
+
+.princhat-note-modal-footer {
+  display: flex;
+  gap: 12px;
+  padding: 20px;
+  border-top: 1px solid #2a2a2a;
+  justify-content: flex-end;
+}
+
+.princhat-note-modal-cancel-btn,
+.princhat-note-modal-save-btn {
+  padding: 10px 24px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.princhat-note-modal-cancel-btn {
+  background: transparent;
+  color: #888;
+  border: 1px solid #2a2a2a;
+}
+
+.princhat-note-modal-cancel-btn:hover {
+  background: #2a2a2a;
+  color: #fff;
+}
+
+.princhat-note-modal-save-btn {
+  background: #e91e63;
+  color: #fff;
+}
+
+.princhat-note-modal-save-btn:hover {
+  background: #c2185b;
+}
+
 
 /* ==================== SCHEDULE LIST POPUP ==================== */
 .princhat-schedule-list-popup {

@@ -97,6 +97,17 @@ export interface Signature {
   updatedAt: number;
 }
 
+export interface Note {
+  id: string;
+  chatId: string;
+  chatName: string;
+  chatPhoto?: string;
+  title: string; // Required title for the note
+  content: string; // HTML content from TipTap editor
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface Schedule {
   id: string;
   chatId: string;
