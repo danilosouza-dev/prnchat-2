@@ -101,6 +101,32 @@ body {
   color: var(--accent-pink);
 }
 
+/* Standardized close button - matches other popups */
+.princhat-popup-close-btn {
+  background: transparent;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.princhat-popup-close-btn:hover {
+  background: #2a2a2a;
+  color: #fff;
+}
+
+.princhat-popup-close-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+
 /* Notification System */
 .notification-wrapper {
   position: relative;
