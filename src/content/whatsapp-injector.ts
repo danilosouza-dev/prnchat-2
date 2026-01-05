@@ -1304,6 +1304,14 @@
         case 'GET_CHAT_INFO':
           return await this.getChatInfo(action.payload?.chatId);
 
+        case 'GET_CHAT_PHOTO':
+          const chatInfo = await this.getChatInfo(action.payload?.chatId);
+          if (chatInfo.success && chatInfo.data) {
+            return { success: true, data: chatInfo.data.chatPhoto };
+          } else {
+            return { success: false, error: chatInfo.error || 'Could not get chat info' };
+          }
+
         case 'SAVE_SCHEDULE':
         case 'GET_SCHEDULES_BY_CHAT':
         case 'DELETE_SCHEDULE':
