@@ -15,11 +15,12 @@ import {
   Pin,
   Move
 } from 'lucide-react';
-import { Message, Script, Folder, MessageType, ScriptExecutionState } from '@/types';
+import { Message, Script, Folder, MessageType, ScriptExecutionState, Note } from '@/types';
 import { db } from '@/storage/db';
 import { getActiveTab, sendMessageToContentScript } from '@/utils/helpers';
 import { needsMigration, migrateTagsToFolders } from '@/utils/migration';
 import ScriptExecutionModal from './components/ScriptExecutionModal';
+import GlobalNotesPopup from './components/GlobalNotesPopup';
 
 type Tab = 'messages' | 'scripts';
 type MediaFilter = 'all' | 'folders' | 'audio' | 'text' | 'image' | 'video' | 'file';
@@ -53,6 +54,8 @@ const App: React.FC = () => {
   const [executionState, setExecutionState] = useState<ScriptExecutionState | null>(null);
   const [expandedScripts, setExpandedScripts] = useState<Set<string>>(new Set());
   const [isPinned, setIsPinned] = useState(false);
+  const [globalNotesOpen, setGlobalNotesOpen] = useState(false);
+  const [totalNotesCount, setTotalNotesCount] = useState(0);
   const filterInputRef = useRef<HTMLInputElement>(null);
   const isInitialized = useRef(false); // Prevent auto-save before restoration
 
@@ -157,6 +160,7 @@ const App: React.FC = () => {
       loadData();
       loadActiveChat();
       loadSettings();
+      loadTotalNotes(); // Load total notes count
     };
 
     initializeApp();
@@ -169,11 +173,18 @@ const App: React.FC = () => {
     // Listen for storage changes to reload data in real-time
     // This is especially important for FAB popup iframe
     const handleStorageChange = (changes: any, areaName: string) => {
-      // Check if messages, scripts, or folders changed
+      // Check if messages, scripts, folders, or notes changed
       if (areaName === 'local' && (changes.messages || changes.scripts || changes.folders)) {
         console.log('[PrinChat] Storage changed, reloading data...');
         loadData();
       }
+
+      // Reload notes count if notes changed
+      if (areaName === 'local' && changes.notes) {
+        console.log('[PrinChat] Notes changed, reloading count...');
+        loadTotalNotes();
+      }
+
 
       // Sync popup state from other popup instance (Header ↔ FAB)
       if (areaName === 'local' && changes.popup_state) {
@@ -278,6 +289,15 @@ const App: React.FC = () => {
       const msg = err?.message || String(err);
       console.error('[PrinChat Popup] Error loading data:', msg);
       setDataError(`Erro ao carregar dados: ${msg}`);
+    }
+  };
+
+  const loadTotalNotes = async () => {
+    try {
+      const notes = await db.getAllNotes();
+      setTotalNotesCount(notes.length);
+    } catch (err) {
+      console.error('[PrinChat Popup] Error loading notes count:', err);
     }
   };
 
@@ -527,6 +547,57 @@ const App: React.FC = () => {
     chrome.runtime.openOptionsPage();
   };
 
+  const toggleGlobalNotesPopup = () => {
+    setGlobalNotesOpen(!globalNotesOpen);
+  };
+
+  const handleViewNote = async (note: Note) => {
+    try {
+      const tab = await getActiveTab();
+      if (!tab?.id) return;
+
+      await sendMessageToContentScript(tab.id, {
+        type: 'OPEN_NOTE_VIEWER',
+        payload: {
+          note,
+          readOnly: true
+        }
+      });
+    } catch (error) {
+      console.error('[App] Error opening note viewer:', error);
+    }
+  };
+
+  const handleEditNote = async (note: Note) => {
+    try {
+      const tab = await getActiveTab();
+      if (!tab?.id) return;
+
+      await sendMessageToContentScript(tab.id, {
+        type: 'OPEN_NOTE_EDITOR',
+        payload: {
+          note
+        }
+      });
+    } catch (error) {
+      console.error('[App] Error opening note editor:', error);
+    }
+  };
+
+  const handleDeleteNote = async (note: Note) => {
+    if (!confirm(`Tem certeza que deseja excluir a nota "${note.title}"?`)) {
+      return;
+    }
+
+    try {
+      await db.deleteNote(note.id);
+      await loadTotalNotes(); // Refresh badge
+    } catch (error) {
+      console.error('[App] Error deleting note:', error);
+      alert('Erro ao excluir nota');
+    }
+  };
+
   // Toggle folder expansion
   const toggleFolderExpansion = (folderId: string) => {
     setExpandedFolders(prev => {
@@ -646,6 +717,15 @@ const App: React.FC = () => {
             title={isFloating ? "Voltar ao Header" : "Usar Botão Flutuante"}
           >
             <Move size={18} />
+          </button>
+
+          <button
+            className="icon-btn"
+            onClick={toggleGlobalNotesPopup}
+            title="Todas as Notas"
+          >
+            <FileText size={18} />
+            {totalNotesCount > 0 && <span className="header-badge">{totalNotesCount}</span>}
           </button>
 
           {!isFloating && (
@@ -1022,6 +1102,16 @@ const App: React.FC = () => {
       />
       {/* DEBUG FOOTER - Remove after fixing */}
       {/* Footer removed */}
+
+      {/* Global Notes Popup */}
+      {globalNotesOpen && (
+        <GlobalNotesPopup
+          onClose={() => setGlobalNotesOpen(false)}
+          onViewNote={handleViewNote}
+          onEditNote={handleEditNote}
+          onDeleteNote={handleDeleteNote}
+        />
+      )}
 
     </div>
   );

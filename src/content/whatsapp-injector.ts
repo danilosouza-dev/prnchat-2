@@ -1311,6 +1311,15 @@
           console.log('[PrinChat] Forwarding schedule operation to background:', action.type);
           return await chrome.runtime.sendMessage(action);
 
+        case 'CREATE_NOTE':
+        case 'UPDATE_NOTE':
+        case 'GET_NOTES_BY_CHAT':
+        case 'GET_NOTE':
+        case 'DELETE_NOTE':
+          // Forward note operations to background service worker
+          console.log('[PrinChat] Forwarding note operation to background:', action.type);
+          return await chrome.runtime.sendMessage(action);
+
         case 'SET_ACTIVE_SIGNATURE':
         case 'TOGGLE_SIGNATURE_ACTIVE':
         case 'DELETE_SIGNATURE':

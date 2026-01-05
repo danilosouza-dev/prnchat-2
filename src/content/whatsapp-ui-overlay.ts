@@ -54,6 +54,17 @@ interface Schedule {
   updatedAt: number;
 }
 
+interface Note {
+  id: string;
+  chatId: string;
+  chatName: string;
+  title: string;
+  content: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+
 // Unused interface - commented out to avoid lint error
 // interface StatusItem {
 //   id: string;
@@ -149,6 +160,9 @@ class WhatsAppUIOverlay {
   private scheduleTimerInterval: NodeJS.Timeout | null = null;
   private globalSchedulesTimerInterval: NodeJS.Timeout | null = null;
   private globalSchedulesData: Schedule[] = [];
+  private globalSchedulesPopup: HTMLElement | null = null; // Global schedules popup
+  private globalNotesPopup: HTMLElement | null = null; // Global notes popup
+
 
   constructor() {
     this.init();
@@ -3675,8 +3689,6 @@ class WhatsAppUIOverlay {
     }
 
     // TODO: Load notes from storage
-    const notes: any[] = []; // Placeholder
-
     // Build popup HTML
     popup.innerHTML = `
       <div class="princhat-popup-header">
@@ -3694,20 +3706,7 @@ class WhatsAppUIOverlay {
         </button>
       </div>
       <div class="princhat-notes-content">
-        ${notes.length === 0 ? `
-          <div class="princhat-notes-empty">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
-              <path d="M2 6h4"/>
-              <path d="M2 10h4"/>
-              <path d="M2 14h4"/>
-              <path d="M2 18h4"/>
-              <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>
-            </svg>
-            <p>Nenhuma nota criada</p>
-            <span>Clique em "Nova Nota" para adicionar</span>
-          </div>
-        ` : '<!-- Notes list will go here -->'}
+        <div class="princhat-notes-list"></div>
       </div>
       <div class="princhat-notes-footer">
         <button class="princhat-notes-new-btn">
@@ -3757,12 +3756,24 @@ class WhatsAppUIOverlay {
     setTimeout(() => {
       document.addEventListener('click', handleClickOutside!);
     }, 100);
+
+    // Load notes for this chat
+    this.refreshNotesList(chatId);
   }
 
   /**
-   * Open note editor modal (for create or edit note)
+   * Open note editor modal  /**
+   * Open note editor modal
    */
-  private async openNoteEditorModal(chatId: string, chatName: string, chatPhoto?: string, existingNote?: any) {
+  private openNoteEditorModal(chatId: string, chatName: string, chatPhoto?: string, existingNote?: any, readOnly: boolean = false) {
+    console.log('[PrinChat UI] Opening note editor modal');
+
+    // Close notes popup
+    if (this.notesPopup) {
+      this.notesPopup.remove();
+      this.notesPopup = null;
+    }
+
     // Close existing modal if open
     if (this.noteEditorModal) {
       this.noteEditorModal.remove();
@@ -3774,9 +3785,39 @@ class WhatsAppUIOverlay {
     this.noteEditorModal = modal;
 
     const isEditing = !!existingNote;
-    const title = isEditing ? 'Editar Nota' : 'Nova Nota';
+    const title = readOnly ? 'Visualizar Nota' : (isEditing ? 'Editar Nota' : 'Nova Nota');
 
-    modal.innerHTML = `
+    // Different layout for read-only view
+    if (readOnly && existingNote) {
+      modal.innerHTML = `
+        <div class="princhat-note-modal-backdrop"></div>
+        <div class="princhat-note-modal-container">
+          <div class="princhat-note-modal-header">
+            <div class="princhat-note-modal-chat-info">
+              ${chatPhoto ? `<img src="${chatPhoto}" alt="" class="princhat-note-modal-chat-photo">` : `<div class="princhat-note-modal-chat-photo-placeholder">${chatName.charAt(0).toUpperCase()}</div>`}
+              <div>
+                <div class="princhat-note-modal-title">${title}</div>
+                <div class="princhat-note-modal-subtitle">${chatName}</div>
+              </div>
+            </div>
+            <button class="princhat-popup-close-btn princhat-note-modal-close" title="Fechar">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 6L6 18M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+          <div class="princhat-note-view-content">
+            <h2 class="princhat-note-view-title">${existingNote.title}</h2>
+            <div class="princhat-note-view-body">${existingNote.content}</div>
+          </div>
+          <div class="princhat-note-modal-footer">
+            <button class="princhat-note-modal-save-btn">Fechar</button>
+          </div>
+        </div>
+      `;
+    } else {
+      // Original editor layout for create/edit
+      modal.innerHTML = `
       <div class="princhat-note-modal-backdrop"></div>
       <div class="princhat-note-modal-container">
         <div class="princhat-note-modal-header">
@@ -3799,32 +3840,502 @@ class WhatsAppUIOverlay {
             class="princhat-note-title-field" 
             placeholder="Título da nota"
             value="${existingNote?.title || ''}"
-            autofocus
+            ${readOnly ? 'readonly' : 'autofocus'}
           />
         </div>
         <div class="princhat-note-modal-editor">
-          <textarea 
-            class="princhat-note-editor-textarea" 
-            placeholder="Digite sua nota aqui..."
-            autofocus
-          >${existingNote?.content || ''}</textarea>
+          <div class="princhat-note-editor-toolbar" ${readOnly ? 'style="display:none"' : ''}>
+            <button type="button" class="toolbar-btn" data-action="bold" title="Negrito (Ctrl+B)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6zM6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/>
+              </svg>
+            </button>
+            <button type="button" class="toolbar-btn" data-action="italic" title="Itálico (Ctrl+I)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/>
+              </svg>
+            </button>
+            <button type="button" class="toolbar-btn" data-action="underline" title="Sublinhado (Ctrl+U)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M6 3v7a6 6 0 0 0 6 6 6 6 0 0 0 6-6V3"/><line x1="4" y1="21" x2="20" y2="21"/>
+              </svg>
+            </button>
+            <button type="button" class="toolbar-btn" data-action="strike" title="Tachado">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M16 4H9a3 3 0 0 0-2.83 4M14 12a4 4 0 0 1 0 8H6"/><line x1="4" y1="12" x2="20" y2="12"/>
+              </svg>
+            </button>
+            <div class="toolbar-separator"></div>
+            <button type="button" class="toolbar-btn" data-action="heading1" title="Título 1">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M4 12h8M4 18V6M12 18V6M17 12h3M19 18V6"/>
+              </svg>
+            </button>
+            <button type="button" class="toolbar-btn" data-action="heading2" title="Título 2">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M4 12h8M4 18V6M12 18V6M15 13h6M18 18c.7-1.5 2-3 3-3s2 1.5 3 3"/>
+              </svg>
+            </button>
+            <div class="toolbar-separator"></div>
+            <button type="button" class="toolbar-btn" data-action="bulletList" title="Lista com marcadores">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+                <circle cx="3" cy="6" r="1.5" fill="currentColor"/><circle cx="3" cy="12" r="1.5" fill="currentColor"/><circle cx="3" cy="18" r="1.5" fill="currentColor"/>
+              </svg>
+            </button>
+            <button type="button" class="toolbar-btn" data-action="orderedList" title="Lista numerada">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/>
+                <path d="M4 6h1v4M4 10h2M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/>
+              </svg>
+            </button>
+            <button type="button" class="toolbar-btn" data-action="taskList" title="Lista de tarefas">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 11l3 3L22 4"/>
+                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+              </svg>
+            </button>
+            <div class="toolbar-separator"></div>
+            <button type="button" class="toolbar-btn" data-action="textColor" title="Cor do texto">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 19.5v-15M5.5 19.5h13"/>
+                <path d="M7 5h10l-3 8h-4z"/>
+              </svg>
+            </button>
+            <div class="toolbar-separator"></div>
+            <button type="button" class="toolbar-btn" data-action="link" title="Inserir link">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+              </svg>
+            </button>
+            <button type="button" class="toolbar-btn" data-action="code" title="Código">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+              </svg>
+            </button>
+          </div>
+          <div class="princhat-note-editor-content" contenteditable="true"></div>
         </div>
         <div class="princhat-note-modal-footer">
-          <button class="princhat-note-modal-cancel-btn">Cancelar</button>
-          <button class="princhat-note-modal-save-btn">Salvar</button>
+          ${readOnly ? '' : '<button class="princhat-note-modal-cancel-btn">Cancelar</button>'}
+          <button class="princhat-note-modal-save-btn">${readOnly ? 'Fechar' : 'Salvar'}</button>
         </div>
       </div>
     `;
+    }
 
     document.body.appendChild(modal);
 
-    // Event listeners
+    // Close handlers
     const closeBtn = modal.querySelector('.princhat-note-modal-close');
-    const cancelBtn = modal.querySelector('.princhat-note-modal-cancel-btn');
     const saveBtn = modal.querySelector('.princhat-note-modal-save-btn');
+    const cancelBtn = modal.querySelector('.princhat-note-modal-cancel-btn');
     const backdrop = modal.querySelector('.princhat-note-modal-backdrop');
+
+    // Simple close for read-only mode
+    if (readOnly) {
+      const closeModal = () => {
+        modal.remove();
+        this.noteEditorModal = null;
+      };
+
+      closeBtn?.addEventListener('click', closeModal);
+      saveBtn?.addEventListener('click', closeModal);
+      backdrop?.addEventListener('click', closeModal);
+      return; // Exit early for read-only
+    }
+
+    // Editor mode logic continues here
     const titleInput = modal.querySelector('.princhat-note-title-field') as HTMLInputElement;
-    const textarea = modal.querySelector('.princhat-note-editor-textarea') as HTMLTextAreaElement;
+    // Get editor content
+    const editorContent = modal.querySelector('.princhat-note-editor-content') as HTMLDivElement;
+    if (!editorContent) return;
+
+    // Set readonly mode
+    if (readOnly) {
+      editorContent.setAttribute('contenteditable', 'false');
+      editorContent.style.cursor = 'default';
+      if (titleInput) {
+        titleInput.style.cursor = 'default';
+      }
+    }
+
+    // Set placeholder and load existing content
+    editorContent.setAttribute('data-placeholder', 'Digite sua nota aqui...');
+    if (existingNote?.content) {
+      editorContent.innerHTML = existingNote.content;
+    }
+
+    // Toolbar buttons event listeners
+    const toolbarButtons = modal.querySelectorAll('.toolbar-btn');
+
+    toolbarButtons.forEach(btn => {
+      // Use mousedown instead of click to prevent losing selection
+      btn.addEventListener('mousedown', (e) => {
+        e.preventDefault(); // Prevent losing focus from contenteditable
+
+        const action = (btn as HTMLElement).dataset.action;
+        if (!action || !editorContent) return;
+
+        try {
+          switch (action) {
+            case 'bold': {
+              const sel = window.getSelection();
+              if (sel && !sel.isCollapsed) {
+                const range = sel.getRangeAt(0);
+
+                // Check if selection is already inside a <strong> tag
+                let parentElement = range.commonAncestorContainer as Node;
+                if (parentElement.nodeType === Node.TEXT_NODE) {
+                  parentElement = parentElement.parentElement as Node;
+                }
+
+                const strongParent = (parentElement as Element).closest('strong');
+
+                if (strongParent) {
+                  // Remove bold - unwrap the strong tag
+                  const text = document.createTextNode(strongParent.textContent || '');
+                  strongParent.parentNode?.replaceChild(text, strongParent);
+                  // Keep selection on the text
+                  range.selectNodeContents(text);
+                  sel.removeAllRanges();
+                  sel.addRange(range);
+                } else {
+                  // Add bold - wrap selection in strong tag
+                  const selectedText = sel.toString();
+                  const bold = document.createElement('strong');
+                  bold.textContent = selectedText;
+                  range.deleteContents();
+                  range.insertNode(bold);
+                  // Keep selection on the bold element
+                  range.selectNodeContents(bold);
+                  sel.removeAllRanges();
+                  sel.addRange(range);
+                }
+              }
+              break;
+            }
+            case 'italic': {
+              const sel = window.getSelection();
+              if (sel && !sel.isCollapsed) {
+                const range = sel.getRangeAt(0);
+
+                // Check if selection is already inside an <em> tag
+                let parentElement = range.commonAncestorContainer as Node;
+                if (parentElement.nodeType === Node.TEXT_NODE) {
+                  parentElement = parentElement.parentElement as Node;
+                }
+
+                const emParent = (parentElement as Element).closest('em');
+
+                if (emParent) {
+                  // Remove italic - unwrap the em tag
+                  const text = document.createTextNode(emParent.textContent || '');
+                  emParent.parentNode?.replaceChild(text, emParent);
+                  // Keep selection on the text
+                  range.selectNodeContents(text);
+                  sel.removeAllRanges();
+                  sel.addRange(range);
+                } else {
+                  // Add italic - wrap selection in em tag
+                  const selectedText = sel.toString();
+                  const italic = document.createElement('em');
+                  italic.textContent = selectedText;
+                  range.deleteContents();
+                  range.insertNode(italic);
+                  // Keep selection on the italic element
+                  range.selectNodeContents(italic);
+                  sel.removeAllRanges();
+                  sel.addRange(range);
+                }
+              }
+              break;
+            }
+            case 'underline':
+              document.execCommand('underline', false, undefined);
+              break;
+            case 'strike':
+              document.execCommand('strikeThrough', false, undefined);
+              break;
+            case 'heading1':
+              document.execCommand('formatBlock', false, '<h1>');
+              break;
+            case 'heading2':
+              document.execCommand('formatBlock', false, '<h2>');
+              break;
+            case 'bulletList':
+              document.execCommand('insertUnorderedList', false, undefined);
+              break;
+            case 'orderedList':
+              document.execCommand('insertOrderedList', false, undefined);
+              break;
+            case 'taskList': {
+              // Create task list with checkboxes
+              const sel = window.getSelection();
+              if (sel && !sel.isCollapsed) {
+                const range = sel.getRangeAt(0);
+                const selectedText = sel.toString();
+                const lines = selectedText.split('\n');
+
+                const ul = document.createElement('ul');
+                ul.style.listStyle = 'none';
+                ul.style.paddingLeft = '0';
+
+                lines.forEach(line => {
+                  if (line.trim()) {
+                    const li = document.createElement('li');
+                    li.style.display = 'flex';
+                    li.style.alignItems = 'center';
+                    li.style.gap = '8px';
+                    li.style.marginBottom = '4px';
+
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.style.cursor = 'pointer';
+                    checkbox.style.flexShrink = '0';
+
+                    const span = document.createElement('span');
+                    span.textContent = line.trim();
+
+                    li.appendChild(checkbox);
+                    li.appendChild(span);
+                    ul.appendChild(li);
+                  }
+                });
+
+                range.deleteContents();
+                range.insertNode(ul);
+                range.setStartAfter(ul);
+                range.collapse(true);
+                sel.removeAllRanges();
+                sel.addRange(range);
+              }
+              break;
+            }
+            case 'blockquote':
+              // Replaced by textColor - this case should be textColor now
+              const colorInput = document.createElement('input');
+              colorInput.type = 'color';
+              colorInput.value = '#e91e63';
+              colorInput.style.position = 'absolute';
+              colorInput.style.opacity = '0';
+              document.body.appendChild(colorInput);
+
+              colorInput.addEventListener('change', () => {
+                const sel = window.getSelection();
+                if (sel && !sel.isCollapsed) {
+                  const range = sel.getRangeAt(0);
+                  const selectedText = sel.toString();
+
+                  const span = document.createElement('span');
+                  span.style.color = colorInput.value;
+                  span.textContent = selectedText;
+
+                  range.deleteContents();
+                  range.insertNode(span);
+                  range.selectNodeContents(span);
+                  sel.removeAllRanges();
+                  sel.addRange(range);
+                }
+                colorInput.remove();
+              });
+
+              colorInput.click();
+              break;
+            case 'textColor': {
+              // Create custom color palette dropdown
+              const sel = window.getSelection();
+              if (!sel || sel.isCollapsed) {
+                alert('Selecione o texto para aplicar cor');
+                break;
+              }
+
+              const savedRange = sel.getRangeAt(0);
+              const buttonRect = (btn as HTMLElement).getBoundingClientRect();
+
+              // Create color palette container
+              const colorPalette = document.createElement('div');
+              colorPalette.className = 'princhat-color-palette';
+              colorPalette.style.position = 'absolute';
+              colorPalette.style.top = `${buttonRect.bottom + 5}px`;
+              colorPalette.style.left = `${buttonRect.left}px`;
+
+              // Predefined colors
+              const colors = [
+                { name: 'Branco', value: '#ffffff' },
+                { name: 'Cinza Claro', value: '#cccccc' },
+                { name: 'Cinza', value: '#888888' },
+                { name: 'Preto', value: '#000000' },
+                { name: 'Vermelho', value: '#ff4444' },
+                { name: 'Rosa', value: '#e91e63' },
+                { name: 'Roxo', value: '#9c27b0' },
+                { name: 'Azul', value: '#2196f3' },
+                { name: 'Verde', value: '#4caf50' },
+                { name: 'Amarelo', value: '#ffeb3b' },
+                { name: 'Laranja', value: '#ff9800' },
+                { name: 'Marrom', value: '#795548' },
+              ];
+
+              let paletteHTML = '<div class="princhat-color-palette-grid">';
+              colors.forEach(color => {
+                paletteHTML += `<button class="princhat-color-swatch" data-color="${color.value}" title="${color.name}" style="background: ${color.value};"></button>`;
+              });
+              paletteHTML += '</div>';
+              paletteHTML += '<button class="princhat-color-custom">+ Cor Personalizada</button>';
+
+              colorPalette.innerHTML = paletteHTML;
+              document.body.appendChild(colorPalette);
+
+              // Click outside to close
+              const closeOnClickOutside = (e: MouseEvent) => {
+                if (!colorPalette.contains(e.target as Node)) {
+                  colorPalette.remove();
+                  document.removeEventListener('mousedown', closeOnClickOutside);
+                }
+              };
+              setTimeout(() => {
+                document.addEventListener('mousedown', closeOnClickOutside);
+              }, 100);
+
+              // Apply color when swatch is clicked
+              colorPalette.querySelectorAll('.princhat-color-swatch').forEach(swatch => {
+                swatch.addEventListener('click', () => {
+                  const selectedColor = (swatch as HTMLElement).dataset.color!;
+                  applyTextColor(savedRange, selectedColor, editorContent);
+                  colorPalette.remove();
+                  document.removeEventListener('mousedown', closeOnClickOutside);
+                });
+              });
+
+              // Custom color picker
+              colorPalette.querySelector('.princhat-color-custom')?.addEventListener('click', () => {
+                const customInput = document.createElement('input');
+                customInput.type = 'color';
+                customInput.style.position = 'absolute';
+                customInput.style.opacity = '0';
+                document.body.appendChild(customInput);
+
+                customInput.addEventListener('change', () => {
+                  applyTextColor(savedRange, customInput.value, editorContent);
+                  colorPalette.remove();
+                  customInput.remove();
+                  document.removeEventListener('mousedown', closeOnClickOutside);
+                });
+
+                customInput.click();
+              });
+
+              break;
+            }
+            case 'link':
+              // Open custom link modal
+              this.openLinkModal(editorContent);
+              break;
+            case 'code':
+              const selection = window.getSelection();
+              if (selection && !selection.isCollapsed) {
+                const selectedText = selection.toString();
+                const code = document.createElement('code');
+                code.textContent = selectedText;
+                const range = selection.getRangeAt(0);
+                range.deleteContents();
+                range.insertNode(code);
+                // Move cursor after code element
+                range.setStartAfter(code);
+                range.setEndAfter(code);
+                selection.removeAllRanges();
+                selection.addRange(range);
+              }
+              break;
+          }
+        } catch (error) {
+          console.error('[PrinChat UI] Error executing formatting command:', error);
+        }
+
+        // Update toolbar state
+        setTimeout(updateToolbarState, 10);
+      });
+    });
+
+    // Update toolbar active states
+    const updateToolbarState = () => {
+      if (!editorContent) return;
+
+      toolbarButtons.forEach(btn => {
+        const action = (btn as HTMLElement).dataset.action;
+        btn.classList.remove('is-active');
+
+        try {
+          switch (action) {
+            case 'bold':
+              if (document.queryCommandState('bold')) btn.classList.add('is-active');
+              break;
+            case 'italic':
+              if (document.queryCommandState('italic')) btn.classList.add('is-active');
+              break;
+            case 'underline':
+              if (document.queryCommandState('underline')) btn.classList.add('is-active');
+              break;
+            case 'strike':
+              if (document.queryCommandState('strikeThrough')) btn.classList.add('is-active');
+              break;
+            case 'bulletList':
+              if (document.queryCommandState('insertUnorderedList')) btn.classList.add('is-active');
+              break;
+            case 'orderedList':
+              if (document.queryCommandState('insertOrderedList')) btn.classList.add('is-active');
+              break;
+          }
+        } catch (error) {
+          // Silently ignore
+        }
+      });
+    };
+
+    // Update toolbar on selection change
+    editorContent?.addEventListener('mouseup', updateToolbarState);
+    editorContent?.addEventListener('keyup', updateToolbarState);
+    editorContent?.addEventListener('focus', () => {
+      setTimeout(updateToolbarState, 10);
+    });
+
+    // Helper function to apply text color
+    const applyTextColor = (range: Range, color: string, editor: HTMLDivElement) => {
+      editor.focus();
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+
+      const selectedText = sel?.toString() || '';
+      const colorSpan = document.createElement('span');
+      colorSpan.style.color = color;
+      colorSpan.textContent = selectedText;
+
+      range.deleteContents();
+      range.insertNode(colorSpan);
+      range.selectNodeContents(colorSpan);
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    };
+
+    // Handle Shift+Enter for line break without creating list item
+    editorContent?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.shiftKey) {
+        e.preventDefault();
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+          const range = sel.getRangeAt(0);
+          const br = document.createElement('br');
+          range.deleteContents();
+          range.insertNode(br);
+          range.setStartAfter(br);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      }
+    });
 
     const closeModal = () => {
       modal.remove();
@@ -3836,8 +4347,27 @@ class WhatsAppUIOverlay {
     backdrop?.addEventListener('click', closeModal);
 
     saveBtn?.addEventListener('click', async () => {
+      // If read-only, just close
+      if (readOnly) {
+        modal.remove();
+        this.noteEditorModal = null;
+        return;
+      }
+
       const title = titleInput?.value.trim();
-      const content = textarea?.value.trim();
+
+      // Sync checkbox states before getting HTML
+      const checkboxes = editorContent?.querySelectorAll('input[type=\"checkbox\"]');
+      checkboxes?.forEach((checkbox: Element) => {
+        const cb = checkbox as HTMLInputElement;
+        if (cb.checked) {
+          cb.setAttribute('checked', 'checked');
+        } else {
+          cb.removeAttribute('checked');
+        }
+      });
+
+      const content = editorContent?.innerHTML.trim();
 
       if (!title) {
         alert('O título da nota não pode estar vazio');
@@ -3845,9 +4375,9 @@ class WhatsAppUIOverlay {
         return;
       }
 
-      if (!content) {
+      if (!content || content === '<br>' || content === '') {
         alert('O conteúdo da nota não pode estar vazio');
-        textarea?.focus();
+        editorContent?.focus();
         return;
       }
 
@@ -3874,11 +4404,447 @@ class WhatsAppUIOverlay {
           console.log('[PrinChat UI] Note created successfully');
         }
 
-        closeModal();
-        // TODO: Refresh notes list in popup
+        // Close modal
+        modal.remove();
+        this.noteEditorModal = null;
+
+        // Refresh notes list
+        await this.refreshNotesList(chatId);
+
+        // Update badge
+        this.updateNotesBadge();
       } catch (error) {
         console.error('[PrinChat UI] Error saving note:', error);
         alert('Erro ao salvar nota');
+      }
+    });
+  }
+
+  /**
+   * Refresh notes list in the notes popup
+   */
+  private async refreshNotesList(chatId: string) {
+    try {
+      console.log('[PrinChat UI] Refreshing notes list for chatId:', chatId);
+
+      const response = await this.requestFromContentScript({
+        type: 'GET_NOTES_BY_CHAT',
+        payload: { chatId }
+      }) as any;
+
+      console.log('[PrinChat UI] GET_NOTES_BY_CHAT response:', response);
+
+      const notes = response?.data || [];
+      console.log('[PrinChat UI] Extracted notes:', notes, 'Count:', notes.length);
+
+      if (!this.notesPopup) {
+        console.log('[PrinChat UI] Notes popup not found');
+        return;
+      }
+
+      const notesListContainer = this.notesPopup.querySelector('.princhat-notes-list');
+      if (!notesListContainer) {
+        console.log('[PrinChat UI] Notes list container not found');
+        return;
+      }
+
+      if (!notes || notes.length === 0) {
+        console.log('[PrinChat UI] No notes found, showing empty state');
+        notesListContainer.innerHTML = `
+          <div class="princhat-notes-empty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
+              <path d="M2 6h4"/>
+              <path d="M2 10h4"/>
+              <path d="M2 14h4"/>
+              <path d="M2 18h4"/>
+              <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>
+            </svg>
+            <p>Nenhuma nota criada</p>
+            <span>Clique em "Nova Nota" para adicionar</span>
+          </div>
+        `;
+        return;
+      }
+
+      console.log('[PrinChat UI] Rendering', notes.length, 'note cards');
+
+      // Sort notes by most recent first
+      notes.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+      // Render note cards
+      notesListContainer.innerHTML = notes.map((note: any) => {
+        const preview = this.getTextPreview(note.content, 80);
+        const date = new Date(note.createdAt).toLocaleDateString('pt-BR', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric'
+        });
+
+        return `
+          <div class="princhat-note-card" data-note-id="${note.id}">
+            <div class="princhat-note-card-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
+                <polyline points="14 2 14 8 20 8"/>
+              </svg>
+            </div>
+            <div class="princhat-note-card-content">
+              <div class="princhat-note-card-header">
+                <h4 class="princhat-note-card-title">${note.title}</h4>
+                <div class="princhat-note-card-actions">
+                  <button class="princhat-script-btn-icon" data-action="view" data-note-id="${note.id}" title="Visualizar">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                      <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                  </button>
+                  <button class="princhat-script-btn-icon" data-action="edit" data-note-id="${note.id}" title="Editar">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+                    </svg>
+                  </button>
+                  <button class="princhat-script-btn-icon" data-action="delete" data-note-id="${note.id}" title="Excluir">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div class="princhat-note-card-preview">${preview}</div>
+              <div class="princhat-note-card-footer">
+                <span class="princhat-note-card-date">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                  </svg>
+                  ${date}
+                </span>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      // Add event listeners to edit and delete buttons
+      this.attachNoteCardListeners(chatId);
+    } catch (error) {
+      console.error('[PrinChat UI] Error refreshing notes list:', error);
+    }
+  }
+
+  /**
+   * Get text preview from HTML content
+   */
+  private getTextPreview(htmlContent: string, maxLength: number): string {
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = htmlContent;
+    const text = tempDiv.textContent || tempDiv.innerText || '';
+    return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+  }
+
+  /**
+   * Attach event listeners to note card buttons
+   */
+  private attachNoteCardListeners(chatId: string) {
+    if (!this.notesPopup) return;
+
+    // View buttons (read-only mode)
+    const viewButtons = this.notesPopup.querySelectorAll('[data-action="view"][data-note-id]');
+    viewButtons.forEach(button => {
+      button.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const noteId = (button as HTMLElement).dataset.noteId;
+        if (!noteId) return;
+
+        try {
+          const response = await this.requestFromContentScript({
+            type: 'GET_NOTE',
+            payload: { id: noteId }
+          }) as any;
+
+          const note = response?.data;
+          if (note) {
+            this.openNoteEditorModal(chatId, note.chatName, note.chatPhoto, note, true); // true = read-only
+          }
+        } catch (error) {
+          console.error('[PrinChat UI] Error loading note for viewing:', error);
+        }
+      });
+    });
+
+    // Edit buttons
+    const editButtons = this.notesPopup.querySelectorAll('[data-action="edit"][data-note-id]');
+    editButtons.forEach(button => {
+      button.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const noteId = (button as HTMLElement).dataset.noteId;
+        if (!noteId) return;
+
+        try {
+          const response = await this.requestFromContentScript({
+            type: 'GET_NOTE',
+            payload: { id: noteId }
+          }) as any;
+
+          const note = response?.data;
+          if (note) {
+            this.openNoteEditorModal(chatId, note.chatName, note.chatPhoto, note);
+          }
+        } catch (error) {
+          console.error('[PrinChat UI] Error loading note:', error);
+        }
+      });
+    });
+
+    // Delete buttons
+    const deleteButtons = this.notesPopup.querySelectorAll('[data-action="delete"][data-note-id]');
+    deleteButtons.forEach(button => {
+      button.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const noteId = (button as HTMLElement).dataset.noteId;
+        if (!noteId) return;
+
+        // Show custom confirmation modal
+        this.showNoteDeleteConfirmation(noteId, chatId);
+      });
+    });
+  }
+
+  /**
+   * Show delete confirmation modal for notes
+   */
+  private showNoteDeleteConfirmation(noteId: string, chatId: string) {
+    // Create overlay
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+    `;
+
+    // Create modal
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+      background: #2a2a2a;
+      border: 1px solid #3a3a3a;
+      border-radius: 8px;
+      padding: 24px;
+      max-width: 400px;
+      width: 90%;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    `;
+
+    modal.innerHTML = `
+      <div style="margin-bottom: 16px;">
+        <h3 style="margin: 0 0 8px 0; font-size: 18px; font-weight: 600; color: #ffffff;">
+          Excluir nota
+        </h3>
+        <p style="margin: 0; font-size: 14px; color: #9e9e9e;">
+          Tem certeza que deseja excluir esta nota? Esta ação não pode ser desfeita.
+        </p>
+      </div>
+      <div style="display: flex; gap: 12px; justify-content: flex-end;">
+        <button class="cancel-btn" style="
+          padding: 8px 20px;
+          border: 1px solid #3a3a3a;
+          background: transparent;
+          color: white;
+          border-radius: 8px;
+          cursor: pointer;
+          font-size: 11px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          transition: all 0.2s;
+        ">CANCELAR</button>
+        <button class="confirm-btn" style="
+          padding: 8px 20px;
+          border: none;
+          background: #f44336;
+          color: white;
+          border-radius: 8px;
+          cursor: pointer;
+          font-size: 11px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          transition: all 0.2s;
+        ">EXCLUIR</button>
+      </div>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // Add event listeners
+    const cancelBtn = modal.querySelector('.cancel-btn') as HTMLElement;
+    const confirmBtn = modal.querySelector('.confirm-btn') as HTMLElement;
+
+    const closeModal = () => overlay.remove();
+
+    // Add hover effects
+    if (cancelBtn) {
+      cancelBtn.addEventListener('mouseenter', () => {
+        cancelBtn.style.background = '#3a3a3a';
+        cancelBtn.style.borderColor = '#e91e63';
+      });
+      cancelBtn.addEventListener('mouseleave', () => {
+        cancelBtn.style.background = 'transparent';
+        cancelBtn.style.borderColor = '#3a3a3a';
+      });
+    }
+
+    if (confirmBtn) {
+      confirmBtn.addEventListener('mouseenter', () => {
+        confirmBtn.style.background = '#c62828';
+      });
+      confirmBtn.addEventListener('mouseleave', () => {
+        confirmBtn.style.background = '#f44336';
+      });
+    }
+
+    cancelBtn?.addEventListener('click', closeModal);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeModal();
+    });
+
+    confirmBtn?.addEventListener('click', async () => {
+      closeModal();
+      try {
+        await this.requestFromContentScript({
+          type: 'DELETE_NOTE',
+          payload: { id: noteId }
+        });
+
+        await this.refreshNotesList(chatId);
+        this.updateNotesBadge();
+      } catch (error) {
+        console.error('[PrinChat UI] Error deleting note:', error);
+      }
+    });
+  }
+
+  /**
+   * Open link insertion modal
+   */
+  private openLinkModal(editorContent: HTMLDivElement) {
+    // Save current selection
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed) {
+      alert('Selecione o texto que deseja transformar em link');
+      return;
+    }
+
+    const selectedText = selection.toString();
+    const savedRange = selection.getRangeAt(0);
+
+    // Create modal
+    const modal = document.createElement('div');
+    modal.className = 'princhat-link-modal';
+    modal.innerHTML = `
+      <div class="princhat-link-modal-backdrop"></div>
+      <div class="princhat-link-modal-container">
+        <div class="princhat-link-modal-header">
+          <h3>Inserir Link</h3>
+          <button class="princhat-link-modal-close" title="Fechar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        <div class="princhat-link-modal-body">
+          <div class="princhat-link-field-group">
+            <label>Texto do link:</label>
+            <input type="text" class="princhat-link-text-input" value="${selectedText}" />
+          </div>
+          <div class="princhat-link-field-group">
+            <label>URL:</label>
+            <input type="url" class="princhat-link-url-input" placeholder="https://exemplo.com" autofocus />
+          </div>
+          <div class="princhat-link-checkbox-group">
+            <label class="princhat-toggle-switch">
+              <input type="checkbox" class="princhat-link-checkbox" />
+              <span class="princhat-toggle-slider"></span>
+            </label>
+            <label class="princhat-toggle-label">Abrir em nova aba</label>
+          </div>
+        </div>
+        <div class="princhat-link-modal-footer">
+          <button class="princhat-link-modal-cancel">Cancelar</button>
+          <button class="princhat-link-modal-insert">Inserir</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const urlInput = modal.querySelector('.princhat-link-url-input') as HTMLInputElement;
+    const textInput = modal.querySelector('.princhat-link-text-input') as HTMLInputElement;
+    const newTabCheckbox = modal.querySelector('.princhat-link-checkbox') as HTMLInputElement;
+    const closeBtn = modal.querySelector('.princhat-link-modal-close');
+    const cancelBtn = modal.querySelector('.princhat-link-modal-cancel');
+    const insertBtn = modal.querySelector('.princhat-link-modal-insert');
+    const backdrop = modal.querySelector('.princhat-link-modal-backdrop');
+
+    const closeModal = () => {
+      modal.remove();
+    };
+
+    const insertLink = () => {
+      const url = urlInput?.value.trim();
+      const text = textInput?.value.trim();
+      const newTab = newTabCheckbox?.checked;
+
+      if (!url) {
+        alert('Digite uma URL válida');
+        urlInput?.focus();
+        return;
+      }
+
+      // Restore selection and insert link
+      editorContent.focus();
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(savedRange);
+
+      // Create link element
+      const link = document.createElement('a');
+      link.href = url;
+      link.textContent = text || selectedText;
+      if (newTab) {
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+      }
+
+      savedRange.deleteContents();
+      savedRange.insertNode(link);
+
+      // Move cursor after link
+      savedRange.setStartAfter(link);
+      savedRange.collapse(true);
+      sel?.removeAllRanges();
+      sel?.addRange(savedRange);
+
+      closeModal();
+    };
+
+    closeBtn?.addEventListener('click', closeModal);
+    cancelBtn?.addEventListener('click', closeModal);
+    backdrop?.addEventListener('click', closeModal);
+    insertBtn?.addEventListener('click', insertLink);
+
+    // Insert on Enter
+    urlInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        insertLink();
       }
     });
   }
@@ -4217,7 +5183,7 @@ class WhatsAppUIOverlay {
    * Toggle global schedules popup (accessed from header)
    * Shows ALL schedules from ALL chats with tabs, search, and calendar button
    */
-  private globalSchedulesPopup: HTMLElement | null = null;
+
   private globalSchedulesActiveTab: 'pending' | 'paused' | 'completed' = 'pending';
 
   private async toggleGlobalSchedulesPopup(button: HTMLElement) {
@@ -4407,6 +5373,215 @@ class WhatsAppUIOverlay {
       });
     }, 1000); // Update every second
   }
+
+  private async toggleGlobalNotesPopup(button: HTMLElement) {
+    // Close if already open
+    if (this.globalNotesPopup) {
+      this.globalNotesPopup.remove();
+      this.globalNotesPopup = null;
+      return;
+    }
+
+    console.log('[PrinChat UI] Opening global notes popup...');
+
+    // Load ALL notes (from all chats)
+    const response = await this.requestFromContentScript({
+      type: 'GET_ALL_NOTES'
+    });
+
+    const allNotes: Note[] = response?.data || [];
+    console.log('[PrinChat UI] Loaded', allNotes.length, 'notes from all chats');
+
+    // Create popup
+    const popup = document.createElement('div');
+    popup.className = 'princhat-global-notes-popup';
+
+    // Create header
+    const header = document.createElement('div');
+    header.className = 'princhat-global-popup-header';
+    header.innerHTML = `
+      <div class="princhat-global-popup-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
+          <path d="M2 6h4"/>
+          <path d="M2 10h4"/>
+          <path d="M2 14h4"/>
+          <path d="M2 18h4"/>
+          <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>
+        </svg>
+        Todas as Notas
+      </div>
+      <button class="princhat-global-popup-close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"/>
+          <line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    `;
+
+    // Create content area with grid for notes
+    const content = document.createElement('div');
+    content.className = 'princhat-global-popup-content';
+
+    if (allNotes.length === 0) {
+      // Empty state
+      content.innerHTML = `
+        <div class="princhat-global-empty-state">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
+            <path d="M2 6h4"/>
+            <path d="M2 10h4"/>
+            <path d="M2 14h4"/>
+            <path d="M2 18h4"/>
+            <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>
+          </svg>
+          <p>Nenhuma nota criada</p>
+          <span>Notas criadas nos chats aparecerão aqui</span>
+        </div>
+      `;
+    } else {
+      // Create grid of note cards
+      const grid = document.createElement('div');
+      grid.className = 'princhat-global-notes-grid';
+
+      allNotes.forEach(note => {
+        const card = document.createElement('div');
+        card.className = 'princhat-global-note-card';
+
+        // Get text preview
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = note.content;
+        const textPreview = (tempDiv.textContent || '').substring(0, 100);
+
+        card.innerHTML = `
+          <div class="princhat-global-note-header">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
+              <path d="M2 6h4"/>
+              <path d="M2 10h4"/>
+              <path d="M2 14h4"/>
+              <path d="M2 18h4"/>
+              <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>
+            </svg>
+            <div class="princhat-global-note-info">
+              <span class="princhat-global-note-contact">${note.chatName || 'Sem nome'}</span>
+              <span class="princhat-global-note-title">${note.title || 'Sem título'}</span>
+            </div>
+          </div>
+          <div class="princhat-global-note-preview">${textPreview}${textPreview.length >= 100 ? '...' : ''}</div>
+          <div class="princhat-global-note-actions">
+            <button class="princhat-global-note-action-btn" data-note-id="${note.id}" data-action="view">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+            </button>
+            <button class="princhat-global-note-action-btn" data-note-id="${note.id}" data-action="edit">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
+                <path d="m15 5 4 4"/>
+              </svg>
+            </button>
+            <button class="princhat-global-note-action-btn" data-note-id="${note.id}" data-action="delete">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 6h18"/>
+                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
+                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+              </svg>
+            </button>
+          </div>
+          <div class="princhat-global-note-footer">
+            <span class="princhat-global-note-date">${this.formatNoteDate(note.createdAt)}</span>
+          </div>
+        `;
+
+        grid.appendChild(card);
+      });
+
+      content.appendChild(grid);
+
+      // Add event listeners for card actions
+      setTimeout(() => {
+        popup.querySelectorAll('.princhat-global-note-action-btn').forEach(btn => {
+          btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const noteId = (btn as HTMLElement).dataset.noteId!;
+            const action = (btn as HTMLElement).dataset.action!;
+
+            const note = allNotes.find(n => n.id === noteId);
+            if (!note) return;
+
+            if (action === 'view') {
+              // TODO: Implement openNoteEditorModal() method
+              console.log('[PrinChat UI] View note:', note);
+            } else if (action === 'edit') {
+              // TODO: Implement openNoteEditorModal() method
+              console.log('[PrinChat UI] Edit note:', note);
+            } else if (action === 'delete') {
+              // TODO: Implement showNoteDeleteConfirmation() method
+              console.log('[PrinChat UI] Delete note:', noteId);
+              // Refresh popup after delete
+              // popup.remove();
+              // this.globalNotesPopup = null;
+              // this.toggleGlobalNotesPopup(button);
+            }
+          });
+        });
+      }, 0);
+    }
+
+    popup.appendChild(header);
+    popup.appendChild(content);
+
+    // Position popup below button
+    document.body.appendChild(popup);
+
+    const buttonRect = button.getBoundingClientRect();
+    popup.style.top = `${buttonRect.bottom + 8}px`;
+    popup.style.right = `${window.innerWidth - buttonRect.right}px`;
+
+    // Close button handler
+    const closeBtn = popup.querySelector('.princhat-global-popup-close');
+    closeBtn?.addEventListener('click', () => {
+      popup.remove();
+      this.globalNotesPopup = null;
+    });
+
+    // Close on outside click
+    const closeOnOutsideClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!popup.contains(target) && !button.contains(target)) {
+        popup.remove();
+        this.globalNotesPopup = null;
+        document.removeEventListener('click', closeOnOutsideClick);
+      }
+    };
+
+    setTimeout(() => {
+      document.addEventListener('click', closeOnOutsideClick);
+    }, 0);
+
+    // Store reference
+    this.globalNotesPopup = popup;
+  }
+
+  // Helper method to format note dates
+  private formatNoteDate(timestamp: number): string {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) {
+      return `Hoje às ${date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+    } else if (diffDays === 1) {
+      return 'Ontem';
+    } else if (diffDays < 7) {
+      return `${diffDays} dias atrás`;
+    } else {
+      return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    }
+  }
+
 
   /**
    * Render global schedules content based on active tab and search query
@@ -5987,11 +7162,11 @@ class WhatsAppUIOverlay {
     });
 
     // Add delete button handlers
-    const deleteButtons = popup.querySelectorAll('.princhat-signature-delete-btn');
-    deleteButtons.forEach(btn => {
-      btn.addEventListener('click', (e) => {
+    const deleteButtons = popup.querySelectorAll('[data-action="delete"][data-sig-id]');
+    deleteButtons.forEach(button => {
+      button.addEventListener('click', (e) => {
         e.stopPropagation(); // Prevent event bubbling
-        const sigId = btn.getAttribute('data-sig-id');
+        const sigId = button.getAttribute('data-sig-id');
         if (sigId) {
           // Show custom confirmation modal instead of browser confirm
           this.showDeleteConfirmation(sigId);
@@ -7188,6 +8363,11 @@ class WhatsAppUIOverlay {
         tooltip: 'Agendamentos'
       },
       {
+        name: 'notes',
+        svg: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/><path d="M2 6h4"/><path d="M2 10h4"/><path d="M2 14h4"/><path d="M2 18h4"/><path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/></svg>',
+        tooltip: 'Notas Globais'
+      },
+      {
         name: 'new-message',
         svg: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="9" x2="15" y1="10" y2="10"/><line x1="12" x2="12" y1="7" y2="13"/></svg>',
         tooltip: 'Nova Mensagem'
@@ -7260,6 +8440,9 @@ class WhatsAppUIOverlay {
         } else if (icon.name === 'schedules') {
           console.log(`[PrinChat UI] Schedules clicked`);
           this.toggleGlobalSchedulesPopup(button);
+        } else if (icon.name === 'notes') {
+          console.log(`[PrinChat UI] Notes clicked`);
+          this.toggleGlobalNotesPopup(button);
         } else if (icon.name === 'new-message') {
           console.log(`[PrinChat UI] New message clicked`);
           this.toggleDirectChatPopup(button);
@@ -7964,7 +9147,8 @@ class WhatsAppUIOverlay {
       // Create notes button
       const notesButton = document.createElement('button');
       notesButton.className = 'princhat-notes-button';
-      notesButton.title = 'Notas do contato';
+      notesButton.title = 'Notas';
+      notesButton.style.position = 'relative'; // For badge positioning
       notesButton.innerHTML = `
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
@@ -7974,6 +9158,7 @@ class WhatsAppUIOverlay {
           <path d="M2 18h4"/>
           <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>
         </svg>
+        <span class="notes-badge" style="display: none;">0</span>
       `;
 
       // Add click event (placeholder for now)
@@ -7991,9 +9176,43 @@ class WhatsAppUIOverlay {
         actionsContainer.insertBefore(notesButton, actionsContainer.firstChild);
       }
 
+      // Update badge initially
+      this.updateNotesBadge();
+
       console.log('[PrinChat UI] ✅ Notes button injected successfully');
     } catch (error: any) {
       console.error('[PrinChat UI] Error injecting notes button:', error?.message || error);
+    }
+  }
+
+  /**
+   * Update notes badge count
+   */
+  private async updateNotesBadge() {
+    const chatId = await this.getActiveChatId();
+    if (!chatId) {
+      // Hide badge if no active chat
+      const badge = document.querySelector('.notes-badge') as HTMLElement;
+      if (badge) badge.style.display = 'none';
+      return;
+    }
+
+    try {
+      const response = await this.requestFromContentScript({
+        type: 'GET_NOTES_BY_CHAT',
+        payload: { chatId }
+      }) as any;
+
+      const notes = response?.data || [];
+      const count = notes.length;
+
+      const badge = document.querySelector('.notes-badge') as HTMLElement;
+      if (badge) {
+        badge.textContent = count.toString();
+        badge.style.display = count > 0 ? 'flex' : 'none';
+      }
+    } catch (error) {
+      console.error('[PrinChat UI] Error updating notes badge:', error);
     }
   }
 
