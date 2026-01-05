@@ -1,0 +1,40 @@
+          ${avatarUrl ? `<div class="princhat-note-card-avatar"><img src="${avatarUrl}" alt="${note.chatName}" /></div>` : ''}
+          <div class="princhat-note-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
+              <polyline points="14 2 14 8 20 8"/>
+            </svg>
+          </div>
+          <div class="princhat-note-card-content">
+            <div class="princhat-note-card-header">
+              <h4 class="princhat-note-card-title">${note.title}</h4>
+              <div class="princhat-note-card-actions">
+                <button class="princhat-script-btn-icon" data-action="view" data-note-id="${note.id}" title="Visualizar">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                  </svg>
+                </button>
+                <button class="princhat-script-btn-icon" data-action="edit" data-note-id="${note.id}" title="Editar">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+                  </svg>
+                </button>
+                <button class="princhat-script-btn-icon" data-action="delete" data-note-id="${note.id}" title="Excluir">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 6L6 18M6 6l12 12"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div class="princhat-note-card-preview">${preview}</div>
+            <div class="princhat-note-card-footer">
+              <span class="princhat-note-card-contact">${note.chatName || 'Sem nome'}</span>
+              <span class="princhat-note-card-date">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                </svg>
+                ${date}
+              </span>
+            </div>
+          </div>

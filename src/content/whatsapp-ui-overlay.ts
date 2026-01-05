@@ -4427,6 +4427,18 @@ class WhatsAppUIOverlay {
     try {
       console.log('[PrinChat UI] Refreshing notes list for chatId:', chatId);
 
+      // Get chat photo using GET_ACTIVE_CHAT (same as schedule popups)
+      let chatPhoto = '';
+      let chatName = 'Chat';
+      try {
+        const chatResponse = await this.requestFromContentScript({ type: 'GET_ACTIVE_CHAT' });
+        chatPhoto = chatResponse?.data?.chatPhoto || '';
+        chatName = chatResponse?.data?.chatName || chatResponse?.data?.name || 'Chat';
+        console.log('[PrinChat UI] Chat info for notes:', { chatPhoto: !!chatPhoto, chatName });
+      } catch (e) {
+        console.log('[PrinChat UI] Could not get chat info:', e);
+      }
+
       const response = await this.requestFromContentScript({
         type: 'GET_NOTES_BY_CHAT',
         payload: { chatId }
@@ -4481,13 +4493,25 @@ class WhatsAppUIOverlay {
           year: 'numeric'
         });
 
+        // Use pre-loaded chat photo if available, otherwise use placeholder with initial
+        const photoHtml = chatPhoto
+          ? `<img src="${chatPhoto}" alt="" class="princhat-note-card-photo">`
+          : `<div class="princhat-note-card-photo-placeholder">${note.chatName ? note.chatName.charAt(0).toUpperCase() : 'U'}</div>`;
+
         return `
           <div class="princhat-note-card" data-note-id="${note.id}">
-            <div class="princhat-note-card-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
-                <polyline points="14 2 14 8 20 8"/>
-              </svg>
+            <div class="princhat-note-card-photo-wrapper">
+              ${photoHtml}
+              <div class="princhat-note-card-icon-badge">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
+                  <path d="M2 6h4"/>
+                  <path d="M2 10h4"/>
+                  <path d="M2 14h4"/>
+                  <path d="M2 18h4"/>
+                  <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>
+                </svg>
+              </div>
             </div>
             <div class="princhat-note-card-content">
               <div class="princhat-note-card-header">
@@ -5385,12 +5409,14 @@ class WhatsAppUIOverlay {
     console.log('[PrinChat UI] Opening global notes popup...');
 
     // Load ALL notes (from all chats)
+    console.log('[PrinChat UI] Requesting GET_ALL_NOTES...');
     const response = await this.requestFromContentScript({
       type: 'GET_ALL_NOTES'
     });
 
+    console.log('[PrinChat UI] GET_ALL_NOTES response:', response);
     const allNotes: Note[] = response?.data || [];
-    console.log('[PrinChat UI] Loaded', allNotes.length, 'notes from all chats');
+    console.log('[PrinChat UI] Loaded', allNotes.length, 'notes from all chats', allNotes);
 
     // Update badge count
     this.updateNotesBadge();
@@ -5457,52 +5483,60 @@ class WhatsAppUIOverlay {
 
       allNotes.forEach(note => {
         const card = document.createElement('div');
-        card.className = 'princhat-global-note-card';
+        card.className = 'princhat-note-card';
+        card.dataset.noteId = note.id;
+
 
         // Get text preview
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = note.content;
-        const textPreview = (tempDiv.textContent || '').substring(0, 100);
+        const preview = this.getTextPreview(note.content, 80);
+        const date = new Date(note.createdAt).toLocaleDateString('pt-BR', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric'
+        });
+        // Avatar: use first letter of contact name (no external URL to avoid CSP violation)
+        const initial = (note.chatName || 'U').charAt(0).toUpperCase();
 
         card.innerHTML = `
-          <div class="princhat-global-note-header">
+          <div class="princhat-note-card-avatar"><span>${initial}</span></div>
+          <div class="princhat-note-card-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
-              <path d="M2 6h4"/>
-              <path d="M2 10h4"/>
-              <path d="M2 14h4"/>
-              <path d="M2 18h4"/>
-              <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>
+              <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
+              <polyline points="14 2 14 8 20 8"/>
             </svg>
-            <div class="princhat-global-note-info">
-              <span class="princhat-global-note-contact">${note.chatName || 'Sem nome'}</span>
-              <span class="princhat-global-note-title">${note.title || 'Sem título'}</span>
+          </div>
+          <div class="princhat-note-card-content">
+            <div class="princhat-note-card-header">
+              <h4 class="princhat-note-card-title">${note.title}</h4>
+              <div class="princhat-note-card-actions">
+                <button class="princhat-script-btn-icon" data-action="view" data-note-id="${note.id}" title="Visualizar">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                  </svg>
+                </button>
+                <button class="princhat-script-btn-icon" data-action="edit" data-note-id="${note.id}" title="Editar">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+                  </svg>
+                </button>
+                <button class="princhat-script-btn-icon" data-action="delete" data-note-id="${note.id}" title="Excluir">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 6L6 18M6 6l12 12"/>
+                  </svg>
+                </button>
+              </div>
             </div>
-          </div>
-          <div class="princhat-global-note-preview">${textPreview}${textPreview.length >= 100 ? '...' : ''}</div>
-          <div class="princhat-global-note-actions">
-            <button class="princhat-global-note-action-btn" data-note-id="${note.id}" data-action="view">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
-                <circle cx="12" cy="12" r="3"/>
-              </svg>
-            </button>
-            <button class="princhat-global-note-action-btn" data-note-id="${note.id}" data-action="edit">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
-                <path d="m15 5 4 4"/>
-              </svg>
-            </button>
-            <button class="princhat-global-note-action-btn" data-note-id="${note.id}" data-action="delete">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 6h18"/>
-                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
-                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
-              </svg>
-            </button>
-          </div>
-          <div class="princhat-global-note-footer">
-            <span class="princhat-global-note-date">${this.formatNoteDate(note.createdAt)}</span>
+            <div class="princhat-note-card-preview">${preview}</div>
+            <div class="princhat-note-card-footer">
+              <span class="princhat-note-card-contact">${note.chatName || 'Sem nome'}</span>
+              <span class="princhat-note-card-date">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                </svg>
+                ${date}
+              </span>
+            </div>
           </div>
         `;
 
@@ -5513,7 +5547,7 @@ class WhatsAppUIOverlay {
 
       // Add event listeners for card actions
       setTimeout(() => {
-        popup.querySelectorAll('.princhat-global-note-action-btn').forEach(btn => {
+        popup.querySelectorAll('.princhat-script-btn-icon').forEach(btn => {
           btn.addEventListener('click', async (e) => {
             e.stopPropagation();
             const noteId = (btn as HTMLElement).dataset.noteId!;
@@ -5540,6 +5574,9 @@ class WhatsAppUIOverlay {
         });
       }, 0);
     }
+
+    // Add content to popup (CRITICAL: was missing, causing cards not to display!)
+    popup.appendChild(content);
 
     // Position popup below button
     document.body.appendChild(popup);
@@ -5573,22 +5610,22 @@ class WhatsAppUIOverlay {
     this.globalNotesPopup = popup;
   }
 
-  // Helper method to format note dates
-  private formatNoteDate(timestamp: number): string {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
-
-    if (diffDays === 0) {
-      return `Hoje às ${date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
-    } else if (diffDays === 1) {
-      return 'Ontem';
-    } else if (diffDays < 7) {
-      return `${diffDays} dias atrás`;
-    } else {
-      return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-    }
-  }
+  // Helper method to format note dates (currently unused, keeping for potential future use)
+  // private formatNoteDate(timestamp: number): string {
+  //   const date = new Date(timestamp);
+  //   const now = new Date();
+  //   const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
+  //
+  //   if (diffDays === 0) {
+  //     return `Hoje às ${date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+  //   } else if (diffDays === 1) {
+  //     return 'Ontem';
+  //   } else if (diffDays < 7) {
+  //     return `${diffDays} dias atrás`;
+  //   } else {
+  //     return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  //   }
+  // }
 
 
   /**
