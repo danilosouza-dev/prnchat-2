@@ -5498,12 +5498,18 @@ class WhatsAppUIOverlay {
         const initial = (note.chatName || 'U').charAt(0).toUpperCase();
 
         card.innerHTML = `
-          <div class="princhat-note-card-avatar"><span>${initial}</span></div>
-          <div class="princhat-note-card-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
-              <polyline points="14 2 14 8 20 8"/>
-            </svg>
+          <div class="princhat-note-card-photo-wrapper">
+            <div class="princhat-note-card-photo-placeholder">${initial}</div>
+            <div class="princhat-note-card-icon-badge">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
+                <path d="M2 6h4"/>
+                <path d="M2 10h4"/>
+                <path d="M2 14h4"/>
+                <path d="M2 18h4"/>
+                <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>
+              </svg>
+            </div>
           </div>
           <div class="princhat-note-card-content">
             <div class="princhat-note-card-header">
@@ -5544,6 +5550,28 @@ class WhatsAppUIOverlay {
       });
 
       content.appendChild(grid);
+
+      // Load contact photos asynchronously for global notes
+      allNotes.forEach(note => {
+        if (!note.chatId) return;
+
+        this.requestFromContentScript({ type: 'GET_CHAT_PHOTO', payload: { chatId: note.chatId } })
+          .then((response) => {
+            if (response?.success && response.data && this.globalNotesPopup) {
+              const placeholder = this.globalNotesPopup.querySelector(`[data-note-id="${note.id}"] .princhat-note-card-photo-placeholder`);
+              if (placeholder) {
+                const img = document.createElement('img');
+                img.src = response.data;
+                img.alt = '';
+                img.className = 'princhat-note-card-photo';
+                placeholder.replaceWith(img);
+              }
+            }
+          })
+          .catch(() => {
+            // Keep placeholder on error
+          });
+      });
 
       // Add event listeners for card actions
       setTimeout(() => {
