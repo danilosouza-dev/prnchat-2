@@ -4270,7 +4270,8 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
 }
 
 /* Notes badge (EXACT copy of schedule badge) */
-.notes-badge {
+.notes-badge,
+.princhat-notes-badge {
   position: absolute;
   top: -4px;
   right: -4px;
@@ -5020,4 +5021,272 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
 
 .princhat-view-calendar-btn svg {
   flex-shrink: 0;
+}
+
+/* ==================== GLOBAL NOTES POPUP ==================== */
+
+/* Global Notes Popup Container */
+.princhat-global-notes-popup {
+  position: fixed;
+  top: 60px;
+  right: 20px;
+  width: 600px;
+  max-height: 70vh;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: slideDown 0.3s ease;
+  z-index: 10000;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Header */
+.princhat-global-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: #1a1a1a;
+  border-bottom: 1px solid #3a3a3a;
+  flex-shrink: 0;
+}
+
+.princhat-global-popup-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.princhat-global-popup-title svg {
+  width: 20px;
+  height: 20px;
+  color: #e91e63;
+}
+
+.princhat-global-popup-close {
+  background: transparent;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.princhat-global-popup-close:hover {
+  background: #333;
+  color: #fff;
+}
+
+.princhat-global-popup-close svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Content */
+.princhat-global-popup-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  min-height: 200px;
+}
+
+.princhat-global-popup-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.princhat-global-popup-content::-webkit-scrollbar-track {
+  background: #2a2a2a;
+}
+
+.princhat-global-popup-content::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 4px;
+}
+
+.princhat-global-popup-content::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Empty State */
+.princhat-global-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: #9e9e9e;
+  text-align: center;
+}
+
+.princhat-global-empty-state svg {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 16px;
+  opacity: 0.3;
+  color: #e91e63;
+}
+
+.princhat-global-empty-state p {
+  font-size: 16px;
+  font-weight: 600;
+  color: #ffffff;
+  margin-bottom: 8px;
+}
+
+.princhat-global-empty-state span {
+  font-size: 13px;
+  color: #9e9e9e;
+}
+
+/* Notes Grid */
+.princhat-global-notes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+/* Note Card */
+.princhat-global-note-card {
+  background: #1a1a1a;
+  border-radius: 8px;
+  border-left: 4px solid #e91e63;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: all 0.2s;
+  animation: fadeIn 0.3s ease;
+}
+
+.princhat-global-note-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(233, 30, 99, 0.2);
+  background: #222;
+}
+
+/* Card Header */
+.princhat-global-note-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.princhat-global-note-header svg {
+  width: 18px;
+  height: 18px;
+  color: #e91e63;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.princhat-global-note-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.princhat-global-note-contact {
+  font-size: 11px;
+  font-weight: 600;
+  color: #e91e63;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.princhat-global-note-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #ffffff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Preview */
+.princhat-global-note-preview {
+  font-size: 12px;
+  color: #9e9e9e;
+  line-height: 1.5;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+/* Actions */
+.princhat-global-note-actions {
+  display: flex;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid #3a3a3a;
+}
+
+.princhat-global-note-action-btn {
+  background: transparent;
+  border: 1px solid #3a3a3a;
+  color: #9e9e9e;
+  padding: 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  transition: all 0.2s;
+  flex: 1;
+}
+
+.princhat-global-note-action-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.princhat-global-note-action-btn:hover {
+  background: #2a2a2a;
+  border-color: #e91e63;
+  color: #e91e63;
+}
+
+.princhat-global-note-action-btn:last-child:hover {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+/* Footer */
+.princhat-global-note-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.princhat-global-note-date {
+  font-size: 11px;
+  color: #666;
 }
