@@ -3745,7 +3745,13 @@ class WhatsAppUIOverlay {
 
     // Close popup when clicking outside
     handleClickOutside = (event: MouseEvent) => {
-      if (this.notesPopup && !this.notesPopup.contains(event.target as Node)) {
+      const target = event.target as Node;
+
+      // Check if ANY modal is currently open (not if clicked element is inside one)
+      const hasOpenModal = document.querySelector('.princhat-modal-overlay') !== null ||
+        document.querySelector('.princhat-note-editor-modal') !== null;
+
+      if (this.notesPopup && !this.notesPopup.contains(target) && !hasOpenModal) {
         this.notesPopup.remove();
         this.notesPopup = null;
         document.removeEventListener('click', handleClickOutside!);
@@ -3769,11 +3775,7 @@ class WhatsAppUIOverlay {
   private openNoteEditorModal(chatId: string, chatName: string, chatPhoto?: string, existingNote?: any, readOnly: boolean = false, options?: { onSave?: () => void }) {
     console.log('[PrinChat UI] Opening note editor modal');
 
-    // Close notes popup
-    if (this.notesPopup) {
-      this.notesPopup.remove();
-      this.notesPopup = null;
-    }
+
 
     // Close existing modal if open
     if (this.noteEditorModal) {
@@ -4343,11 +4345,24 @@ class WhatsAppUIOverlay {
       this.noteEditorModal = null;
     };
 
-    closeBtn?.addEventListener('click', closeModal);
-    cancelBtn?.addEventListener('click', closeModal);
-    backdrop?.addEventListener('click', closeModal);
+    closeBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeModal();
+    });
+    cancelBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeModal();
+    });
+    backdrop?.addEventListener('click', (e) => {
+      if (e.target === backdrop) {
+        e.stopPropagation();
+        closeModal();
+      }
+    });
 
-    saveBtn?.addEventListener('click', async () => {
+    saveBtn?.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      e.preventDefault();
       // If read-only, just close
       if (readOnly) {
         modal.remove();
@@ -4763,6 +4778,7 @@ class WhatsAppUIOverlay {
   private showNoteDeleteConfirmation(noteId: string, chatId: string, options?: { onSuccess?: () => void }) {
     // Create overlay
     const overlay = document.createElement('div');
+    overlay.className = 'princhat-modal-overlay'; // Add class for click-outside detection
     overlay.style.cssText = `
       position: fixed;
       top: 0;
@@ -4773,7 +4789,7 @@ class WhatsAppUIOverlay {
       display: flex;
       align-items: center;
       justify-content: center;
-      z-index: 10000;
+      z-index: 10002;
     `;
 
     // Create modal
@@ -4857,12 +4873,20 @@ class WhatsAppUIOverlay {
       });
     }
 
-    cancelBtn?.addEventListener('click', closeModal);
+    cancelBtn?.addEventListener('click', (e) => {
+      e.stopPropagation(); // Prevent click from reaching popup handlers
+      closeModal();
+    });
     overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) closeModal();
+      if (e.target === overlay) {
+        e.stopPropagation();
+        closeModal();
+      }
     });
 
-    confirmBtn?.addEventListener('click', async () => {
+    confirmBtn?.addEventListener('click', async (e) => {
+      e.stopPropagation(); // Prevent click from reaching popup handlers
+      e.preventDefault();
       closeModal();
       try {
         await this.requestFromContentScript({
@@ -4908,6 +4932,7 @@ class WhatsAppUIOverlay {
   private showScheduleDeleteConfirmation(scheduleId: string) {
     // Create overlay
     const overlay = document.createElement('div');
+    overlay.className = 'princhat-modal-overlay'; // Add class for click-outside detection
     overlay.style.cssText = `
       position: fixed;
       top: 0;
@@ -4918,7 +4943,7 @@ class WhatsAppUIOverlay {
       display: flex;
       align-items: center;
       justify-content: center;
-      z-index: 10001;
+      z-index: 10002;
     `;
 
     // Create modal
@@ -5465,12 +5490,12 @@ class WhatsAppUIOverlay {
     // Close on outside click
     const closeOnOutsideClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      // Check if click is inside any modal
-      const isModal = target.closest('.princhat-modal-overlay') ||
-        target.closest('.princhat-note-modal') ||
-        target.closest('.princhat-note-editor-modal');
 
-      if (!popup.contains(target) && !button.contains(target) && !isModal && this.globalNotesPopup) {
+      // Check if ANY modal is currently open (not if clicked element is inside one)
+      const hasOpenModal = document.querySelector('.princhat-modal-overlay') !== null ||
+        document.querySelector('.princhat-note-editor-modal') !== null;
+
+      if (!popup.contains(target) && !button.contains(target) && !hasOpenModal && this.globalNotesPopup) {
         popup.remove();
         this.globalNotesPopup = null;
         document.removeEventListener('click', closeOnOutsideClick);
@@ -5479,7 +5504,7 @@ class WhatsAppUIOverlay {
 
     setTimeout(() => {
       document.addEventListener('click', closeOnOutsideClick);
-    }, 0);
+    }, 100);
 
     // Initial load
     await this.refreshGlobalNotesPopup();
@@ -5651,17 +5676,34 @@ class WhatsAppUIOverlay {
           const note = filteredNotes.find(n => n.id === noteId);
           if (!note) return;
 
+          // Fetch chat photo before opening modal
+          let chatPhoto = '';
+          try {
+            const photoResponse = await this.requestFromContentScript({
+              type: 'GET_CHAT_PHOTO',
+              payload: { chatId: note.chatId }
+            });
+            if (photoResponse?.success && photoResponse.data) {
+              chatPhoto = photoResponse.data;
+            }
+          } catch (error) {
+            console.log('[PrinChat UI] Could not fetch chat photo for modal:', error);
+          }
+
           if (action === 'view') {
-            await this.openNoteEditorModal(note.chatId, note.chatName || 'Contato', '', note, true);
+            await this.openNoteEditorModal(note.chatId, note.chatName || 'Contato', chatPhoto, note, true);
           } else if (action === 'edit') {
             // Pass callback to refresh THIS popup instead of chat specific one
-            await this.openNoteEditorModal(note.chatId, note.chatName || 'Contato', '', note, false, {
+            await this.openNoteEditorModal(note.chatId, note.chatName || 'Contato', chatPhoto, note, false, {
               onSave: () => this.refreshGlobalNotesPopup(searchQuery)
             });
           } else if (action === 'delete') {
             // Pass callback to refresh THIS popup
             this.showNoteDeleteConfirmation(note.id, note.chatId, {
-              onSuccess: () => this.refreshGlobalNotesPopup(searchQuery)
+              onSuccess: () => {
+                this.refreshGlobalNotesPopup(searchQuery);
+                this.updateNotesBadge();
+              }
             });
           }
         });
@@ -7664,7 +7706,7 @@ class WhatsAppUIOverlay {
       display: flex;
       align-items: center;
       justify-content: center;
-      z-index: 10000;
+      z-index: 10002;
     `;
 
     // Create modal
