@@ -3943,9 +3943,20 @@ class WhatsAppUIOverlay {
         this.noteEditorModal = null;
       };
 
-      closeBtn?.addEventListener('click', closeModal);
-      saveBtn?.addEventListener('click', closeModal);
-      backdrop?.addEventListener('click', closeModal);
+      closeBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeModal();
+      });
+      saveBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeModal();
+      });
+      backdrop?.addEventListener('click', (e) => {
+        if (e.target === backdrop) {
+          e.stopPropagation();
+          closeModal();
+        }
+      });
       return; // Exit early for read-only
     }
 
