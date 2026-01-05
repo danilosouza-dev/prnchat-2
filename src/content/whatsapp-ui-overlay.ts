@@ -3761,11 +3761,12 @@ class WhatsAppUIOverlay {
     this.refreshNotesList(chatId);
   }
 
+
+
   /**
-   * Open note editor modal  /**
-   * Open note editor modal
+   * Open modal to create or edit a note
    */
-  private openNoteEditorModal(chatId: string, chatName: string, chatPhoto?: string, existingNote?: any, readOnly: boolean = false) {
+  private openNoteEditorModal(chatId: string, chatName: string, chatPhoto?: string, existingNote?: any, readOnly: boolean = false, options?: { onSave?: () => void }) {
     console.log('[PrinChat UI] Opening note editor modal');
 
     // Close notes popup
@@ -4409,7 +4410,11 @@ class WhatsAppUIOverlay {
         this.noteEditorModal = null;
 
         // Refresh notes list
-        await this.refreshNotesList(chatId);
+        if (options?.onSave) {
+          options.onSave();
+        } else {
+          await this.refreshNotesList(chatId);
+        }
 
         // Update badge
         this.updateNotesBadge();
@@ -4422,6 +4427,124 @@ class WhatsAppUIOverlay {
 
   /**
    * Refresh notes list in the notes popup
+   */
+  private openLinkModal(editorContent: HTMLDivElement) {
+    // Save current selection
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed) {
+      alert('Selecione o texto que deseja transformar em link');
+      return;
+    }
+
+    const selectedText = selection.toString();
+    const savedRange = selection.getRangeAt(0);
+
+    // Create modal
+    const modal = document.createElement('div');
+    modal.className = 'princhat-link-modal';
+    modal.innerHTML = `
+      <div class="princhat-link-modal-backdrop"></div>
+      <div class="princhat-link-modal-container">
+        <div class="princhat-link-modal-header">
+          <h3>Inserir Link</h3>
+          <button class="princhat-link-modal-close" title="Fechar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        <div class="princhat-link-modal-body">
+          <div class="princhat-link-field-group">
+            <label>Texto do link:</label>
+            <input type="text" class="princhat-link-text-input" value="${selectedText}" />
+          </div>
+          <div class="princhat-link-field-group">
+            <label>URL:</label>
+            <input type="url" class="princhat-link-url-input" placeholder="https://exemplo.com" autofocus />
+          </div>
+          <div class="princhat-link-checkbox-group">
+            <label class="princhat-toggle-switch">
+              <input type="checkbox" class="princhat-link-checkbox" />
+              <span class="princhat-toggle-slider"></span>
+            </label>
+            <label class="princhat-toggle-label">Abrir em nova aba</label>
+          </div>
+        </div>
+        <div class="princhat-link-modal-footer">
+          <button class="princhat-link-modal-cancel">Cancelar</button>
+          <button class="princhat-link-modal-insert">Inserir</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const urlInput = modal.querySelector('.princhat-link-url-input') as HTMLInputElement;
+    const textInput = modal.querySelector('.princhat-link-text-input') as HTMLInputElement;
+    const newTabCheckbox = modal.querySelector('.princhat-link-checkbox') as HTMLInputElement;
+    const closeBtn = modal.querySelector('.princhat-link-modal-close');
+    const cancelBtn = modal.querySelector('.princhat-link-modal-cancel');
+    const insertBtn = modal.querySelector('.princhat-link-modal-insert');
+    const backdrop = modal.querySelector('.princhat-link-modal-backdrop');
+
+    const closeModal = () => {
+      modal.remove();
+    };
+
+    const insertLink = () => {
+      const url = urlInput?.value.trim();
+      const text = textInput?.value.trim();
+      const newTab = newTabCheckbox?.checked;
+
+      if (!url) {
+        alert('Digite uma URL válida');
+        urlInput?.focus();
+        return;
+      }
+
+      // Restore selection and insert link
+      editorContent.focus();
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(savedRange);
+
+      // Create link element
+      const link = document.createElement('a');
+      link.href = url;
+      link.textContent = text || selectedText;
+      if (newTab) {
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+      }
+
+      savedRange.deleteContents();
+      savedRange.insertNode(link);
+
+      // Move cursor after link
+      savedRange.setStartAfter(link);
+      savedRange.collapse(true);
+      sel?.removeAllRanges();
+      sel?.addRange(savedRange);
+
+      closeModal();
+    };
+
+    closeBtn?.addEventListener('click', closeModal);
+    cancelBtn?.addEventListener('click', closeModal);
+    backdrop?.addEventListener('click', closeModal);
+    insertBtn?.addEventListener('click', insertLink);
+
+    // Insert on Enter
+    urlInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        insertLink();
+      }
+    });
+  }
+
+  /**
+   * Update schedule status (for pause/resume)
    */
   private async refreshNotesList(chatId: string) {
     try {
@@ -4637,7 +4760,7 @@ class WhatsAppUIOverlay {
   /**
    * Show delete confirmation modal for notes
    */
-  private showNoteDeleteConfirmation(noteId: string, chatId: string) {
+  private showNoteDeleteConfirmation(noteId: string, chatId: string, options?: { onSuccess?: () => void }) {
     // Create overlay
     const overlay = document.createElement('div');
     overlay.style.cssText = `
@@ -4747,131 +4870,20 @@ class WhatsAppUIOverlay {
           payload: { id: noteId }
         });
 
-        await this.refreshNotesList(chatId);
-        this.updateNotesBadge();
+        if (options?.onSuccess) {
+          options.onSuccess();
+        } else {
+          await this.refreshNotesList(chatId);
+          this.updateNotesBadge();
+        }
       } catch (error) {
         console.error('[PrinChat UI] Error deleting note:', error);
+        alert('Erro ao excluir nota');
       }
     });
   }
 
-  /**
-   * Open link insertion modal
-   */
-  private openLinkModal(editorContent: HTMLDivElement) {
-    // Save current selection
-    const selection = window.getSelection();
-    if (!selection || selection.isCollapsed) {
-      alert('Selecione o texto que deseja transformar em link');
-      return;
-    }
 
-    const selectedText = selection.toString();
-    const savedRange = selection.getRangeAt(0);
-
-    // Create modal
-    const modal = document.createElement('div');
-    modal.className = 'princhat-link-modal';
-    modal.innerHTML = `
-      <div class="princhat-link-modal-backdrop"></div>
-      <div class="princhat-link-modal-container">
-        <div class="princhat-link-modal-header">
-          <h3>Inserir Link</h3>
-          <button class="princhat-link-modal-close" title="Fechar">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M18 6L6 18M6 6l12 12"/>
-            </svg>
-          </button>
-        </div>
-        <div class="princhat-link-modal-body">
-          <div class="princhat-link-field-group">
-            <label>Texto do link:</label>
-            <input type="text" class="princhat-link-text-input" value="${selectedText}" />
-          </div>
-          <div class="princhat-link-field-group">
-            <label>URL:</label>
-            <input type="url" class="princhat-link-url-input" placeholder="https://exemplo.com" autofocus />
-          </div>
-          <div class="princhat-link-checkbox-group">
-            <label class="princhat-toggle-switch">
-              <input type="checkbox" class="princhat-link-checkbox" />
-              <span class="princhat-toggle-slider"></span>
-            </label>
-            <label class="princhat-toggle-label">Abrir em nova aba</label>
-          </div>
-        </div>
-        <div class="princhat-link-modal-footer">
-          <button class="princhat-link-modal-cancel">Cancelar</button>
-          <button class="princhat-link-modal-insert">Inserir</button>
-        </div>
-      </div>
-    `;
-
-    document.body.appendChild(modal);
-
-    const urlInput = modal.querySelector('.princhat-link-url-input') as HTMLInputElement;
-    const textInput = modal.querySelector('.princhat-link-text-input') as HTMLInputElement;
-    const newTabCheckbox = modal.querySelector('.princhat-link-checkbox') as HTMLInputElement;
-    const closeBtn = modal.querySelector('.princhat-link-modal-close');
-    const cancelBtn = modal.querySelector('.princhat-link-modal-cancel');
-    const insertBtn = modal.querySelector('.princhat-link-modal-insert');
-    const backdrop = modal.querySelector('.princhat-link-modal-backdrop');
-
-    const closeModal = () => {
-      modal.remove();
-    };
-
-    const insertLink = () => {
-      const url = urlInput?.value.trim();
-      const text = textInput?.value.trim();
-      const newTab = newTabCheckbox?.checked;
-
-      if (!url) {
-        alert('Digite uma URL válida');
-        urlInput?.focus();
-        return;
-      }
-
-      // Restore selection and insert link
-      editorContent.focus();
-      const sel = window.getSelection();
-      sel?.removeAllRanges();
-      sel?.addRange(savedRange);
-
-      // Create link element
-      const link = document.createElement('a');
-      link.href = url;
-      link.textContent = text || selectedText;
-      if (newTab) {
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-      }
-
-      savedRange.deleteContents();
-      savedRange.insertNode(link);
-
-      // Move cursor after link
-      savedRange.setStartAfter(link);
-      savedRange.collapse(true);
-      sel?.removeAllRanges();
-      sel?.addRange(savedRange);
-
-      closeModal();
-    };
-
-    closeBtn?.addEventListener('click', closeModal);
-    cancelBtn?.addEventListener('click', closeModal);
-    backdrop?.addEventListener('click', closeModal);
-    insertBtn?.addEventListener('click', insertLink);
-
-    // Insert on Enter
-    urlInput?.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        insertLink();
-      }
-    });
-  }
 
   /**
    * Update schedule status (for pause/resume)
@@ -5408,19 +5420,6 @@ class WhatsAppUIOverlay {
 
     console.log('[PrinChat UI] Opening global notes popup...');
 
-    // Load ALL notes (from all chats)
-    console.log('[PrinChat UI] Requesting GET_ALL_NOTES...');
-    const response = await this.requestFromContentScript({
-      type: 'GET_ALL_NOTES'
-    });
-
-    console.log('[PrinChat UI] GET_ALL_NOTES response:', response);
-    const allNotes: Note[] = response?.data || [];
-    console.log('[PrinChat UI] Loaded', allNotes.length, 'notes from all chats', allNotes);
-
-    // Update badge count
-    this.updateNotesBadge();
-
     // Create popup
     const popup = document.createElement('div');
     popup.className = 'princhat-global-schedules-popup'; // Reuse schedules popup class for consistent styling
@@ -5429,7 +5428,7 @@ class WhatsAppUIOverlay {
     popup.innerHTML = `
       <div class="princhat-global-schedules-header">
         <h3>Notas</h3>
-        <button class="princhat-popup-close-btn" title="Fechar">
+        <button class="princhat-popup-close-btn princhat-global-popup-close" title="Fechar">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
           </svg>
@@ -5443,7 +5442,7 @@ class WhatsAppUIOverlay {
         <input type="text" placeholder="Buscar notas..." class="princhat-schedules-search-input" />
       </div>
 
-      <div class="princhat-global-schedules-content"></div>
+      <div class="princhat-global-popup-content"></div>
     `;
 
     document.body.appendChild(popup);
@@ -5456,36 +5455,104 @@ class WhatsAppUIOverlay {
     popup.style.right = `${window.innerWidth - rect.right}px`;
     popup.style.width = '500px';
 
-    // Create content area with grid for notes
-    const content = document.createElement('div');
-    content.className = 'princhat-global-popup-content';
+    // Close button handler
+    const closeBtn = popup.querySelector('.princhat-global-popup-close');
+    closeBtn?.addEventListener('click', () => {
+      popup.remove();
+      this.globalNotesPopup = null;
+    });
 
-    if (allNotes.length === 0) {
-      // Empty state
-      content.innerHTML = `
-        <div class="princhat-global-empty-state">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
-            <path d="M2 6h4"/>
-            <path d="M2 10h4"/>
-            <path d="M2 14h4"/>
-            <path d="M2 18h4"/>
-            <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>
-          </svg>
-          <p>Nenhuma nota criada</p>
-          <span>Notas criadas nos chats aparecerão aqui</span>
-        </div>
-      `;
-    } else {
+    // Close on outside click
+    const closeOnOutsideClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // Check if click is inside any modal
+      const isModal = target.closest('.princhat-modal-overlay') ||
+        target.closest('.princhat-note-modal') ||
+        target.closest('.princhat-note-editor-modal');
+
+      if (!popup.contains(target) && !button.contains(target) && !isModal && this.globalNotesPopup) {
+        popup.remove();
+        this.globalNotesPopup = null;
+        document.removeEventListener('click', closeOnOutsideClick);
+      }
+    };
+
+    setTimeout(() => {
+      document.addEventListener('click', closeOnOutsideClick);
+    }, 0);
+
+    // Initial load
+    await this.refreshGlobalNotesPopup();
+
+    // Search handler
+    const searchInput = popup.querySelector('.princhat-schedules-search-input');
+    searchInput?.addEventListener('input', (e) => {
+      const query = (e.target as HTMLInputElement).value;
+      this.refreshGlobalNotesPopup(query);
+    });
+  }
+
+  /**
+   * Refresh global notes popup content
+   */
+  private async refreshGlobalNotesPopup(searchQuery: string = '') {
+    if (!this.globalNotesPopup) return;
+
+    const contentContainer = this.globalNotesPopup.querySelector('.princhat-global-popup-content');
+    if (!contentContainer) return;
+
+    // Show loading state if needed, or just refresh transparently
+    // contentContainer.innerHTML = '<div class="princhat-loading">Carregando...</div>';
+
+    try {
+      // Load ALL notes
+      const response = await this.requestFromContentScript({
+        type: 'GET_ALL_NOTES'
+      });
+
+      const allNotes: Note[] = response?.data || [];
+
+      // Filter by search query
+      let filteredNotes = allNotes;
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase();
+        filteredNotes = allNotes.filter(n =>
+          n.title.toLowerCase().includes(query) ||
+          n.content.toLowerCase().includes(query) ||
+          (n.chatName && n.chatName.toLowerCase().includes(query))
+        );
+      }
+
+      // Update badge count based on total notes (not filtered)
+      this.updateNotesBadge();
+
+      if (filteredNotes.length === 0) {
+        // Empty state
+        contentContainer.innerHTML = `
+          <div class="princhat-global-empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
+              <path d="M2 6h4"/>
+              <path d="M2 10h4"/>
+              <path d="M2 14h4"/>
+              <path d="M2 18h4"/>
+              <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>
+            </svg>
+            <p>${searchQuery ? 'Nenhuma nota encontrada' : 'Nenhuma nota criada'}</p>
+            <span>${searchQuery ? 'Tente buscar por outro termo' : 'Notas criadas nos chats aparecerão aqui'}</span>
+          </div>
+        `;
+        return;
+      }
+
       // Create grid of note cards
       const grid = document.createElement('div');
       grid.className = 'princhat-global-notes-grid';
 
-      allNotes.forEach(note => {
+      filteredNotes.forEach(note => {
         const card = document.createElement('div');
         card.className = 'princhat-note-card';
         card.dataset.noteId = note.id;
-
 
         // Get text preview
         const preview = this.getTextPreview(note.content, 80);
@@ -5494,7 +5561,7 @@ class WhatsAppUIOverlay {
           month: 'short',
           year: 'numeric'
         });
-        // Avatar: use first letter of contact name (no external URL to avoid CSP violation)
+        // Avatar: use first letter of contact name
         const initial = (note.chatName || 'U').charAt(0).toUpperCase();
 
         card.innerHTML = `
@@ -5549,10 +5616,11 @@ class WhatsAppUIOverlay {
         grid.appendChild(card);
       });
 
-      content.appendChild(grid);
+      contentContainer.innerHTML = '';
+      contentContainer.appendChild(grid);
 
       // Load contact photos asynchronously for global notes
-      allNotes.forEach(note => {
+      filteredNotes.forEach(note => {
         if (!note.chatId) return;
 
         this.requestFromContentScript({ type: 'GET_CHAT_PHOTO', payload: { chatId: note.chatId } })
@@ -5574,68 +5642,37 @@ class WhatsAppUIOverlay {
       });
 
       // Add event listeners for card actions
-      setTimeout(() => {
-        popup.querySelectorAll('.princhat-script-btn-icon').forEach(btn => {
-          btn.addEventListener('click', async (e) => {
-            e.stopPropagation();
-            const noteId = (btn as HTMLElement).dataset.noteId!;
-            const action = (btn as HTMLElement).dataset.action!;
+      contentContainer.querySelectorAll('.princhat-script-btn-icon').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const noteId = (btn as HTMLElement).dataset.noteId!;
+          const action = (btn as HTMLElement).dataset.action!;
 
-            const note = allNotes.find(n => n.id === noteId);
-            if (!note) return;
+          const note = filteredNotes.find(n => n.id === noteId);
+          if (!note) return;
 
-            if (action === 'view') {
-              // TODO: Implement openNoteEditorModal() method
-              console.log('[PrinChat UI] View note:', note);
-            } else if (action === 'edit') {
-              // TODO: Implement openNoteEditorModal() method
-              console.log('[PrinChat UI] Edit note:', note);
-            } else if (action === 'delete') {
-              // TODO: Implement showNoteDeleteConfirmation() method
-              console.log('[PrinChat UI] Delete note:', noteId);
-              // Refresh popup after delete
-              // popup.remove();
-              // this.globalNotesPopup = null;
-              // this.toggleGlobalNotesPopup(button);
-            }
-          });
+          if (action === 'view') {
+            await this.openNoteEditorModal(note.chatId, note.chatName || 'Contato', '', note, true);
+          } else if (action === 'edit') {
+            // Pass callback to refresh THIS popup instead of chat specific one
+            await this.openNoteEditorModal(note.chatId, note.chatName || 'Contato', '', note, false, {
+              onSave: () => this.refreshGlobalNotesPopup(searchQuery)
+            });
+          } else if (action === 'delete') {
+            // Pass callback to refresh THIS popup
+            this.showNoteDeleteConfirmation(note.id, note.chatId, {
+              onSuccess: () => this.refreshGlobalNotesPopup(searchQuery)
+            });
+          }
         });
-      }, 0);
-    }
+      });
 
-    // Add content to popup (CRITICAL: was missing, causing cards not to display!)
-    popup.appendChild(content);
-
-    // Position popup below button
-    document.body.appendChild(popup);
-
-    const buttonRect = button.getBoundingClientRect();
-    popup.style.top = `${buttonRect.bottom + 8}px`;
-    popup.style.right = `${window.innerWidth - buttonRect.right}px`;
-
-    // Close button handler
-    const closeBtn = popup.querySelector('.princhat-global-popup-close');
-    closeBtn?.addEventListener('click', () => {
-      popup.remove();
-      this.globalNotesPopup = null;
-    });
-
-    // Close on outside click
-    const closeOnOutsideClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!popup.contains(target) && !button.contains(target)) {
-        popup.remove();
-        this.globalNotesPopup = null;
-        document.removeEventListener('click', closeOnOutsideClick);
+    } catch (error) {
+      console.error('[PrinChat UI] Error refreshing global notes:', error);
+      if (contentContainer) {
+        contentContainer.innerHTML = '<div class="princhat-error">Erro ao carregar notas</div>';
       }
-    };
-
-    setTimeout(() => {
-      document.addEventListener('click', closeOnOutsideClick);
-    }, 0);
-
-    // Store reference
-    this.globalNotesPopup = popup;
+    }
   }
 
   // Helper method to format note dates (currently unused, keeping for potential future use)
