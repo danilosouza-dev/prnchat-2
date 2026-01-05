@@ -3226,6 +3226,10 @@ class WhatsAppUIOverlay {
       this.globalSchedulesPopup.remove();
       this.globalSchedulesPopup = null;
     }
+    if (this.globalNotesPopup) {
+      this.globalNotesPopup.remove();
+      this.globalNotesPopup = null;
+    }
   }
 
   /**
