@@ -751,8 +751,10 @@ class DatabaseService {
   }
 
   async getNotesByChatId(chatId: string): Promise<Note[]> {
+    console.log('[DB] getNotesByChatId called with chatId:', chatId);
     const db = await this.init();
     const notes = await db.getAllFromIndex('notes', 'by-chatId', chatId);
+    console.log('[DB] getNotesByChatId found', notes.length, 'notes:', notes);
     // Sort by creation date descending (newest first)
     return notes.sort((a, b) => b.createdAt - a.createdAt);
   }

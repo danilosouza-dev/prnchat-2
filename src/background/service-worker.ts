@@ -282,6 +282,74 @@ class BackgroundService {
         return true;
 
 
+      case 'CREATE_NOTE':
+        (async () => {
+          try {
+            const note = await db.createNote(message.payload);
+            sendResponse({ success: true, data: note });
+          } catch (error: any) {
+            console.error('[Background] Error creating note:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'UPDATE_NOTE':
+        (async () => {
+          try {
+            await db.updateNote(message.payload.id, message.payload);
+            sendResponse({ success: true });
+          } catch (error: any) {
+            console.error('[Background] Error updating note:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'GET_NOTES_BY_CHAT':
+        (async () => {
+          try {
+            console.log('[Background] GET_NOTES_BY_CHAT handler called');
+            console.log('[Background] Payload:', message.payload);
+            console.log('[Background] ChatId:', message.payload.chatId);
+
+            const notes = await db.getNotesByChatId(message.payload.chatId);
+
+            console.log('[Background] Notes retrieved:', notes);
+            console.log('[Background] Notes count:', notes.length);
+
+            sendResponse({ success: true, data: notes });
+          } catch (error: any) {
+            console.error('[Background] Error getting notes by chat:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'GET_NOTE':
+        (async () => {
+          try {
+            const note = await db.getNote(message.payload.id);
+            sendResponse({ success: true, data: note });
+          } catch (error: any) {
+            console.error('[Background] Error getting note:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'DELETE_NOTE':
+        (async () => {
+          try {
+            await db.deleteNote(message.payload.id);
+            sendResponse({ success: true });
+          } catch (error: any) {
+            console.error('[Background] Error deleting note:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
       case 'OPEN_OPTIONS':
         // Open options page (from profile dropdown)
         chrome.runtime.openOptionsPage();
