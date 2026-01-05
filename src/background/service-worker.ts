@@ -350,6 +350,20 @@ class BackgroundService {
         })();
         return true;
 
+      case 'GET_ALL_NOTES':
+        (async () => {
+          try {
+            console.log('[Background] GET_ALL_NOTES request received');
+            const notes = await db.getAllNotes();
+            console.log('[Background] Fetched', notes.length, 'notes:', notes);
+            sendResponse({ success: true, data: notes });
+          } catch (error: any) {
+            console.error('[Background] Error getting all notes:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
       case 'OPEN_OPTIONS':
         // Open options page (from profile dropdown)
         chrome.runtime.openOptionsPage();
