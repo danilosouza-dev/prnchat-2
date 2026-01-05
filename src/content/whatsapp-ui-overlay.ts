@@ -5392,32 +5392,43 @@ class WhatsAppUIOverlay {
     const allNotes: Note[] = response?.data || [];
     console.log('[PrinChat UI] Loaded', allNotes.length, 'notes from all chats');
 
+    // Update badge count
+    this.updateNotesBadge();
+
     // Create popup
     const popup = document.createElement('div');
-    popup.className = 'princhat-global-notes-popup';
+    popup.className = 'princhat-global-schedules-popup'; // Reuse schedules popup class for consistent styling
 
-    // Create header
-    const header = document.createElement('div');
-    header.className = 'princhat-global-popup-header';
-    header.innerHTML = `
-      <div class="princhat-global-popup-title">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
-          <path d="M2 6h4"/>
-          <path d="M2 10h4"/>
-          <path d="M2 14h4"/>
-          <path d="M2 18h4"/>
-          <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>
-        </svg>
-        Todas as Notas
+    // Create header with standard h3 (same as schedules)
+    popup.innerHTML = `
+      <div class="princhat-global-schedules-header">
+        <h3>Notas</h3>
+        <button class="princhat-popup-close-btn" title="Fechar">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
       </div>
-      <button class="princhat-global-popup-close">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="18" y1="6" x2="6" y2="18"/>
-          <line x1="6" y1="6" x2="18" y2="18"/>
+
+      <div class="princhat-global-schedules-search">
+        <svg class="princhat-search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
         </svg>
-      </button>
+        <input type="text" placeholder="Buscar notas..." class="princhat-schedules-search-input" />
+      </div>
+
+      <div class="princhat-global-schedules-content"></div>
     `;
+
+    document.body.appendChild(popup);
+    this.globalNotesPopup = popup;
+
+    // Position popup below button (same as schedules)
+    const rect = button.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.top = `${rect.bottom + 8}px`;
+    popup.style.right = `${window.innerWidth - rect.right}px`;
+    popup.style.width = '500px';
 
     // Create content area with grid for notes
     const content = document.createElement('div');
@@ -5529,9 +5540,6 @@ class WhatsAppUIOverlay {
         });
       }, 0);
     }
-
-    popup.appendChild(header);
-    popup.appendChild(content);
 
     // Position popup below button
     document.body.appendChild(popup);
@@ -8415,6 +8423,17 @@ class WhatsAppUIOverlay {
         button.appendChild(badge);
         // Store reference for updates
         button.dataset.executionsBadge = 'true';
+      }
+
+      // Add notes badge for notes button (dynamic count)
+      if (icon.name === 'notes') {
+        const badge = document.createElement('span');
+        badge.className = 'princhat-notes-badge';
+        badge.textContent = '0';
+        badge.style.display = 'none'; // Hidden when 0
+        button.appendChild(badge);
+        // Store reference for updates
+        button.dataset.notesBadge = 'true';
       }
 
       // Add click handler
