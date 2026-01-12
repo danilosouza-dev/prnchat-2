@@ -4269,9 +4269,10 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
   border-color: #e91e63;
 }
 
-/* Notes badge (EXACT copy of schedule badge) */
+/* Notes and Schedules badges (same styling) */
 .notes-badge,
-.princhat-notes-badge {
+.princhat-notes-badge,
+.princhat-schedules-badge {
   position: absolute;
   top: -4px;
   right: -4px;
