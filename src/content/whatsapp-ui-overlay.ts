@@ -187,6 +187,10 @@ class WhatsAppUIOverlay {
       this.createCustomHeader();
       console.log('[PrinChat UI] ✓ Custom header created');
 
+      // Update badge counts on load
+      this.updateGlobalNotesBadge();
+      this.updateGlobalSchedulesBadge();
+
       console.log('[PrinChat UI] Step 4: Creating shortcut bar...');
       this.createShortcutBar();
       console.log('[PrinChat UI] ✓ Shortcut bar created');
@@ -4448,6 +4452,7 @@ class WhatsAppUIOverlay {
 
         // Update badge
         this.updateNotesBadge();
+        this.updateGlobalNotesBadge();
       } catch (error) {
         console.error('[PrinChat UI] Error saving note:', error);
         alert('Erro ao salvar nota');
@@ -4915,6 +4920,7 @@ class WhatsAppUIOverlay {
           await this.refreshNotesList(chatId);
           this.updateNotesBadge();
         }
+        this.updateGlobalNotesBadge();
       } catch (error) {
         console.error('[PrinChat UI] Error deleting note:', error);
         alert('Erro ao excluir nota');
@@ -5083,6 +5089,7 @@ class WhatsAppUIOverlay {
         this.renderGlobalSchedulesContent(this.globalSchedulesActiveTab, searchInput?.value || '');
         console.log('[PrinChat UI] Global popup updated after deletion');
       }
+      this.updateGlobalSchedulesBadge();
     } catch (error) {
       console.error('[PrinChat UI] Error deleting schedule:', error);
       alert('Erro ao cancelar agendamento');
@@ -5718,6 +5725,7 @@ class WhatsAppUIOverlay {
               onSuccess: () => {
                 this.refreshGlobalNotesPopup(searchQuery);
                 this.updateNotesBadge();
+                this.updateGlobalNotesBadge();
               }
             });
           }
@@ -7110,6 +7118,9 @@ class WhatsAppUIOverlay {
 
         // Update schedule button (check if should transform to icon)
         await this.updateScheduleButton();
+
+        // Update global schedules badge
+        this.updateGlobalSchedulesBadge();
 
         // Intelligent popup refresh/reopen logic
         // IMPORTANT: Don't reopen chat popup if global popup is open (editing from global view)
@@ -8595,6 +8606,17 @@ class WhatsAppUIOverlay {
         button.dataset.notesBadge = 'true';
       }
 
+      // Add schedules badge for schedules button (dynamic count)
+      if (icon.name === 'schedules') {
+        const badge = document.createElement('span');
+        badge.className = 'princhat-schedules-badge';
+        badge.textContent = '0';
+        badge.style.display = 'none'; // Hidden when 0
+        button.appendChild(badge);
+        // Store reference for updates
+        button.dataset.schedulesBadge = 'true';
+      }
+
       // Add click handler
       button.addEventListener('click', () => {
         console.log(`[PrinChat UI] Header icon clicked: ${icon.name}`);
@@ -9391,6 +9413,53 @@ class WhatsAppUIOverlay {
       }
     } catch (error) {
       console.error('[PrinChat UI] Error updating notes badge:', error);
+    }
+  }
+
+  /**
+   * Update global notes badge count (header icon)
+   */
+  private async updateGlobalNotesBadge() {
+    try {
+      const response = await this.requestFromContentScript({
+        type: 'GET_ALL_NOTES'
+      }) as any;
+
+      const notes = response?.data || [];
+      const count = notes.length;
+
+      const badge = document.querySelector('[data-notes-badge="true"] .princhat-notes-badge') as HTMLElement;
+      if (badge) {
+        badge.textContent = count.toString();
+        badge.style.display = count > 0 ? 'flex' : 'none';
+      }
+    } catch (error) {
+      console.error('[PrinChat UI] Error updating global notes badge:', error);
+    }
+  }
+
+  /**
+   * Update global schedules badge count (header icon)
+   * Only shows count for pending and paused schedules (not completed/cancelled/failed)
+   */
+  private async updateGlobalSchedulesBadge() {
+    try {
+      const response = await this.requestFromContentScript({
+        type: 'GET_ALL_SCHEDULES'
+      }) as any;
+
+      const schedules = response?.data || [];
+      // Count only pending and paused schedules (not completed, cancelled, or failed)
+      const activeSchedules = schedules.filter((s: Schedule) => s.status === 'pending' || s.status === 'paused');
+      const count = activeSchedules.length;
+
+      const badge = document.querySelector('[data-schedules-badge="true"] .princhat-schedules-badge') as HTMLElement;
+      if (badge) {
+        badge.textContent = count.toString();
+        badge.style.display = count > 0 ? 'flex' : 'none';
+      }
+    } catch (error) {
+      console.error('[PrinChat UI] Error updating global schedules badge:', error);
     }
   }
 
