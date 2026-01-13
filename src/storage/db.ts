@@ -5,6 +5,7 @@
 
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
 import type { Message, Script, Trigger, Tag, Folder, Settings, Signature, Schedule, Note } from '@/types';
+import type { KanbanColumn, LeadContact } from '../types/kanban';
 
 interface PrinChatDB extends DBSchema {
   messages: {
@@ -70,12 +71,22 @@ interface PrinChatDB extends DBSchema {
     value: Note;
     indexes: { 'by-chatId': string; 'by-created': number };
   };
+  kanban_columns: {
+    key: string;
+    value: KanbanColumn;
+    indexes: { 'by-order': number };
+  };
+  kanban_leads: {
+    key: string;
+    value: LeadContact;
+    indexes: { 'by-columnId': string; 'by-order': number };
+  };
 }
 
 class DatabaseService {
   private db: IDBPDatabase<PrinChatDB> | null = null;
   private readonly DB_NAME = 'princhat-db';
-  private readonly DB_VERSION = 7; // Updated to version 7 for notes support
+  private readonly DB_VERSION = 8; // Updated to version 8 for Kanban support
 
   async init(): Promise<IDBPDatabase<PrinChatDB>> {
     console.log(`[PrinChat DB] Init called. DB: ${this.DB_NAME} v${this.DB_VERSION}`);
@@ -168,6 +179,19 @@ class DatabaseService {
           const notesStore = db.createObjectStore('notes', { keyPath: 'id' });
           notesStore.createIndex('by-chatId', 'chatId');
           notesStore.createIndex('by-created', 'createdAt');
+        }
+
+        // Kanban columns store
+        if (!db.objectStoreNames.contains('kanban_columns')) {
+          const kanbanColumnsStore = db.createObjectStore('kanban_columns', { keyPath: 'id' });
+          kanbanColumnsStore.createIndex('by-order', 'order');
+        }
+
+        // Kanban leads store
+        if (!db.objectStoreNames.contains('kanban_leads')) {
+          const kanbanLeadsStore = db.createObjectStore('kanban_leads', { keyPath: 'id' });
+          kanbanLeadsStore.createIndex('by-columnId', 'columnId');
+          kanbanLeadsStore.createIndex('by-order', 'order');
         }
       },
     });
