@@ -383,8 +383,8 @@ class BackgroundService {
         (async () => {
           try {
             console.log('[Background] CREATE_KANBAN_COLUMN request received:', message.payload);
-            const { name, color } = message.payload;
-            const column = await db.createKanbanColumn(name, color);
+            const { name, color, description } = message.payload;
+            const column = await db.createKanbanColumn(name, color, description);
             console.log('[Background] Column created:', column.id);
             sendResponse({ success: true, data: column });
           } catch (error: any) {

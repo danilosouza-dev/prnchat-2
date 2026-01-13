@@ -9932,6 +9932,15 @@ class WhatsAppUIOverlay {
           </svg>
         </button>
         <h3>${column.name} ${inboxTag}</h3>
+        ${column.description ? `
+        <button class="princhat-kanban-info-btn" title="Ver descrição" data-column-id="${column.id}">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M12 16v-4"/>
+            <path d="M12 8h.01"/>
+          </svg>
+        </button>
+        ` : ''}
         <span class="princhat-kanban-column-count">0</span>
         <button class="princhat-kanban-column-menu-btn" title="Opções da coluna" data-column-id="${column.id}">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -9952,6 +9961,15 @@ class WhatsAppUIOverlay {
       menuBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         this.showColumnMenu(menuBtn, column);
+      });
+    }
+
+    // Add click handler for info button (description)
+    const infoBtn = columnEl.querySelector('.princhat-kanban-info-btn') as HTMLElement;
+    if (infoBtn && column.description) {
+      infoBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.showColumnDescription(infoBtn, column.description);
       });
     }
 
@@ -10126,6 +10144,35 @@ class WhatsAppUIOverlay {
   }
 
   /**
+   * Show column description tooltip
+   */
+  private showColumnDescription(button: HTMLElement, description: string) {
+    // Remove any existing tooltip
+    const existingTooltip = document.querySelector('.princhat-kanban-description-tooltip');
+    if (existingTooltip) existingTooltip.remove();
+
+    const tooltip = document.createElement('div');
+    tooltip.className = 'princhat-kanban-description-tooltip';
+    tooltip.textContent = description;
+
+    document.body.appendChild(tooltip);
+
+    const buttonRect = button.getBoundingClientRect();
+    tooltip.style.top = `${buttonRect.bottom + 8}px`;
+    tooltip.style.left = `${buttonRect.left + (buttonRect.width / 2)}px`;
+    tooltip.style.transform = 'translateX(-50%)';
+
+    // Close tooltip when clicking outside
+    const closeTooltip = (e: MouseEvent) => {
+      if (!tooltip.contains(e.target as Node) && e.target !== button) {
+        tooltip.remove();
+        document.removeEventListener('click', closeTooltip);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', closeTooltip), 0);
+  }
+
+  /**
    * Show edit column modal
    */
   private showEditColumnModal(column: any) {
@@ -10146,7 +10193,17 @@ class WhatsAppUIOverlay {
           </div>
           <div class="princhat-kanban-form-group">
             <label>Cor</label>
-            <input type="color" class="princhat-kanban-color-input" id="column-color" value="${column.color}" />
+            <div class="princhat-kanban-color-picker-wrapper">
+              <input type="color" class="princhat-kanban-color-input" id="column-color" value="${column.color}" />
+              <div class="princhat-kanban-color-preview">
+                <div class="princhat-kanban-color-swatch" style="background-color: ${column.color};"></div>
+                <span class="princhat-kanban-color-value">${column.color}</span>
+              </div>
+            </div>
+          </div>
+          <div class="princhat-kanban-form-group">
+            <label>Descrição (Opcional)</label>
+            <textarea class="princhat-kanban-textarea" id="column-description" placeholder="Descreva o propósito desta coluna..." rows="3">${column.description || ''}</textarea>
           </div>
         </div>
         <div class="princhat-kanban-modal-footer">
@@ -10158,6 +10215,17 @@ class WhatsAppUIOverlay {
 
     document.body.appendChild(modal);
 
+    // Update color preview in real-time
+    const colorInput = modal.querySelector('#column-color') as HTMLInputElement;
+    const colorSwatch = modal.querySelector('.princhat-kanban-color-swatch') as HTMLElement;
+    const colorValue = modal.querySelector('.princhat-kanban-color-value') as HTMLElement;
+
+    colorInput?.addEventListener('input', (e) => {
+      const color = (e.target as HTMLInputElement).value;
+      if (colorSwatch) colorSwatch.style.backgroundColor = color;
+      if (colorValue) colorValue.textContent = color;
+    });
+
     // Handle cancel
     const cancelBtn = modal.querySelector('[data-action="cancel"]');
     cancelBtn?.addEventListener('click', () => modal.remove());
@@ -10167,9 +10235,11 @@ class WhatsAppUIOverlay {
     saveBtn?.addEventListener('click', async () => {
       const nameInput = modal.querySelector('#column-name') as HTMLInputElement;
       const colorInput = modal.querySelector('#column-color') as HTMLInputElement;
+      const descriptionInput = modal.querySelector('#column-description') as HTMLTextAreaElement;
 
       const name = nameInput.value.trim();
       const color = colorInput.value;
+      const description = descriptionInput.value.trim() || undefined;
 
       if (!name) {
         alert('Nome da coluna é obrigatório');
@@ -10179,7 +10249,7 @@ class WhatsAppUIOverlay {
       try {
         await this.requestFromContentScript({
           type: 'UPDATE_KANBAN_COLUMN',
-          payload: { id: column.id, updates: { name, color } }
+          payload: { id: column.id, updates: { name, color, description } }
         });
 
         modal.remove();
@@ -10261,7 +10331,17 @@ class WhatsAppUIOverlay {
           </div>
           <div class="princhat-kanban-form-group">
             <label>Cor</label>
-            <input type="color" class="princhat-kanban-color-input" id="new-column-color" value="#3b82f6" />
+            <div class="princhat-kanban-color-picker-wrapper">
+              <input type="color" class="princhat-kanban-color-input" id="new-column-color" value="#3b82f6" />
+              <div class="princhat-kanban-color-preview">
+                <div class="princhat-kanban-color-swatch" style="background-color: #3b82f6;"></div>
+                <span class="princhat-kanban-color-value">#3b82f6</span>
+              </div>
+            </div>
+          </div>
+          <div class="princhat-kanban-form-group">
+            <label>Descrição (Opcional)</label>
+            <textarea class="princhat-kanban-textarea" id="new-column-description" placeholder="Descreva o propósito desta coluna..." rows="3"></textarea>
           </div>
         </div>
         <div class="princhat-kanban-modal-footer">
@@ -10277,6 +10357,17 @@ class WhatsAppUIOverlay {
     const nameInput = modal.querySelector('#new-column-name') as HTMLInputElement;
     setTimeout(() => nameInput?.focus(), 100);
 
+    // Update color preview in real-time
+    const colorInput = modal.querySelector('#new-column-color') as HTMLInputElement;
+    const colorSwatch = modal.querySelector('.princhat-kanban-color-swatch') as HTMLElement;
+    const colorValue = modal.querySelector('.princhat-kanban-color-value') as HTMLElement;
+
+    colorInput?.addEventListener('input', (e) => {
+      const color = (e.target as HTMLInputElement).value;
+      if (colorSwatch) colorSwatch.style.backgroundColor = color;
+      if (colorValue) colorValue.textContent = color;
+    });
+
     // Handle cancel
     const cancelBtn = modal.querySelector('[data-action="cancel"]');
     cancelBtn?.addEventListener('click', () => modal.remove());
@@ -10285,9 +10376,11 @@ class WhatsAppUIOverlay {
     const createBtn = modal.querySelector('[data-action="create"]');
     createBtn?.addEventListener('click', async () => {
       const colorInput = modal.querySelector('#new-column-color') as HTMLInputElement;
+      const descriptionInput = modal.querySelector('#new-column-description') as HTMLTextAreaElement;
 
       const name = nameInput.value.trim();
       const color = colorInput.value;
+      const description = descriptionInput.value.trim() || undefined;
 
       if (!name) {
         alert('Nome da coluna é obrigatório');
@@ -10297,7 +10390,7 @@ class WhatsAppUIOverlay {
       try {
         await this.requestFromContentScript({
           type: 'CREATE_KANBAN_COLUMN',
-          payload: { name, color }
+          payload: { name, color, description }
         });
 
         modal.remove();
