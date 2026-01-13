@@ -156,12 +156,15 @@ class WhatsAppUIOverlay {
   // MutationObserver to detect script popup size changes
   private scriptPopupObserver: MutationObserver | null = null;
 
-  // Schedule timer interval for real-time updates
   private scheduleTimerInterval: NodeJS.Timeout | null = null;
   private globalSchedulesTimerInterval: NodeJS.Timeout | null = null;
   private globalSchedulesData: Schedule[] = [];
   private globalSchedulesPopup: HTMLElement | null = null; // Global schedules popup
   private globalNotesPopup: HTMLElement | null = null; // Global notes popup
+
+  // Kanban System  
+  private kanbanOverlay: HTMLElement | null = null; // Fullscreen Kanban overlay
+  private isKanbanOpen: boolean = false;
 
 
   constructor() {
@@ -237,6 +240,11 @@ class WhatsAppUIOverlay {
       console.log('[PrinChat UI] Step 12.1: Injecting notes button...');
       this.injectNotesButton();
       console.log('[PrinChat UI] ✓ Notes button injected');
+
+      // Inject Kanban button into WhatsApp sidebar
+      console.log('[PrinChat UI] Step 12.2: Injecting Kanban button in sidebar...');
+      this.injectKanbanButton();
+      console.log('[PrinChat UI] ✓ Kanban button injected');
 
       // Monitor chat header changes
       console.log('[PrinChat UI] Step 13: Setting up chat header monitor...');
@@ -9600,6 +9608,399 @@ class WhatsAppUIOverlay {
     } catch (error: any) {
       console.error('[PrinChat UI] Error setting up chat header monitor:', error?.message || error);
     }
+  }
+
+  // ==================== KANBAN SYSTEM ====================
+
+  /**
+   * Inject Kanban button into WhatsApp sidebar
+   */
+  private injectKanbanButton() {
+    try {
+      console.log('[PrinChat UI] Injecting Kanban button into sidebar...');
+
+      // Check if button already exists
+      if (document.querySelector('.princhat-kanban-sidebar-btn')) {
+        console.log('[PrinChat UI] Kanban button already exists');
+        return;
+      }
+
+      // Try multiple selectors to find the sidebar container
+      let sidebarContainer = document.querySelector('header[data-tab="2"]');
+      if (!sidebarContainer) {
+        sidebarContainer = document.querySelector('div[data-tab="2"]');
+      }
+
+      if (!sidebarContainer) {
+        console.log('[PrinChat UI] Sidebar container not found, will retry...');
+        setTimeout(() => this.injectKanbanButton(), 1000);
+        return;
+      }
+
+      console.log('[PrinChat UI] Found sidebar container:', sidebarContainer.tagName);
+
+      // Find the Meta AI button (data-navbar-item-index="4")
+      const metaAiButton = sidebarContainer.querySelector('[data-navbar-item-index="4"]');
+      if (!metaAiButton || !metaAiButton.parentElement) {
+        console.log('[PrinChat UI] Meta AI button not found, will retry...');
+        setTimeout(() => this.injectKanbanButton(), 1000);
+        return;
+      }
+
+      console.log('[PrinChat UI] Found Meta AI button');
+
+      // Get the wrapper element of Meta AI button (the direct parent that we want to duplicate)
+      const metaAiWrapper = metaAiButton.closest('.x1c4vz4f.xs83m0k.xdl72j9') || metaAiButton.parentElement;
+
+      console.log('[PrinChat UI] Meta AI wrapper:', metaAiWrapper.className);
+
+      // Create Kanban button wrapper - same structure as Meta AI button
+      const buttonWrapper = document.createElement('div');
+      buttonWrapper.className = metaAiWrapper.className;
+
+      const buttonSpan = document.createElement('span');
+      buttonSpan.className = 'html-span xdj266r x14z9mp xat24cr x1lziwak xexx8yu xyri2b x18d9i69 x1c1uobl x1hl2dhg x16tdsg8 x1vvkbs x4k7w5x x1h91t0o x1h9r5lt x1jfb8zj xv2umb2 x1beo9mf xaigb6o x12ejxvf x3igimt xarpa2k xedcshv x1lytzrv x1t2pt76 x7ja8zs x1qrby5j';
+
+      const button = document.createElement('button');
+      button.setAttribute('aria-pressed', 'false');
+      button.setAttribute('aria-label', 'Kanban - Organização de Leads');
+      button.setAttribute('tabindex', '-1');
+      button.setAttribute('data-navbar-item', 'true');
+      button.setAttribute('data-navbar-item-selected', 'false');
+      button.className = 'xjb2p0i xk390pu x1heor9g x1ypdohk xjbqb8w x972fbf x10w94by x1qhh985 x14e42zd xtnn1bt x9v5kkp xmw7ebm xrdum7p xt8t1vi x1xc408v x129tdwq x15urzxu xh8yej3 x1y1aw1k xf159sx xwib8y2 xmzvs34 princhat-kanban-sidebar-btn';
+      button.setAttribute('data-navbar-item-index', '5');
+
+      const iconContainer = document.createElement('div');
+      iconContainer.className = 'x1c4vz4f xs83m0k xdl72j9 x1g77sc7 x78zum5 xozqiw3 x1oa3qoh x12fk4p8 xeuugli x2lwn1j x1nhvcw1 x1q0g3np x6s0dn4 xh8yej3';
+
+      const iconInner = document.createElement('div');
+      iconInner.className = 'x1c4vz4f xs83m0k xdl72j9 x1g77sc7 x78zum5 xozqiw3 x1oa3qoh x12fk4p8 xeuugli x2lwn1j x1nhvcw1 x1q0g3np x6s0dn4 x1n2onr6';
+      iconInner.style.flexGrow = '1';
+
+      const iconWrapper = document.createElement('div');
+
+      // Columns3 icon (Kanban representation)
+      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      icon.setAttribute('viewBox', '0 0 24 24');
+      icon.setAttribute('height', '24');
+      icon.setAttribute('width', '24');
+      icon.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+      icon.setAttribute('fill', 'none');
+      icon.setAttribute('aria-hidden', 'true');
+      icon.setAttribute('data-icon', 'kanban');
+
+      icon.innerHTML = `
+        <rect x="3" y="3" width="6" height="18" rx="1" stroke="currentColor" stroke-width="2" fill="none"/>
+        <rect x="12" y="3" width="3" height="18" rx="1" stroke="currentColor" stroke-width="2" fill="none"/>
+        <rect x="18" y="3" width="3" height="18" rx="1" stroke="currentColor" stroke-width="2" fill="none"/>
+      `;
+
+      iconWrapper.appendChild(icon);
+      iconInner.appendChild(iconWrapper);
+      iconContainer.appendChild(iconInner);
+      button.appendChild(iconContainer);
+      buttonSpan.appendChild(button);
+      buttonWrapper.appendChild(buttonSpan);
+
+      // Insert AFTER the Meta AI wrapper (below it)
+      if (metaAiWrapper.parentElement) {
+        metaAiWrapper.parentElement.insertBefore(buttonWrapper, metaAiWrapper.nextSibling);
+        console.log('[PrinChat UI] ✅ Kanban button inserted after Meta AI');
+      } else {
+        console.error('[PrinChat UI] ❌ Could not find parent element to insert button');
+        return;
+      }
+
+      // Add click handler
+      button.addEventListener('click', (e) => {
+        e.stopPropagation();
+        console.log('[PrinChat UI] Kanban button clicked');
+        this.toggleKanbanOverlay();
+      });
+
+      console.log('[PrinChat UI] ✅ Kanban button injected successfully');
+    } catch (error: any) {
+      console.error('[PrinChat UI] Error injecting Kanban button:', error?.message || error);
+      console.error('[PrinChat UI] Stack:', error?.stack);
+    }
+  }
+
+  /**
+   * Setup listeners on WhatsApp sidebar buttons to close Kanban when clicked
+   */
+  private setupSidebarListeners() {
+    try {
+      // Find all WhatsApp sidebar buttons (data-navbar-item)
+      const sidebarButtons = document.querySelectorAll('[data-navbar-item="true"]');
+
+      sidebarButtons.forEach((btn) => {
+        // Skip the Kanban button itself
+        if (btn.classList.contains('princhat-kanban-sidebar-btn')) {
+          return;
+        }
+
+        // Add click listener to close Kanban
+        btn.addEventListener('click', () => {
+          if (this.isKanbanOpen) {
+            console.log('[PrinChat UI] Sidebar button clicked, closing Kanban');
+            this.closeKanbanOverlay();
+          }
+        }, { once: false }); // Not once, so it works multiple times
+      });
+
+      console.log('[PrinChat UI] Sidebar listeners configured for', sidebarButtons.length - 1, 'buttons');
+    } catch (error: any) {
+      console.error('[PrinChat UI] Error setting up sidebar listeners:', error?.message || error);
+    }
+  }
+
+  /**
+   * Toggle Kanban fullscreen overlay
+   */
+  private toggleKanbanOverlay() {
+    if (this.isKanbanOpen) {
+      this.closeKanbanOverlay();
+    } else {
+      this.openKanbanOverlay();
+    }
+  }
+
+  /**
+   * Open Kanban fullscreen overlay
+   */
+  private async openKanbanOverlay() {
+    console.log('[PrinChat UI] Opening Kanban overlay...');
+
+    // Modify global header: hide extension icons, show "Nova Coluna" button
+    if (this.customHeader) {
+      const headerRight = this.customHeader.querySelector('.princhat-header-right');
+      if (headerRight) {
+        // Hide all header icons
+        headerRight.classList.add('princhat-hidden');
+
+        // Create and add "Nova Coluna" button
+        const newColumnBtn = document.createElement('button');
+        newColumnBtn.className = 'princhat-kanban-btn-new-column princhat-header-kanban-btn';
+        newColumnBtn.innerHTML = `
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+          Nova Coluna
+        `;
+        this.customHeader.appendChild(newColumnBtn);
+      }
+    }
+
+    // Mark Kanban sidebar button as active
+    const kanbanBtn = document.querySelector('.princhat-kanban-sidebar-btn');
+    if (kanbanBtn) {
+      kanbanBtn.setAttribute('data-navbar-item-selected', 'true');
+      kanbanBtn.setAttribute('aria-pressed', 'true');
+    }
+
+    // Add listeners to WhatsApp sidebar buttons to close Kanban when clicked
+    this.setupSidebarListeners();
+
+    // Create Kanban overlay that covers only WhatsApp content area
+    const overlay = document.createElement('div');
+    overlay.className = 'princhat-kanban-overlay';
+
+    overlay.innerHTML = `
+      <div class="princhat-kanban-board">
+        <div class="princhat-kanban-columns-container">
+          <!-- Columns will be rendered here -->
+        </div>
+      </div>
+    `;
+
+    // Find WhatsApp content area and insert overlay
+    const whatsappContent = document.querySelector('#app');
+    if (whatsappContent) {
+      whatsappContent.appendChild(overlay);
+    } else {
+      document.body.appendChild(overlay);
+    }
+
+    this.kanbanOverlay = overlay;
+    this.isKanbanOpen = true;
+
+    document.body.classList.add('princhat-kanban-active');
+
+    await this.renderKanbanColumns();
+
+    console.log('[PrinChat UI] ✅ Kanban overlay opened');
+  }
+
+  /**
+   * Close Kanban overlay
+   */
+  private closeKanbanOverlay() {
+    if (this.kanbanOverlay) {
+      this.kanbanOverlay.remove();
+      this.kanbanOverlay = null;
+    }
+
+    // Remove active state from Kanban sidebar button
+    const kanbanBtn = document.querySelector('.princhat-kanban-sidebar-btn');
+    if (kanbanBtn) {
+      kanbanBtn.setAttribute('data-navbar-item-selected', 'false');
+      kanbanBtn.setAttribute('aria-pressed', 'false');
+    }
+
+    // Restore global header: show extension icons, hide "Nova Coluna" button
+    if (this.customHeader) {
+      const headerRight = this.customHeader.querySelector('.princhat-header-right');
+      if (headerRight) {
+        headerRight.classList.remove('princhat-hidden');
+      }
+
+      // Remove "Nova Coluna" button
+      const newColumnBtn = this.customHeader.querySelector('.princhat-header-kanban-btn');
+      if (newColumnBtn) {
+        newColumnBtn.remove();
+      }
+    }
+
+    this.isKanbanOpen = false;
+    document.body.classList.remove('princhat-kanban-active');
+
+    console.log('[PrinChat UI] Kanban overlay closed');
+  }
+
+  /**
+   * Render Kanban columns (placeholder for now)
+   */
+  private async renderKanbanColumns() {
+    console.log('[PrinChat UI] Rendering Kanban columns...');
+
+    const container = this.kanbanOverlay?.querySelector('.princhat-kanban-columns-container');
+    if (!container) return;
+
+    // Placeholder with 4 default columns
+    container.innerHTML = `
+      <div class="princhat-kanban-column" data-column-id="recentes">
+        <div class="princhat-kanban-column-header" style="border-top: 3px solid #2196f3;">
+          <button class="princhat-kanban-column-drag" title="Arrastar coluna">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2v20"/>
+              <path d="m15 19-3 3-3-3"/>
+              <path d="m19 9 3 3-3 3"/>
+              <path d="M2 12h20"/>
+              <path d="m5 9-3 3 3 3"/>
+              <path d="m9 5 3-3 3 3"/>
+            </svg>
+          </button>
+          <h3>Recentes <span class="princhat-kanban-inbox-tag">Inbox</span></h3>
+          <span class="princhat-kanban-column-count">0</span>
+          <button class="princhat-kanban-column-menu-btn" title="Opções da coluna">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/>
+              <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/>
+              <circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/>
+            </svg>
+          </button>
+        </div>
+        <div class="princhat-kanban-column-body">
+          <p class="princhat-kanban-empty-message">Nenhum lead ainda</p>
+        </div>
+      </div>
+      
+      <div class="princhat-kanban-column" data-column-id="em-andamento">
+        <div class="princhat-kanban-column-header" style="border-top: 3px solid #ff9800;">
+          <button class="princhat-kanban-column-drag" title="Arrastar coluna">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2v20"/>
+              <path d="m15 19-3 3-3-3"/>
+              <path d="m19 9 3 3-3 3"/>
+              <path d="M2 12h20"/>
+              <path d="m5 9-3 3 3 3"/>
+              <path d="m9 5 3-3 3 3"/>
+            </svg>
+          </button>
+          <h3>Em Andamento</h3>
+          <span class="princhat-kanban-column-count">0</span>
+          <button class="princhat-kanban-column-menu-btn" title="Opções da coluna">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/>
+              <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/>
+              <circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/>
+            </svg>
+          </button>
+        </div>
+        <div class="princhat-kanban-column-body">
+          <p class="princhat-kanban-empty-message">Nenhum lead ainda</p>
+        </div>
+      </div>
+      
+      <div class="princhat-kanban-column" data-column-id="pendentes">
+        <div class="princhat-kanban-column-header" style="border-top: 3px solid #9c27b0;">
+          <button class="princhat-kanban-column-drag" title="Arrastar coluna">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2v20"/>
+              <path d="m15 19-3 3-3-3"/>
+              <path d="m19 9 3 3-3 3"/>
+              <path d="M2 12h20"/>
+              <path d="m5 9-3 3 3 3"/>
+              <path d="m9 5 3-3 3 3"/>
+            </svg>
+          </button>
+          <h3>Pendentes</h3>
+          <span class="princhat-kanban-column-count">0</span>
+          <button class="princhat-kanban-column-menu-btn" title="Opções da coluna">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/>
+              <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/>
+              <circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/>
+            </svg>
+          </button>
+        </div>
+        <div class="princhat-kanban-column-body">
+          <p class="princhat-kanban-empty-message">Nenhum lead ainda</p>
+        </div>
+      </div>
+      
+      <div class="princhat-kanban-column" data-column-id="concluidas">
+        <div class="princhat-kanban-column-header" style="border-top: 3px solid #4caf50;">
+          <button class="princhat-kanban-column-drag" title="Arrastar coluna">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2v20"/>
+              <path d="m15 19-3 3-3-3"/>
+              <path d="m19 9 3 3-3 3"/>
+              <path d="M2 12h20"/>
+              <path d="m5 9-3 3 3 3"/>
+              <path d="m9 5 3-3 3 3"/>
+            </svg>
+          </button>
+          <h3>Concluídas</h3>
+          <span class="princhat-kanban-column-count">0</span>
+          <button class="princhat-kanban-column-menu-btn" title="Opções da coluna">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/>
+              <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/>
+              <circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/>
+            </svg>
+          </button>
+        </div>
+        <div class="princhat-kanban-column-body">
+          <p class="princhat-kanban-empty-message">Nenhum lead ainda</p>
+        </div>
+      </div>
+    `;
+
+    // Add click handlers for menu buttons
+    const menuButtons = container.querySelectorAll('.princhat-kanban-column-menu-btn');
+    menuButtons.forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.showColumnMenu(btn as HTMLElement);
+      });
+    });
+  }
+
+  private showColumnMenu(_button: HTMLElement) {
+    // TODO: Implement column menu dropdown
+    console.log('[PrinChat UI] Show column menu');
+    // Will show options: Edit title, Change color
   }
 }
 

@@ -5291,6 +5291,7 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
   font-size: 11px;
   color: #666;
 }
+
 /* Avatar for note cards in global popup */
 .princhat-note-card-avatar {
   position: absolute;
@@ -5398,4 +5399,211 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
 /* Hide the old standalone icon */
 .princhat-note-card-icon {
   display: none;
+}
+
+/* ==================== KANBAN OVERLAY ==================== */
+
+/* Helper class to hide header icons when Kanban is open */
+.princhat-hidden {
+  display: none !important;
+}
+
+/* Kanban button in header (when Kanban is open) */
+.princhat-header-kanban-btn {
+  background: #e91e63;
+  border: none;
+  color: white;
+  padding: 10px 20px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.2s;
+  margin-right: 24px;
+}
+
+.princhat-header-kanban-btn:hover {
+  background: #f06292;
+}
+
+.princhat-header-kanban-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Overlay that covers WhatsApp content area exactly */
+.princhat-kanban-overlay {
+  position: fixed;
+  top: 70px;
+  /* Below extension header */
+  left: 72px;
+  /* After WhatsApp sidebar */
+  width: calc(100vw - 72px);
+  height: calc(100vh - 70px);
+  background: #161818;
+  /* Dark background to hide gap */
+  z-index: 999;
+  /* Lower than header (9999) */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+body.princhat-kanban-active {
+  overflow: hidden;
+}
+
+.princhat-kanban-board {
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 24px;
+  width: 100%;
+  height: 100%;
+}
+
+.princhat-kanban-columns-container {
+  display: flex;
+  gap: 20px;
+  height: 100%;
+  min-width: min-content;
+  width: 100%;
+}
+
+.princhat-kanban-column {
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  min-width: 280px;
+  /* Minimum width before horizontal scroll */
+  flex: 1;
+  /* Grow to fill available space */
+  max-width: 400px;
+  /* Maximum width per column */
+  flex-shrink: 1;
+  /* Allow shrinking */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.princhat-kanban-column-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid #2a2a2a;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+}
+
+/* Drag handle button */
+.princhat-kanban-column-drag {
+  background: transparent;
+  border: none;
+  color: #6e6e6e;
+  cursor: grab;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.princhat-kanban-column-drag:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #9e9e9e;
+}
+
+.princhat-kanban-column-drag:active {
+  cursor: grabbing;
+}
+
+.princhat-kanban-column-header h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #e0e0e0;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Inbox tag in Recentes column */
+.princhat-kanban-inbox-tag {
+  background: rgba(76, 175, 80, 0.15);
+  /* Green background */
+  color: #4caf50;
+  /* Green text */
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.princhat-kanban-column-count {
+  background: #2a2a2a;
+  color: #9e9e9e;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+/* Column menu button (3 dots) */
+.princhat-kanban-column-menu-btn {
+  background: transparent;
+  border: none;
+  color: #6e6e6e;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.princhat-kanban-column-menu-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #e91e63;
+}
+
+.princhat-kanban-column-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.princhat-kanban-empty-message {
+  color: #6e6e6e;
+  font-size: 13px;
+  text-align: center;
+  padding: 40px 20px;
+  margin: 0;
+}
+
+/* Kanban button in WhatsApp sidebar */
+.princhat-kanban-sidebar-btn:hover {
+  background: rgba(233, 30, 99, 0.1) !important;
+  color: #e91e63 !important;
+}
+
+/* Kanban button active/selected state */
+.princhat-kanban-sidebar-btn[data-navbar-item-selected="true"] {
+  background: rgba(233, 30, 99, 0.1) !important;
+  color: #e91e63 !important;
 }
