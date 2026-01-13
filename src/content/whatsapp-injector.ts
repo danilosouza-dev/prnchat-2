@@ -657,7 +657,10 @@
             message.type === 'GET_SIGNATURE' || message.type === 'TOGGLE_SIGNATURE_ACTIVE' ||
             message.type === 'SAVE_SCHEDULE' || message.type === 'GET_SCHEDULES_BY_CHAT' || message.type === 'GET_ALL_SCHEDULES' ||
             message.type === 'DELETE_SCHEDULE' || message.type === 'UPDATE_SCHEDULE_STATUS' ||
-            message.type === 'GET_ALL_NOTES') {
+            message.type === 'GET_ALL_NOTES' ||
+            message.type === 'GET_KANBAN_COLUMNS' || message.type === 'CREATE_KANBAN_COLUMN' ||
+            message.type === 'UPDATE_KANBAN_COLUMN' || message.type === 'DELETE_KANBAN_COLUMN' ||
+            message.type === 'UPDATE_COLUMN_ORDER') {
             console.log('[PrinChat] Forwarding to background service worker...');
 
             // Check if extension context is still valid

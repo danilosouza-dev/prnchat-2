@@ -9787,7 +9787,12 @@ class WhatsAppUIOverlay {
           </svg>
           Nova Coluna
         `;
-        this.customHeader.appendChild(newColumnBtn);
+        newColumnBtn.addEventListener('click', () => {
+          console.log('[PrinChat UI] Nova Coluna button clicked!');
+          this.showNewColumnModal();
+        });
+        // Insert button before the headerRight element (sibling position)
+        headerRight.parentElement?.insertBefore(newColumnBtn, headerRight);
       }
     }
 
@@ -9868,7 +9873,7 @@ class WhatsAppUIOverlay {
   }
 
   /**
-   * Render Kanban columns (placeholder for now)
+   * Render Kanban columns from database
    */
   private async renderKanbanColumns() {
     console.log('[PrinChat UI] Rendering Kanban columns...');
@@ -9876,132 +9881,445 @@ class WhatsAppUIOverlay {
     const container = this.kanbanOverlay?.querySelector('.princhat-kanban-columns-container');
     if (!container) return;
 
-    // Placeholder with 4 default columns
-    container.innerHTML = `
-      <div class="princhat-kanban-column" data-column-id="recentes">
-        <div class="princhat-kanban-column-header" style="border-top: 3px solid #2196f3;">
-          <button class="princhat-kanban-column-drag" title="Arrastar coluna">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 2v20"/>
-              <path d="m15 19-3 3-3-3"/>
-              <path d="m19 9 3 3-3 3"/>
-              <path d="M2 12h20"/>
-              <path d="m5 9-3 3 3 3"/>
-              <path d="m9 5 3-3 3 3"/>
-            </svg>
-          </button>
-          <h3>Recentes <span class="princhat-kanban-inbox-tag">Inbox</span></h3>
-          <span class="princhat-kanban-column-count">0</span>
-          <button class="princhat-kanban-column-menu-btn" title="Opções da coluna">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/>
-              <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/>
-              <circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/>
-            </svg>
-          </button>
-        </div>
-        <div class="princhat-kanban-column-body">
-          <p class="princhat-kanban-empty-message">Nenhum lead ainda</p>
-        </div>
+    try {
+      // Fetch columns from database
+      const response = await this.requestFromContentScript({
+        type: 'GET_KANBAN_COLUMNS'
+      });
+
+      const columns = response?.data || [];
+      console.log('[PrinChat UI] Loaded', columns.length, 'Kanban columns');
+
+      // Clear container
+      container.innerHTML = '';
+
+      // Render each column
+      for (const column of columns) {
+        const columnEl = this.createColumnElement(column);
+        container.appendChild(columnEl);
+      }
+
+      // Setup drag and drop for column reordering
+      this.setupColumnDragAndDrop();
+
+    } catch (error: any) {
+      console.error('[PrinChat UI] Error rendering Kanban columns:', error);
+      container.innerHTML = '<p style="color: #ff6b6b; text-align: center; padding: 2rem;">Erro ao carregar colunas</p>';
+    }
+  }
+
+  /**
+   * Create a column DOM element
+   */
+  private createColumnElement(column: any): HTMLElement {
+    const columnEl = document.createElement('div');
+    columnEl.className = 'princhat-kanban-column';
+    columnEl.setAttribute('data-column-id', column.id);
+    columnEl.setAttribute('data-column-order', column.order.toString());
+
+    const inboxTag = column.isDefault ? '<span class="princhat-kanban-inbox-tag">Inbox</span>' : '';
+
+    columnEl.innerHTML = `
+      <div class="princhat-kanban-column-header" style="border-top: 3px solid ${column.color};">
+        <button class="princhat-kanban-column-drag" title="Arrastar coluna" ${!column.canEdit ? 'disabled' : ''}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2v20"/>
+            <path d="m15 19-3 3-3-3"/>
+            <path d="m19 9 3 3-3 3"/>
+            <path d="M2 12h20"/>
+            <path d="m5 9-3 3 3 3"/>
+            <path d="m9 5 3-3 3 3"/>
+          </svg>
+        </button>
+        <h3>${column.name} ${inboxTag}</h3>
+        <span class="princhat-kanban-column-count">0</span>
+        <button class="princhat-kanban-column-menu-btn" title="Opções da coluna" data-column-id="${column.id}">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/>
+            <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/>
+            <circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/>
+          </svg>
+        </button>
       </div>
-      
-      <div class="princhat-kanban-column" data-column-id="em-andamento">
-        <div class="princhat-kanban-column-header" style="border-top: 3px solid #ff9800;">
-          <button class="princhat-kanban-column-drag" title="Arrastar coluna">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 2v20"/>
-              <path d="m15 19-3 3-3-3"/>
-              <path d="m19 9 3 3-3 3"/>
-              <path d="M2 12h20"/>
-              <path d="m5 9-3 3 3 3"/>
-              <path d="m9 5 3-3 3 3"/>
-            </svg>
-          </button>
-          <h3>Em Andamento</h3>
-          <span class="princhat-kanban-column-count">0</span>
-          <button class="princhat-kanban-column-menu-btn" title="Opções da coluna">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/>
-              <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/>
-              <circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/>
-            </svg>
-          </button>
-        </div>
-        <div class="princhat-kanban-column-body">
-          <p class="princhat-kanban-empty-message">Nenhum lead ainda</p>
-        </div>
-      </div>
-      
-      <div class="princhat-kanban-column" data-column-id="pendentes">
-        <div class="princhat-kanban-column-header" style="border-top: 3px solid #9c27b0;">
-          <button class="princhat-kanban-column-drag" title="Arrastar coluna">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 2v20"/>
-              <path d="m15 19-3 3-3-3"/>
-              <path d="m19 9 3 3-3 3"/>
-              <path d="M2 12h20"/>
-              <path d="m5 9-3 3 3 3"/>
-              <path d="m9 5 3-3 3 3"/>
-            </svg>
-          </button>
-          <h3>Pendentes</h3>
-          <span class="princhat-kanban-column-count">0</span>
-          <button class="princhat-kanban-column-menu-btn" title="Opções da coluna">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/>
-              <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/>
-              <circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/>
-            </svg>
-          </button>
-        </div>
-        <div class="princhat-kanban-column-body">
-          <p class="princhat-kanban-empty-message">Nenhum lead ainda</p>
-        </div>
-      </div>
-      
-      <div class="princhat-kanban-column" data-column-id="concluidas">
-        <div class="princhat-kanban-column-header" style="border-top: 3px solid #4caf50;">
-          <button class="princhat-kanban-column-drag" title="Arrastar coluna">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 2v20"/>
-              <path d="m15 19-3 3-3-3"/>
-              <path d="m19 9 3 3-3 3"/>
-              <path d="M2 12h20"/>
-              <path d="m5 9-3 3 3 3"/>
-              <path d="m9 5 3-3 3 3"/>
-            </svg>
-          </button>
-          <h3>Concluídas</h3>
-          <span class="princhat-kanban-column-count">0</span>
-          <button class="princhat-kanban-column-menu-btn" title="Opções da coluna">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/>
-              <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/>
-              <circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/>
-            </svg>
-          </button>
-        </div>
-        <div class="princhat-kanban-column-body">
-          <p class="princhat-kanban-empty-message">Nenhum lead ainda</p>
-        </div>
+      <div class="princhat-kanban-column-body">
+        <p class="princhat-kanban-empty-message">Nenhum lead ainda</p>
       </div>
     `;
 
-    // Add click handlers for menu buttons
-    const menuButtons = container.querySelectorAll('.princhat-kanban-column-menu-btn');
-    menuButtons.forEach(btn => {
-      btn.addEventListener('click', (e) => {
+    // Add click handler for menu button
+    const menuBtn = columnEl.querySelector('.princhat-kanban-column-menu-btn') as HTMLElement;
+    if (menuBtn) {
+      menuBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        this.showColumnMenu(btn as HTMLElement);
+        this.showColumnMenu(menuBtn, column);
+      });
+    }
+
+    return columnEl;
+  }
+
+  /**
+   * Setup drag and drop for column reordering
+   */
+  private setupColumnDragAndDrop() {
+    const columns = this.kanbanOverlay?.querySelectorAll('.princhat-kanban-column');
+    if (!columns) return;
+
+    let draggedColumn: HTMLElement | null = null;
+
+    columns.forEach((column) => {
+      const dragBtn = column.querySelector('.princhat-kanban-column-drag') as HTMLElement;
+      if (!dragBtn || dragBtn.hasAttribute('disabled')) return;
+
+      // Make column draggable only from the drag handle
+      (column as HTMLElement).setAttribute('draggable', 'true');
+
+      // Set drag data only when dragging from handle
+      let isDraggingFromHandle = false;
+
+      dragBtn.addEventListener('mousedown', () => {
+        isDraggingFromHandle = true;
+      });
+
+      dragBtn.addEventListener('mouseup', () => {
+        isDraggingFromHandle = false;
+      });
+
+      (column as HTMLElement).addEventListener('dragstart', (e: any) => {
+        if (!isDraggingFromHandle) {
+          e.preventDefault();
+          return;
+        }
+
+        draggedColumn = column as HTMLElement;
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/html', column.innerHTML);
+        (column as HTMLElement).classList.add('dragging');
+        console.log('[PrinChat UI] Started dragging column:', draggedColumn.getAttribute('data-column-id'));
+      });
+
+      (column as HTMLElement).addEventListener('dragover', (e: any) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+
+        if (draggedColumn && draggedColumn !== column) {
+          (column as HTMLElement).classList.add('drag-over');
+        }
+      });
+
+      (column as HTMLElement).addEventListener('dragleave', () => {
+        (column as HTMLElement).classList.remove('drag-over');
+      });
+
+      (column as HTMLElement).addEventListener('drop', async (e: any) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (draggedColumn && draggedColumn !== column) {
+          const draggedId = draggedColumn.getAttribute('data-column-id');
+          const targetOrder = parseInt((column as HTMLElement).getAttribute('data-column-order') || '0');
+
+          console.log('[PrinChat UI] Reordering column:', draggedId, 'to order:', targetOrder);
+
+          try {
+            // Update order in database
+            await this.requestFromContentScript({
+              type: 'UPDATE_COLUMN_ORDER',
+              payload: { columnId: draggedId, newOrder: targetOrder }
+            });
+
+            // Re-render columns
+            await this.renderKanbanColumns();
+          } catch (error) {
+            console.error('[PrinChat UI] Error reordering column:', error);
+          }
+        }
+
+        // Clean up
+        columns.forEach(col => {
+          (col as HTMLElement).classList.remove('drag-over', 'dragging');
+        });
+        draggedColumn = null;
+        isDraggingFromHandle = false;
+      });
+
+      (column as HTMLElement).addEventListener('dragend', () => {
+        columns.forEach(col => {
+          (col as HTMLElement).classList.remove('drag-over', 'dragging');
+        });
+        draggedColumn = null;
+        isDraggingFromHandle = false;
       });
     });
   }
 
-  private showColumnMenu(_button: HTMLElement) {
-    // TODO: Implement column menu dropdown
-    console.log('[PrinChat UI] Show column menu');
-    // Will show options: Edit title, Change color
+  /**
+   * Show column menu dropdown
+   */
+  private showColumnMenu(button: HTMLElement, column: any) {
+    // Remove any existing menu
+    const existingMenu = document.querySelector('.princhat-kanban-column-menu');
+    if (existingMenu) existingMenu.remove();
+
+    // Create menu
+    const menu = document.createElement('div');
+    menu.className = 'princhat-kanban-column-menu';
+
+    const editOption = column.canEdit ? `
+      <button class="princhat-kanban-menu-item" data-action="edit">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+        </svg>
+        Editar coluna
+      </button>
+    ` : '';
+
+    const deleteOption = column.canDelete ? `
+      <button class="princhat-kanban-menu-item princhat-kanban-menu-item-danger" data-action="delete">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+        </svg>
+        Deletar coluna
+      </button>
+    ` : '';
+
+    menu.innerHTML = `
+      ${editOption}
+      ${deleteOption}
+      ${!editOption && !deleteOption ? '<p style="padding: 8px 12px; color: #94a3b8;">Coluna padrão não editável</p>' : ''}
+    `;
+
+    // Position menu
+    const rect = button.getBoundingClientRect();
+    menu.style.position = 'fixed';
+    menu.style.top = `${rect.bottom + 4}px`;
+    menu.style.left = `${rect.left - 150}px`; // Align to right of button
+
+    document.body.appendChild(menu);
+
+    // Add click handlers
+    const editBtn = menu.querySelector('[data-action="edit"]');
+    if (editBtn) {
+      editBtn.addEventListener('click', () => {
+        menu.remove();
+        this.showEditColumnModal(column);
+      });
+    }
+
+    const deleteBtn = menu.querySelector('[data-action="delete"]');
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', () => {
+        menu.remove();
+        this.showDeleteColumnConfirmation(column);
+      });
+    }
+
+    // Close menu when clicking outside
+    const closeMenu = (e: MouseEvent) => {
+      if (!menu.contains(e.target as Node) && e.target !== button) {
+        menu.remove();
+        document.removeEventListener('click', closeMenu);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', closeMenu), 0);
   }
+
+  /**
+   * Show edit column modal
+   */
+  private showEditColumnModal(column: any) {
+    // Remove existing modal
+    const existingModal = document.querySelector('.princhat-kanban-edit-modal');
+    if (existingModal) existingModal.remove();
+
+    const modal = document.createElement('div');
+    modal.className = 'princhat-kanban-modal-overlay';
+
+    modal.innerHTML = `
+      <div class="princhat-kanban-edit-modal">
+        <h2>Editar Coluna</h2>
+        <div class="princhat-kanban-modal-body">
+          <div class="princhat-kanban-form-group">
+            <label>Nome da Coluna</label>
+            <input type="text" class="princhat-kanban-input" id="column-name" value="${column.name}" />
+          </div>
+          <div class="princhat-kanban-form-group">
+            <label>Cor</label>
+            <input type="color" class="princhat-kanban-color-input" id="column-color" value="${column.color}" />
+          </div>
+        </div>
+        <div class="princhat-kanban-modal-footer">
+          <button class="princhat-kanban-btn princhat-kanban-btn-secondary" data-action="cancel">Cancelar</button>
+          <button class="princhat-kanban-btn princhat-kanban-btn-primary" data-action="save">Salvar</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // Handle cancel
+    const cancelBtn = modal.querySelector('[data-action="cancel"]');
+    cancelBtn?.addEventListener('click', () => modal.remove());
+
+    // Handle save
+    const saveBtn = modal.querySelector('[data-action="save"]');
+    saveBtn?.addEventListener('click', async () => {
+      const nameInput = modal.querySelector('#column-name') as HTMLInputElement;
+      const colorInput = modal.querySelector('#column-color') as HTMLInputElement;
+
+      const name = nameInput.value.trim();
+      const color = colorInput.value;
+
+      if (!name) {
+        alert('Nome da coluna é obrigatório');
+        return;
+      }
+
+      try {
+        await this.requestFromContentScript({
+          type: 'UPDATE_KANBAN_COLUMN',
+          payload: { id: column.id, updates: { name, color } }
+        });
+
+        modal.remove();
+        await this.renderKanbanColumns();
+      } catch (error: any) {
+        alert(error.message || 'Erro ao atualizar coluna');
+      }
+    });
+
+    // Close on overlay click
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) modal.remove();
+    });
+  }
+
+  /**
+   * Show delete column confirmation
+   */
+  private showDeleteColumnConfirmation(column: any) {
+    const modal = document.createElement('div');
+    modal.className = 'princhat-kanban-modal-overlay';
+
+    modal.innerHTML = `
+      <div class="princhat-kanban-edit-modal">
+        <h2>Deletar Coluna</h2>
+        <div class="princhat-kanban-modal-body">
+          <p>Tem certeza que deseja deletar a coluna "${column.name}"?</p>
+          <p style="color: #f59e0b; margin-top: 8px;">Esta ação não pode ser desfeita.</p>
+        </div>
+        <div class="princhat-kanban-modal-footer">
+          <button class="princhat-kanban-btn princhat-kanban-btn-secondary" data-action="cancel">Cancelar</button>
+          <button class="princhat-kanban-btn princhat-kanban-btn-danger" data-action="delete">Deletar</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // Handle cancel
+    const cancelBtn = modal.querySelector('[data-action="cancel"]');
+    cancelBtn?.addEventListener('click', () => modal.remove());
+
+    // Handle delete
+    const deleteBtn = modal.querySelector('[data-action="delete"]');
+    deleteBtn?.addEventListener('click', async () => {
+      try {
+        await this.requestFromContentScript({
+          type: 'DELETE_KANBAN_COLUMN',
+          payload: { id: column.id }
+        });
+
+        modal.remove();
+        await this.renderKanbanColumns();
+      } catch (error: any) {
+        alert(error.message || 'Erro ao deletar coluna');
+      }
+    });
+
+    // Close on overlay click
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) modal.remove();
+    });
+  }
+
+  /**
+   * Show new column creation modal
+   */
+  private showNewColumnModal() {
+    const modal = document.createElement('div');
+    modal.className = 'princhat-kanban-modal-overlay';
+
+    modal.innerHTML = `
+      <div class="princhat-kanban-edit-modal">
+        <h2>Nova Coluna</h2>
+        <div class="princhat-kanban-modal-body">
+          <div class="princhat-kanban-form-group">
+            <label>Nome da Coluna</label>
+            <input type="text" class="princhat-kanban-input" id="new-column-name" placeholder="Ex: Negociação" />
+          </div>
+          <div class="princhat-kanban-form-group">
+            <label>Cor</label>
+            <input type="color" class="princhat-kanban-color-input" id="new-column-color" value="#3b82f6" />
+          </div>
+        </div>
+        <div class="princhat-kanban-modal-footer">
+          <button class="princhat-kanban-btn princhat-kanban-btn-secondary" data-action="cancel">Cancelar</button>
+          <button class="princhat-kanban-btn princhat-kanban-btn-primary" data-action="create">Criar</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // Auto-focus name input
+    const nameInput = modal.querySelector('#new-column-name') as HTMLInputElement;
+    setTimeout(() => nameInput?.focus(), 100);
+
+    // Handle cancel
+    const cancelBtn = modal.querySelector('[data-action="cancel"]');
+    cancelBtn?.addEventListener('click', () => modal.remove());
+
+    // Handle create
+    const createBtn = modal.querySelector('[data-action="create"]');
+    createBtn?.addEventListener('click', async () => {
+      const colorInput = modal.querySelector('#new-column-color') as HTMLInputElement;
+
+      const name = nameInput.value.trim();
+      const color = colorInput.value;
+
+      if (!name) {
+        alert('Nome da coluna é obrigatório');
+        return;
+      }
+
+      try {
+        await this.requestFromContentScript({
+          type: 'CREATE_KANBAN_COLUMN',
+          payload: { name, color }
+        });
+
+        modal.remove();
+        await this.renderKanbanColumns();
+      } catch (error: any) {
+        alert(error.message || 'Erro ao criar coluna');
+      }
+    });
+
+    // Handle enter key
+    nameInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        createBtn?.dispatchEvent(new Event('click'));
+      }
+    });
+
+    // Close on overlay click
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) modal.remove();
+    });
+  }
+
 }
 
 // Initialize when DOM is ready
