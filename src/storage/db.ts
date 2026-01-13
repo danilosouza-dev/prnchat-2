@@ -6,6 +6,7 @@
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
 import type { Message, Script, Trigger, Tag, Folder, Settings, Signature, Schedule, Note } from '@/types';
 import type { KanbanColumn, LeadContact } from '../types/kanban';
+import { DEFAULT_KANBAN_COLUMNS } from '../types/kanban';
 
 interface PrinChatDB extends DBSchema {
   messages: {
@@ -214,6 +215,9 @@ class DatabaseService {
         showFloatingButton: true, // Show floating action button in WhatsApp Web
       });
     }
+
+    // Initialize default Kanban columns if none exist
+    await this.initializeDefaultKanbanColumns();
   }
 
   // ==================== MESSAGES ====================
@@ -831,6 +835,240 @@ class DatabaseService {
     const notes = await db.getAll('notes');
     // Sort by creation date descending (newest first)
     return notes.sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  // ==================== KANBAN COLUMNS ====================
+  /**
+   * Initialize default Kanban columns if none exist
+   */
+  private async initializeDefaultKanbanColumns(): Promise<void> {
+    const db = await this.init();
+    const existingColumns = await db.getAll('kanban_columns');
+
+    if (existingColumns.length === 0) {
+      console.log('[PrinChat DB] Initializing default Kanban columns...');
+
+      const now = Date.now();
+      for (const column of DEFAULT_KANBAN_COLUMNS) {
+        const kanbanColumn: KanbanColumn = {
+          ...column,
+          id: `kanban_col_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+          createdAt: now,
+          updatedAt: now,
+        };
+        await db.put('kanban_columns', kanbanColumn);
+        console.log('[PrinChat DB] Created default column:', kanbanColumn.name);
+      }
+      console.log('[PrinChat DB] ✅ Default Kanban columns initialized');
+    }
+  }
+
+  /**
+   * Save or update a Kanban column
+   */
+  async saveKanbanColumn(column: KanbanColumn): Promise<void> {
+    const db = await this.init();
+    await db.put('kanban_columns', column);
+
+    // Trigger chrome.storage change event for real-time updates
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        kanban_columns: Date.now()
+      });
+    }
+  }
+
+  /**
+   * Get a Kanban column by ID
+   */
+  async getKanbanColumn(id: string): Promise<KanbanColumn | undefined> {
+    const db = await this.init();
+    return db.get('kanban_columns', id);
+  }
+
+  /**
+   * Get all Kanban columns sorted by order
+   */
+  async getAllKanbanColumns(): Promise<KanbanColumn[]> {
+    const db = await this.init();
+    const columns = await db.getAllFromIndex('kanban_columns', 'by-order');
+    return columns;
+  }
+
+  /**
+   * Delete a Kanban column
+   * @param id Column ID to delete
+   * @throws Error if column is not deletable or has leads
+   */
+  async deleteKanbanColumn(id: string): Promise<void> {
+    const db = await this.init();
+    const column = await db.get('kanban_columns', id);
+
+    if (!column) {
+      throw new Error('Column not found');
+    }
+
+    if (!column.canDelete) {
+      throw new Error('Cannot delete default column');
+    }
+
+    // Check if column has any leads
+    const leads = await db.getAllFromIndex('kanban_leads', 'by-columnId', id);
+    if (leads.length > 0) {
+      throw new Error('Cannot delete column with leads. Move leads first.');
+    }
+
+    await db.delete('kanban_columns', id);
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        kanban_columns: Date.now()
+      });
+    }
+  }
+
+  /**
+   * Update column order
+   * @param columnId Column to move
+   * @param newOrder New order position (0-based)
+   */
+  async updateColumnOrder(columnId: string, newOrder: number): Promise<void> {
+    const db = await this.init();
+    const allColumns = await this.getAllKanbanColumns();
+
+    // Find the column to move
+    const columnToMove = allColumns.find(c => c.id === columnId);
+    if (!columnToMove) {
+      throw new Error('Column not found');
+    }
+
+    const oldOrder = columnToMove.order;
+
+    // Reorder columns
+    const updatedColumns = allColumns.map(col => {
+      if (col.id === columnId) {
+        return { ...col, order: newOrder, updatedAt: Date.now() };
+      } else {
+        // Shift other columns
+        if (oldOrder < newOrder) {
+          // Moving right
+          if (col.order > oldOrder && col.order <= newOrder) {
+            return { ...col, order: col.order - 1, updatedAt: Date.now() };
+          }
+        } else {
+          // Moving left
+          if (col.order >= newOrder && col.order < oldOrder) {
+            return { ...col, order: col.order + 1, updatedAt: Date.now() };
+          }
+        }
+        return col;
+      }
+    });
+
+    // Save all updated columns
+    for (const col of updatedColumns) {
+      await db.put('kanban_columns', col);
+    }
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        kanban_columns: Date.now()
+      });
+    }
+  }
+
+  /**
+   * Create a new Kanban column
+   */
+  async createKanbanColumn(
+    name: string,
+    color: string
+  ): Promise<KanbanColumn> {
+    const db = await this.init();
+    const existingColumns = await this.getAllKanbanColumns();
+
+    // Check for duplicate names
+    if (existingColumns.some(col => col.name.toLowerCase() === name.toLowerCase())) {
+      throw new Error('Column name already exists');
+    }
+
+    const now = Date.now();
+    const newColumn: KanbanColumn = {
+      id: `kanban_col_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+      name,
+      color,
+      order: existingColumns.length, // Add to end
+      isDefault: false,
+      canDelete: true,
+      canEdit: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await db.put('kanban_columns', newColumn);
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        kanban_columns: Date.now()
+      });
+    }
+
+    return newColumn;
+  }
+
+  /**
+   * Update Kanban column (name and/or color)
+   */
+  async updateKanbanColumn(
+    id: string,
+    updates: { name?: string; color?: string }
+  ): Promise<void> {
+    const db = await this.init();
+    const column = await db.get('kanban_columns', id);
+
+    if (!column) {
+      throw new Error('Column not found');
+    }
+
+    if (!column.canEdit) {
+      throw new Error('Cannot edit default column');
+    }
+
+    // Check for duplicate names if name is being updated
+    if (updates.name && updates.name !== column.name) {
+      const existingColumns = await this.getAllKanbanColumns();
+      if (existingColumns.some(col => col.id !== id && col.name.toLowerCase() === updates.name!.toLowerCase())) {
+        throw new Error('Column name already exists');
+      }
+    }
+
+    const updatedColumn: KanbanColumn = {
+      ...column,
+      ...updates,
+      updatedAt: Date.now(),
+    };
+
+    await db.put('kanban_columns', updatedColumn);
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        kanban_columns: Date.now()
+      });
+    }
+  }
+
+  // ==================== KANBAN LEADS ====================
+  /**
+   * Get leads for a specific column
+   */
+  async getLeadsByColumn(columnId: string): Promise<LeadContact[]> {
+    const db = await this.init();
+    const leads = await db.getAllFromIndex('kanban_leads', 'by-columnId', columnId);
+    return leads.sort((a, b) => a.order - b.order);
   }
 
   // ==================== UTILITY ====================

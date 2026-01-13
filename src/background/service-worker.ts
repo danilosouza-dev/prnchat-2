@@ -364,6 +364,81 @@ class BackgroundService {
         })();
         return true;
 
+      // ==================== KANBAN COLUMNS ====================
+      case 'GET_KANBAN_COLUMNS':
+        (async () => {
+          try {
+            console.log('[Background] GET_KANBAN_COLUMNS request received');
+            const columns = await db.getAllKanbanColumns();
+            console.log('[Background] Fetched', columns.length, 'columns');
+            sendResponse({ success: true, data: columns });
+          } catch (error: any) {
+            console.error('[Background] Error getting Kanban columns:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'CREATE_KANBAN_COLUMN':
+        (async () => {
+          try {
+            console.log('[Background] CREATE_KANBAN_COLUMN request received:', message.payload);
+            const { name, color } = message.payload;
+            const column = await db.createKanbanColumn(name, color);
+            console.log('[Background] Column created:', column.id);
+            sendResponse({ success: true, data: column });
+          } catch (error: any) {
+            console.error('[Background] Error creating Kanban column:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'UPDATE_KANBAN_COLUMN':
+        (async () => {
+          try {
+            console.log('[Background] UPDATE_KANBAN_COLUMN request received:', message.payload);
+            const { id, updates } = message.payload;
+            await db.updateKanbanColumn(id, updates);
+            console.log('[Background] Column updated:', id);
+            sendResponse({ success: true });
+          } catch (error: any) {
+            console.error('[Background] Error updating Kanban column:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'DELETE_KANBAN_COLUMN':
+        (async () => {
+          try {
+            console.log('[Background] DELETE_KANBAN_COLUMN request received:', message.payload);
+            const { id } = message.payload;
+            await db.deleteKanbanColumn(id);
+            console.log('[Background] Column deleted:', id);
+            sendResponse({ success: true });
+          } catch (error: any) {
+            console.error('[Background] Error deleting Kanban column:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'UPDATE_COLUMN_ORDER':
+        (async () => {
+          try {
+            console.log('[Background] UPDATE_COLUMN_ORDER request received:', message.payload);
+            const { columnId, newOrder } = message.payload;
+            await db.updateColumnOrder(columnId, newOrder);
+            console.log('[Background] Column order updated:', columnId, 'to', newOrder);
+            sendResponse({ success: true });
+          } catch (error: any) {
+            console.error('[Background] Error updating column order:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
       case 'OPEN_OPTIONS':
         // Open options page (from profile dropdown)
         chrome.runtime.openOptionsPage();
