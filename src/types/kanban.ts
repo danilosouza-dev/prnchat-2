@@ -11,6 +11,7 @@ export interface KanbanColumn {
     id: string;              // Unique identifier
     name: string;            // Display name (e.g., "Recentes", "Em Andamento")
     color: string;           // Column header color (hex)
+    description?: string;    // Optional column description
     order: number;           // Display order (0-based)
     isDefault: boolean;      // true for "Recentes" column
     canDelete: boolean;      // false for "Recentes" column
@@ -45,6 +46,7 @@ export const DEFAULT_KANBAN_COLUMNS: Omit<KanbanColumn, 'id' | 'createdAt' | 'up
     {
         name: 'Recentes',
         color: '#2196f3',      // Blue
+        description: 'Novos leads que chegaram recentemente e aguardam primeira interação',
         order: 0,
         isDefault: true,
         canDelete: false,
@@ -53,6 +55,7 @@ export const DEFAULT_KANBAN_COLUMNS: Omit<KanbanColumn, 'id' | 'createdAt' | 'up
     {
         name: 'Em Andamento',
         color: '#ff9800',      // Orange
+        description: 'Leads em processo ativo de negociação ou atendimento',
         order: 1,
         isDefault: false,
         canDelete: true,
@@ -61,6 +64,7 @@ export const DEFAULT_KANBAN_COLUMNS: Omit<KanbanColumn, 'id' | 'createdAt' | 'up
     {
         name: 'Pendentes',
         color: '#9c27b0',      // Purple
+        description: 'Leads aguardando resposta ou ação futura',
         order: 2,
         isDefault: false,
         canDelete: true,
@@ -69,6 +73,7 @@ export const DEFAULT_KANBAN_COLUMNS: Omit<KanbanColumn, 'id' | 'createdAt' | 'up
     {
         name: 'Concluídas',
         color: '#4caf50',      // Green
+        description: 'Negociações finalizadas com sucesso',
         order: 3,
         isDefault: false,
         canDelete: true,

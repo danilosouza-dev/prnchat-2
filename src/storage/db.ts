@@ -984,7 +984,8 @@ class DatabaseService {
    */
   async createKanbanColumn(
     name: string,
-    color: string
+    color: string,
+    description?: string
   ): Promise<KanbanColumn> {
     const db = await this.init();
     const existingColumns = await this.getAllKanbanColumns();
@@ -999,6 +1000,7 @@ class DatabaseService {
       id: `kanban_col_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
       name,
       color,
+      description,
       order: existingColumns.length, // Add to end
       isDefault: false,
       canDelete: true,
