@@ -45,7 +45,7 @@ export interface LeadContact {
 export const DEFAULT_KANBAN_COLUMNS: Omit<KanbanColumn, 'id' | 'createdAt' | 'updatedAt'>[] = [
     {
         name: 'Recentes',
-        color: '#2196f3',      // Blue
+        color: '#4caf50',      // Green (same as INBOX tag)
         description: 'Novos leads que chegaram recentemente e aguardam primeira interação',
         order: 0,
         isDefault: true,
