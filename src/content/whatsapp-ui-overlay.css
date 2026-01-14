@@ -5460,9 +5460,8 @@ body.princhat-kanban-active {
   flex: 1;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 24px;
-  padding-right: 24px;
-  /* Ensure padding on right side for scroll */
+  padding: 24px 0;
+  /* Vertical padding only */
   width: 100%;
   height: 100%;
 }
@@ -5486,13 +5485,12 @@ body.princhat-kanban-active {
 }
 
 .princhat-kanban-columns-container {
-  display: flex;
+  display: inline-flex;
+  /* inline-flex to respect padding */
   gap: 20px;
   height: 100%;
-  width: fit-content;
-  /* Adapt to content width */
-  max-width: 100%;
-  /* Don't overflow */
+  padding-inline: 24px;
+  /* Horizontal padding that's part of the scrollable area */
 }
 
 .princhat-kanban-column {
@@ -5907,6 +5905,7 @@ body.princhat-kanban-active {
 .princhat-kanban-btn-danger:hover {
   background: #ff6b6b;
 }
+
 /* ==================== KANBAN COLUMN DESCRIPTION ==================== */
 
 /* Description textarea in modals */
