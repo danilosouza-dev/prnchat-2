@@ -9951,7 +9951,203 @@ class WhatsAppUIOverlay {
         </button>
       </div>
       <div class="princhat-kanban-column-body">
-        <p class="princhat-kanban-empty-message">Nenhum lead ainda</p>
+        ${column.name === 'Recentes' ? `
+          <!-- Enhanced mockup lead cards -->
+          <div class="princhat-kanban-lead-card" draggable="true">
+            <div class="princhat-kanban-lead-photo">
+              <div class="princhat-kanban-lead-photo-placeholder">R</div>
+            </div>
+            <div class="princhat-kanban-lead-info">
+              <div class="princhat-kanban-lead-header">
+                <h4 class="princhat-kanban-lead-name">Renato Caetano</h4>
+                <div class="princhat-kanban-lead-time-badge">
+                  <span class="princhat-kanban-lead-time">20:18</span>
+                  <span class="princhat-kanban-lead-unread" data-count="9+">9+</span>
+                </div>
+              </div>
+              <p class="princhat-kanban-lead-preview">Olá, gostaria de saber mais sobre...</p>
+              
+              <!-- Tags (show only 1 to prevent line breaks) -->
+              <div class="princhat-kanban-lead-tags">
+                <span class="princhat-kanban-tag" style="background: rgba(33, 150, 243, 0.15); color: #2196f3;">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+                    <line x1="7" x2="7.01" y1="7" y2="7"/>
+                  </svg>
+                  Cliente VIP
+                </span>
+                <span class="princhat-kanban-tag-more">+3</span>
+                <!-- Tooltip with all tags -->
+                <div class="princhat-kanban-tags-tooltip">
+                  <span class="princhat-kanban-tag" style="background: rgba(33, 150, 243, 0.15); color: #2196f3;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+                      <line x1="7" x2="7.01" y1="7" y2="7"/>
+                    </svg>
+                    Cliente VIP
+                  </span>
+                  <span class="princhat-kanban-tag" style="background: rgba(76, 175, 80, 0.15); color: #4caf50;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+                      <line x1="7" x2="7.01" y1="7" y2="7"/>
+                    </svg>
+                    Prospect
+                  </span>
+                  <span class="princhat-kanban-tag" style="background: rgba(156, 39, 176, 0.15); color: #9c27b0;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+                      <line x1="7" x2="7.01" y1="7" y2="7"/>
+                    </svg>
+                    Premium
+                  </span>
+                  <span class="princhat-kanban-tag" style="background: rgba(255, 87, 34, 0.15); color: #ff5722;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+                      <line x1="7" x2="7.01" y1="7" y2="7"/>
+                    </svg>
+                    Urgente
+                  </span>
+                </div>
+              </div>
+              
+              <!-- Metadata indicators -->
+              <div class="princhat-kanban-lead-meta">
+                <div class="princhat-kanban-meta-item" title="2 notas">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
+                    <path d="M2 6h4"/>
+                    <path d="M2 10h4"/>
+                    <path d="M2 14h4"/>
+                    <path d="M2 18h4"/>
+                    <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>
+                  </svg>
+                  <span>2</span>
+                </div>
+                <div class="princhat-kanban-meta-item" title="1 agendamento">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="18" height="18" x="3" y="4" rx="2" ry="2"/>
+                    <line x1="16" x2="16" y1="2" y2="6"/>
+                    <line x1="8" x2="8" y1="2" y2="6"/>
+                    <line x1="3" x2="21" y1="10" y2="10"/>
+                  </svg>
+                  <span>1</span>
+                </div>
+                <div class="princhat-kanban-meta-item" title="3 scripts enviados">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                  </svg>
+                  <span>3</span>
+                </div>
+                <div class="princhat-kanban-meta-item princhat-kanban-meta-action" title="Ver chat completo">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                  </svg>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="princhat-kanban-lead-card">
+            <div class="princhat-kanban-lead-photo">
+              <div class="princhat-kanban-lead-photo-placeholder">M</div>
+            </div>
+            <div class="princhat-kanban-lead-info">
+              <div class="princhat-kanban-lead-header">
+                <h4 class="princhat-kanban-lead-name">Maria Silva</h4>
+                <div class="princhat-kanban-lead-time-badge">
+                  <span class="princhat-kanban-lead-time">19:45</span>
+                  <span class="princhat-kanban-lead-unread">1</span>
+                </div>
+              </div>
+              <p class="princhat-kanban-lead-preview">Bom dia! Tenho interesse no produto</p>
+              
+              <!-- Tags -->
+              <div class="princhat-kanban-lead-tags">
+                <span class="princhat-kanban-tag" style="background: rgba(255, 152, 0, 0.15); color: #ff9800;">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+                    <line x1="7" x2="7.01" y1="7" y2="7"/>
+                  </svg>
+                  Negociação
+                </span>
+              </div>
+              
+              <!-- Metadata indicators -->
+              <div class="princhat-kanban-lead-meta">
+                <div class="princhat-kanban-meta-item" title="1 nota">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
+                    <path d="M2 6h4"/>
+                    <path d="M2 10h4"/>
+                    <path d="M2 14h4"/>
+                    <path d="M2 18h4"/>
+                    <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>
+                  </svg>
+                  <span>1</span>
+                </div>
+                <div class="princhat-kanban-meta-item" title="2 agendamentos">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="18" height="18" x="3" y="4" rx="2" ry="2"/>
+                    <line x1="16" x2="16" y1="2" y2="6"/>
+                    <line x1="8" x2="8" y1="2" y2="6"/>
+                    <line x1="3" x2="21" y1="10" y2="10"/>
+                  </svg>
+                  <span>2</span>
+                </div>
+                <div class="princhat-kanban-meta-item princhat-kanban-meta-action" title="Ver chat completo">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                  </svg>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="princhat-kanban-lead-card">
+            <div class="princhat-kanban-lead-photo">
+              <div class="princhat-kanban-lead-photo-placeholder">J</div>
+            </div>
+            <div class="princhat-kanban-lead-info">
+              <div class="princhat-kanban-lead-header">
+                <h4 class="princhat-kanban-lead-name">João Pedro</h4>
+                <span class="princhat-kanban-lead-time">18:32</span>
+              </div>
+              <p class="princhat-kanban-lead-preview">Pode me enviar mais informações?</p>
+              
+              <!-- Tags (show only 1) -->
+              <div class="princhat-kanban-lead-tags">
+                <span class="princhat-kanban-tag" style="background: rgba(33, 150, 243, 0.15); color: #2196f3;">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+                    <line x1="7" x2="7.01" y1="7" y2="7"/>
+                  </svg>
+                  Importante
+                </span>
+                <span class="princhat-kanban-tag-more">+1</span>
+              </div>
+              
+              <!-- Metadata indicators (sem notas/agendamentos) -->
+              <div class="princhat-kanban-lead-meta">
+                <div class="princhat-kanban-meta-item" title="1 script enviado">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                  </svg>
+                  <span>1</span>
+                </div>
+                <div class="princhat-kanban-meta-item princhat-kanban-meta-action" title="Ver chat completo">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                  </svg>
+                </div>
+              </div>
+            </div>
+          </div>
+        ` : `
+          <p class="princhat-kanban-empty-message">Nenhum lead ainda</p>
+        `}
       </div>
     `;
 
@@ -9972,6 +10168,59 @@ class WhatsAppUIOverlay {
         this.showColumnDescription(infoBtn, column.description);
       });
     }
+
+    // Add event listeners for tag expansion (+X counters)
+    const tagMoreButtons = columnEl.querySelectorAll('.princhat-kanban-tag-more');
+    tagMoreButtons.forEach((btn: Element) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const tooltip = btn.nextElementSibling as HTMLElement;
+        if (tooltip && tooltip.classList.contains('princhat-kanban-tags-tooltip')) {
+          const wasActive = tooltip.classList.contains('active');
+
+          // Close all tooltips
+          document.querySelectorAll('.princhat-kanban-tags-tooltip.active').forEach((t) => {
+            t.classList.remove('active');
+          });
+
+          // If it wasn't active, open it
+          if (!wasActive) {
+            // Move tooltip to body to escape stacking context
+            document.body.appendChild(tooltip);
+
+            // Make visible but hidden to measure height
+            tooltip.style.visibility = 'hidden';
+            tooltip.classList.add('active');
+
+            // Calculate position ABOVE the button
+            const rect = (btn as HTMLElement).getBoundingClientRect();
+            const tooltipHeight = tooltip.offsetHeight;
+            tooltip.style.position = 'fixed';
+            tooltip.style.left = `${rect.left}px`;
+            tooltip.style.top = `${rect.top - tooltipHeight - 8}px`; // Above the button
+
+            // Now make visible
+            tooltip.style.visibility = 'visible';
+
+            // Click outside to close
+            const clickOutside = (event: MouseEvent) => {
+              const target = event.target as Node;
+              if (!tooltip.contains(target) && !btn.contains(target)) {
+                tooltip.classList.remove('active');
+                // Move back to original location
+                const tagsContainer = btn.parentElement;
+                if (tagsContainer) {
+                  tagsContainer.appendChild(tooltip);
+                }
+                document.removeEventListener('click', clickOutside);
+              }
+            };
+
+            setTimeout(() => document.addEventListener('click', clickOutside), 10);
+          }
+        }
+      });
+    });
 
     return columnEl;
   }
