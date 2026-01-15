@@ -1065,12 +1065,115 @@ class DatabaseService {
 
   // ==================== KANBAN LEADS ====================
   /**
+   * Create a new lead contact
+   */
+  async createLead(lead: Omit<LeadContact, 'id' | 'createdAt' | 'updatedAt'>): Promise<LeadContact> {
+    const db = await this.init();
+    const now = Date.now();
+
+    const newLead: LeadContact = {
+      ...lead,
+      id: lead.phone, // Use phone as ID (WhatsApp chat ID format)
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await db.put('kanban_leads', newLead);
+    console.log('[PrinChat DB] Lead created:', newLead.id);
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        kanban_leads: Date.now()
+      });
+    }
+
+    return newLead;
+  }
+
+  /**
+   * Save/update a lead
+   */
+  async saveLead(lead: LeadContact): Promise<void> {
+    const db = await this.init();
+    await db.put('kanban_leads', { ...lead, updatedAt: Date.now() });
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        kanban_leads: Date.now()
+      });
+    }
+  }
+
+  /**
+   * Get a single lead by ID
+   */
+  async getLead(id: string): Promise<LeadContact | undefined> {
+    const db = await this.init();
+    return db.get('kanban_leads', id);
+  }
+
+  /**
+   * Get all leads
+   */
+  async getAllLeads(): Promise<LeadContact[]> {
+    const db = await this.init();
+    return db.getAll('kanban_leads');
+  }
+
+  /**
    * Get leads for a specific column
    */
   async getLeadsByColumn(columnId: string): Promise<LeadContact[]> {
     const db = await this.init();
     const leads = await db.getAllFromIndex('kanban_leads', 'by-columnId', columnId);
     return leads.sort((a, b) => a.order - b.order);
+  }
+
+  /**
+   * Move a lead to a different column
+   */
+  async moveLead(leadId: string, newColumnId: string, newOrder: number): Promise<void> {
+    const db = await this.init();
+    const lead = await db.get('kanban_leads', leadId);
+
+    if (!lead) {
+      console.warn('[PrinChat DB] Lead not found:', leadId);
+      return;
+    }
+
+    const updatedLead: LeadContact = {
+      ...lead,
+      columnId: newColumnId,
+      order: newOrder,
+      updatedAt: Date.now()
+    };
+
+    await db.put('kanban_leads', updatedLead);
+    console.log('[PrinChat DB] Lead moved:', leadId, '→', newColumnId);
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        kanban_leads: Date.now()
+      });
+    }
+  }
+
+  /**
+   * Delete a lead
+   */
+  async deleteLead(id: string): Promise<void> {
+    const db = await this.init();
+    await db.delete('kanban_leads', id);
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        kanban_leads: Date.now()
+      });
+    }
   }
 
   // ==================== UTILITY ====================

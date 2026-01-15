@@ -439,6 +439,64 @@ class BackgroundService {
         })();
         return true;
 
+      case 'GET_ALL_KANBAN_LEADS':
+        (async () => {
+          try {
+            console.log('[Background] GET_ALL_KANBAN_LEADS request received');
+            const leads = await db.getAllLeads();
+            console.log('[Background] Fetched', leads.length, 'leads');
+            sendResponse({ success: true, data: leads });
+          } catch (error: any) {
+            console.error('[Background] Error getting Kanban leads:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'CREATE_KANBAN_LEAD':
+        (async () => {
+          try {
+            console.log('[Background] CREATE_KANBAN_LEAD request received:', message.payload);
+            const lead = await db.createLead(message.payload);
+            console.log('[Background] Lead created:', lead.id);
+            sendResponse({ success: true, data: lead });
+          } catch (error: any) {
+            console.error('[Background] Error creating Kanban lead:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'MOVE_KANBAN_LEAD':
+        (async () => {
+          try {
+            console.log('[Background] MOVE_KANBAN_LEAD request received:', message.payload);
+            const { leadId, newColumnId, newOrder } = message.payload;
+            await db.moveLead(leadId, newColumnId, newOrder);
+            console.log('[Background] Lead moved:', leadId);
+            sendResponse({ success: true });
+          } catch (error: any) {
+            console.error('[Background] Error moving Kanban lead:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'DELETE_KANBAN_LEAD':
+        (async () => {
+          try {
+            console.log('[Background] DELETE_KANBAN_LEAD request received:', message.payload);
+            const { leadId } = message.payload;
+            await db.deleteLead(leadId);
+            console.log('[Background] Lead deleted:', leadId);
+            sendResponse({ success: true });
+          } catch (error: any) {
+            console.error('[Background] Error deleting Kanban lead:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
       case 'OPEN_OPTIONS':
         // Open options page (from profile dropdown)
         chrome.runtime.openOptionsPage();

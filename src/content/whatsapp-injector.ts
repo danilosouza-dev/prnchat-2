@@ -602,6 +602,71 @@
               timestamp
             }
           });
+
+          // AUTO-ADD TO KANBAN RECENTES
+          // Check if this contact should be added to Kanban
+          try {
+            // Skip group chats
+            if (chatId.includes('@g.us')) {
+              console.log('[PrinChat Kanban] Skipping group chat');
+              return;
+            }
+
+            // Get all leads to check if contact already exists
+            const leadsResponse = await chrome.runtime.sendMessage({ type: 'GET_ALL_KANBAN_LEADS' });
+            const allLeads = leadsResponse?.data || [];
+
+            // Check if contact already in Kanban
+            const existingLead = allLeads.find((l: any) => l.id === chatId);
+            if (existingLead) {
+              console.log('[PrinChat Kanban] Contact already in Kanban:', chatId);
+              return;
+            }
+
+            // Get contact info
+            const chatInfoResponse = await this.getChatInfo(chatId);
+            if (!chatInfoResponse.success) {
+              console.warn('[PrinChat Kanban] Could not get chat info for:', chatId);
+              return;
+            }
+
+            const { chatName, chatPhoto } = chatInfoResponse;
+
+            // Get Recentes column ID
+            const columnsResponse = await chrome.runtime.sendMessage({ type: 'GET_KANBAN_COLUMNS' });
+            const columns = columnsResponse?.data || [];
+            const recentesColumn = columns.find((c: any) => c.isDefault === true);
+
+            if (!recentesColumn) {
+              console.warn('[PrinChat Kanban] Recentes column not found');
+              return;
+            }
+
+            // Create new lead
+            const newLead = {
+              phone: chatId,
+              name: chatName || chatId.split('@')[0],
+              photo: chatPhoto,
+              columnId: recentesColumn.id,
+              order: 0, // Top of column
+              lastMessage: messageText,
+              lastMessageTime: timestamp || Date.now()
+            };
+
+            console.log('[PrinChat Kanban] Auto-adding contact to Recentes:', newLead.name);
+
+            // Save to database
+            await chrome.runtime.sendMessage({
+              type: 'CREATE_KANBAN_LEAD',
+              payload: newLead
+            });
+
+            console.log('[PrinChat Kanban] ✅ Contact added to Recentes');
+
+          } catch (kanbanError: any) {
+            console.error('[PrinChat Kanban] Error auto-adding to Kanban:', kanbanError);
+          }
+
         } catch (error: any) {
           // Ignore "Extension context invalidated" errors and message channel errors
           if (error.message?.includes('Extension context invalidated')) {
@@ -660,7 +725,9 @@
             message.type === 'GET_ALL_NOTES' ||
             message.type === 'GET_KANBAN_COLUMNS' || message.type === 'CREATE_KANBAN_COLUMN' ||
             message.type === 'UPDATE_KANBAN_COLUMN' || message.type === 'DELETE_KANBAN_COLUMN' ||
-            message.type === 'UPDATE_COLUMN_ORDER') {
+            message.type === 'UPDATE_COLUMN_ORDER' || message.type === 'GET_ALL_KANBAN_LEADS' ||
+            message.type === 'CREATE_KANBAN_LEAD' || message.type === 'MOVE_KANBAN_LEAD' ||
+            message.type === 'DELETE_KANBAN_LEAD') {
             console.log('[PrinChat] Forwarding to background service worker...');
 
             // Check if extension context is still valid
