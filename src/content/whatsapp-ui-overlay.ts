@@ -2,6 +2,7 @@
  * PrinChat UI Overlay
  * Injects custom UI components into WhatsApp Web interface
  */
+import Sortable from 'sortablejs';
 
 interface Script {
   id: string;
@@ -166,6 +167,8 @@ class WhatsAppUIOverlay {
   private kanbanOverlay: HTMLElement | null = null; // Fullscreen Kanban overlay
   private isKanbanOpen: boolean = false;
 
+  private currentChatId: string | null = null; // Track current chat ID for sync detection
+
 
   constructor() {
     this.init();
@@ -205,6 +208,10 @@ class WhatsAppUIOverlay {
       // Monitor chat changes
       console.log('[PrinChat UI] Step 6: Setting up chat monitor...');
       this.monitorChatChanges();
+
+      // Setup navigation detection
+      this.detectChatNavigation();
+
       console.log('[PrinChat UI] ✓ Chat monitor active');
 
       // Listen for execution events
@@ -9274,22 +9281,55 @@ class WhatsAppUIOverlay {
       // Find chat header
       const chatHeader = document.querySelector('#main > header');
       if (!chatHeader) {
-        console.log('[PrinChat UI] Chat header not found, will retry when chat is opened');
         return;
       }
 
       // Check if button already exists
       if (chatHeader.querySelector('.princhat-schedule-button')) {
-        console.log('[PrinChat UI] Schedule button already exists');
         return;
       }
 
-      // Find the actions container - it's the div that contains the search and more options buttons
-      // Looking for the parent div that contains all action buttons
-      const actionsContainer = chatHeader.querySelector('div.x78zum5.x6s0dn4.x1afcbsf.x14ug900');
+      // EMERGENCY FIX: Structural Traversal
+      // 1. Find the Menu ID button (Mais opções) - extremely stable anchor
+      const menuBtn = chatHeader.querySelector('[data-icon="menu"]') ||
+        chatHeader.querySelector('[aria-label="Mais opções"]') ||
+        chatHeader.querySelector('[aria-label="More options"]');
+
+      let actionsContainer: Element | null = null;
+
+      if (menuBtn) {
+        // Traverse parents until we find the main flex container that holds everything
+        // We assume the container is within the header and has display:flex (usually)
+        let parent = menuBtn.parentElement;
+        while (parent && parent !== chatHeader) {
+          // Check if this parent also contains the SEARCH button or VIDEO call button
+          // This confirms it's the group container
+          const hasSearch = parent.querySelector('[data-icon="search-alt"]') ||
+            parent.querySelector('[aria-label="Pesquisar"]') ||
+            parent.querySelector('[data-icon="search"]');
+
+          if (hasSearch && parent.tagName === 'DIV') {
+            actionsContainer = parent;
+            break;
+          }
+          parent = parent.parentElement;
+        }
+      }
+
+      // Fallback: Try classic selector if structural failed
       if (!actionsContainer) {
-        console.log('[PrinChat UI] Actions container not found in header');
-        console.log('[PrinChat UI] Header HTML:', chatHeader.innerHTML.substring(0, 500));
+        actionsContainer = chatHeader.querySelector('div.x78zum5.x6s0dn4.x1afcbsf.x14ug900');
+      }
+
+      // Last resort: Just find the last div in header that looks like a container
+      if (!actionsContainer) {
+        const headerChildren = Array.from(chatHeader.children);
+        // Usually the actions are in the last or second to last div
+        actionsContainer = headerChildren[headerChildren.length - 1];
+      }
+
+      if (!actionsContainer) {
+        console.error('[PrinChat UI] CRITICAL: Actions container not found for Schedule button');
         return;
       }
 
@@ -9308,7 +9348,6 @@ class WhatsAppUIOverlay {
         </svg>
       `;
 
-
       // Add click event
       scheduleButton.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -9317,8 +9356,13 @@ class WhatsAppUIOverlay {
       });
 
       // Insert button at the beginning of actions container
-      actionsContainer.insertBefore(scheduleButton, actionsContainer.firstChild);
-      console.log('[PrinChat UI] ✅ Schedule button injected successfully');
+      if (actionsContainer.firstChild) {
+        actionsContainer.insertBefore(scheduleButton, actionsContainer.firstChild);
+      } else {
+        actionsContainer.appendChild(scheduleButton);
+      }
+
+      console.log('[PrinChat UI] ✅ Schedule button injected successfully via structural traversal');
 
       // Update button state based on existing schedules
       this.updateScheduleButton();
@@ -9335,20 +9379,50 @@ class WhatsAppUIOverlay {
       // Find chat header
       const chatHeader = document.querySelector('#main > header');
       if (!chatHeader) {
-        console.log('[PrinChat UI] Chat header not found for notes button');
         return;
       }
 
       // Check if button already exists
       if (chatHeader.querySelector('.princhat-notes-button')) {
-        console.log('[PrinChat UI] Notes button already exists');
         return;
       }
 
-      // Find the actions container
-      const actionsContainer = chatHeader.querySelector('div.x78zum5.x6s0dn4.x1afcbsf.x14ug900');
+      let actionsContainer: Element | null = null;
+      let insertRef: Node | null = null;
+
+      // 1. Try to find relative to Schedule button if it exists
+      const scheduleButton = chatHeader.querySelector('.princhat-schedule-button');
+
+      if (scheduleButton && scheduleButton.parentElement) {
+        actionsContainer = scheduleButton.parentElement;
+        insertRef = scheduleButton.nextSibling;
+      } else {
+        // 2. Independent Discovery (same as Schedule)
+        const menuBtn = chatHeader.querySelector('[data-icon="menu"]') ||
+          chatHeader.querySelector('[aria-label="Mais opções"]') ||
+          chatHeader.querySelector('[aria-label="More options"]');
+
+        if (menuBtn) {
+          let parent = menuBtn.parentElement;
+          while (parent && parent !== chatHeader) {
+            const hasSearch = parent.querySelector('[aria-label="Pesquisar"]') ||
+              parent.querySelector('[data-icon="search"]');
+            if (hasSearch && parent.tagName === 'DIV') {
+              actionsContainer = parent;
+              break;
+            }
+            parent = parent.parentElement;
+          }
+        }
+
+        if (!actionsContainer) {
+          // Fallback
+          actionsContainer = chatHeader.querySelector('div.x78zum5.x6s0dn4.x1afcbsf.x14ug900');
+        }
+      }
+
       if (!actionsContainer) {
-        console.log('[PrinChat UI] Actions container not found for notes button');
+        console.error('[PrinChat UI] CRITICAL: Actions container not found for Notes button');
         return;
       }
 
@@ -9369,19 +9443,20 @@ class WhatsAppUIOverlay {
         <span class="notes-badge" style="display: none;">0</span>
       `;
 
-      // Add click event (placeholder for now)
+      // Add click event
       notesButton.addEventListener('click', (e) => {
         e.stopPropagation();
         console.log('[PrinChat UI] Notes button clicked');
         this.toggleNotesPopup(notesButton);
       });
 
-      // Insert button next to schedule button (or at beginning if schedule button doesn't exist)
-      const scheduleButton = actionsContainer.querySelector('.princhat-schedule-button');
-      if (scheduleButton && scheduleButton.nextSibling) {
-        actionsContainer.insertBefore(notesButton, scheduleButton.nextSibling);
-      } else {
+      // Insert button
+      if (insertRef) {
+        actionsContainer.insertBefore(notesButton, insertRef);
+      } else if (actionsContainer.firstChild) {
         actionsContainer.insertBefore(notesButton, actionsContainer.firstChild);
+      } else {
+        actionsContainer.appendChild(notesButton);
       }
 
       // Update badge initially
@@ -9395,17 +9470,27 @@ class WhatsAppUIOverlay {
 
   /**
    * Update notes badge count
+   * @param forceRefresh If true, ignores active chat cache and forces fetch
    */
-  private async updateNotesBadge() {
-    const chatId = await this.getActiveChatId();
-    if (!chatId) {
-      // Hide badge if no active chat
-      const badge = document.querySelector('.notes-badge') as HTMLElement;
-      if (badge) badge.style.display = 'none';
-      return;
-    }
-
+  private async updateNotesBadge(forceRefresh: boolean = false) {
     try {
+      const notesButton = document.querySelector('.princhat-notes-button');
+      if (!notesButton) return;
+
+      const badge = notesButton.querySelector('.notes-badge') as HTMLElement;
+      if (!badge) return;
+
+      // If forcing refresh, invalidate cache first
+      if (forceRefresh) {
+        this.invalidateChatCache();
+      }
+
+      const chatId = await this.getActiveChatId();
+      if (!chatId) {
+        badge.style.display = 'none';
+        return;
+      }
+
       const response = await this.requestFromContentScript({
         type: 'GET_NOTES_BY_CHAT',
         payload: { chatId }
@@ -9414,10 +9499,10 @@ class WhatsAppUIOverlay {
       const notes = response?.data || [];
       const count = notes.length;
 
-      const badge = document.querySelector('.notes-badge') as HTMLElement;
-      if (badge) {
-        badge.textContent = count.toString();
-        badge.style.display = count > 0 ? 'flex' : 'none';
+      const badgeElement = document.querySelector('.notes-badge') as HTMLElement;
+      if (badgeElement) {
+        badgeElement.textContent = count.toString();
+        badgeElement.style.display = count > 0 ? 'flex' : 'none';
       }
     } catch (error) {
       console.error('[PrinChat UI] Error updating notes badge:', error);
@@ -9475,13 +9560,19 @@ class WhatsAppUIOverlay {
    * Update schedule button based on schedule count
    * - Shows button with text if no schedules
    * - Shows icon with badge if schedules exist
+   * @param forceRefresh If true, ignores active chat cache and forces fetch
    */
-  private async updateScheduleButton() {
+  private async updateScheduleButton(forceRefresh: boolean = false) {
     try {
       const chatHeader = document.querySelector('#main > header');
       if (!chatHeader) {
         console.log('[PrinChat UI] Chat header not found');
         return;
+      }
+
+      // If forcing refresh, invalidate cache first
+      if (forceRefresh) {
+        this.invalidateChatCache();
       }
 
       // Get active chat ID
@@ -9552,61 +9643,105 @@ class WhatsAppUIOverlay {
    */
   private monitorChatHeaderChanges() {
     try {
+      // PRIMARY: MutationObserver to catch changes immediately
       let debounceTimer: NodeJS.Timeout | null = null;
 
-      // Observer for chat header changes
       const observer = new MutationObserver(() => {
-        // Debounce to avoid excessive calls
-        if (debounceTimer) {
-          clearTimeout(debounceTimer);
-        }
+        // Chat header changed
+        const oldChatId = this.currentChatId; // Capture current known ID
+        this.invalidateChatCache();
 
-        debounceTimer = setTimeout(() => {
-          // Try to inject if chat header exists but button doesn't
-          const chatHeader = document.querySelector('#main > header');
-          if (chatHeader) {
-            const buttonExists = chatHeader.querySelector('.princhat-schedule-button');
-            if (!buttonExists) {
-              console.log('[PrinChat UI] Chat header detected without button, injecting...');
-              this.injectScheduleButton();
-            }
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(async () => {
+          // 1. Inject buttons blindly (visuals)
+          this.checkAndInjectButtons(false);
+
+          // 2. Wait for data sync (Logic)
+          // We wait until the Chat ID actually changes from the old one
+          const newChatId = await this.waitForChatIdChange(oldChatId);
+          this.currentChatId = newChatId;
+
+          // 3. Now update data (force refresh)
+          if (newChatId) {
+            this.updateScheduleButton(true);
+            this.updateNotesBadge(true);
           }
-        }, 300); // Wait 300ms after last mutation
+        }, 50);
       });
 
-      // Observe the main container for changes
       const mainContainer = document.querySelector('#main');
       if (mainContainer) {
-        observer.observe(mainContainer, {
-          childList: true,
-          subtree: true
-        });
-        console.log('[PrinChat UI] ✓ Chat header monitor active');
+        observer.observe(mainContainer, { childList: true, subtree: true });
+        console.log('[PrinChat UI] ✓ Chat header monitor active (Observer)');
       } else {
-        console.log('[PrinChat UI] Main container not found for monitoring');
+        // Fallback for initial load
+        const bodyObserver = new MutationObserver(() => {
+          const main = document.querySelector('#main');
+          if (main) {
+            console.log('[PrinChat UI] Found #main via body observer, attaching main observer');
+            observer.observe(main, { childList: true, subtree: true });
+            bodyObserver.disconnect();
+          }
+        });
+        bodyObserver.observe(document.body, { childList: true, subtree: true });
       }
 
+      // SECONDARY: Polling Interval (Fail-safe for chat switches)
+      // This guarantees persistence even if observer detaches
+      console.log('[PrinChat UI] Starting persistence polling (1.5s interval)...');
+      setInterval(() => {
+        // Polling checks should NOT force refresh unless missing buttons found
+        // to avoid spamming the content script
+        this.checkAndInjectButtons(false);
+      }, 1500);
 
-      // Listen for schedule changes from storage (DELETE/CREATE) - same context
+      // Listen for schedule changes events
       document.addEventListener('PrinChatSchedulesChanged', () => {
-        console.log('[PrinChat UI] 🔔 PrinChatSchedulesChanged (storage change)');
-        this.updateScheduleButton();
+        this.updateScheduleButton(true);
       });
 
-      // Listen for schedule execution from injector via document
       document.addEventListener('PrinChatScheduleExecuted', async () => {
-        console.log('[PrinChat UI] 🔔 PrinChatScheduleExecuted from injector!');
-        await this.updateScheduleButton();
-
-        // Refresh popup if open
+        await this.updateScheduleButton(true);
         if (this.scheduleListPopup) {
           await this.refreshScheduleListPopup();
         }
       });
-
-      console.log('[PrinChat UI] ✅ Schedule change listener registered');
     } catch (error: any) {
       console.error('[PrinChat UI] Error setting up chat header monitor:', error?.message || error);
+    }
+  }
+
+  /**
+   * Helper to check presence of buttons and inject if missing
+   * @param forceRefresh If true, forces a data refresh even if buttons exist
+   */
+  private checkAndInjectButtons(forceRefresh: boolean = false) {
+    const chatHeader = document.querySelector('#main > header');
+    if (chatHeader) {
+      let injected = false;
+
+      // Check Schedule Button
+      if (!chatHeader.querySelector('.princhat-schedule-button')) {
+        // console.log('[PrinChat UI] Persistence: Injecting Schedule Button...');
+        this.injectScheduleButton();
+        injected = true;
+      }
+
+      // Check Notes Button
+      if (!chatHeader.querySelector('.princhat-notes-button')) {
+        // console.log('[PrinChat UI] Persistence: Injecting Notes Button...');
+        this.injectNotesButton();
+        injected = true;
+      }
+
+      // If we just injected OR if a force refresh was requested due to navigation
+      if (injected || forceRefresh) {
+        // Add small delay to allow chat ID to update if this is a navigation event
+        setTimeout(() => {
+          this.updateScheduleButton();
+          this.updateNotesBadge();
+        }, 100);
+      }
     }
   }
 
@@ -9818,6 +9953,10 @@ class WhatsAppUIOverlay {
       </div>
     `;
 
+    // Setup global drag listeners
+    // Setup global drag listeners
+    // Moved to renderKanbanColumns to ensure elements exist
+
     // Find WhatsApp content area and insert overlay
     const whatsappContent = document.querySelector('#app');
     if (whatsappContent) {
@@ -9853,14 +9992,16 @@ class WhatsAppUIOverlay {
     }
 
     // Restore global header: show extension icons, hide "Nova Coluna" button
-    if (this.customHeader) {
-      const headerRight = this.customHeader.querySelector('.princhat-header-right');
+    // Always query the DOM directly to avoid stale references
+    const liveHeader = document.querySelector('.princhat-custom-header');
+    if (liveHeader) {
+      const headerRight = liveHeader.querySelector('.princhat-header-right');
       if (headerRight) {
         headerRight.classList.remove('princhat-hidden');
       }
 
       // Remove "Nova Coluna" button
-      const newColumnBtn = this.customHeader.querySelector('.princhat-header-kanban-btn');
+      const newColumnBtn = liveHeader.querySelector('.princhat-header-kanban-btn');
       if (newColumnBtn) {
         newColumnBtn.remove();
       }
@@ -9893,14 +10034,28 @@ class WhatsAppUIOverlay {
       // Clear container
       container.innerHTML = '';
 
-      // Render each column
+      // Fetch all leads from background
+      const leadsResponse = await this.requestFromContentScript({ type: 'GET_ALL_KANBAN_LEADS' });
+      const allLeads = leadsResponse?.data || [];
+      console.log('[PrinChat UI] Loaded', allLeads.length, 'total leads');
+
+      // Render each column with its leads
       for (const column of columns) {
-        const columnEl = this.createColumnElement(column);
+        const columnLeads = allLeads.filter((l: any) => l.columnId === column.id)
+          .sort((a: any, b: any) => a.order - b.order);
+        const columnEl = this.createColumnElement(column, columnLeads);
         container.appendChild(columnEl);
+
+        // setupCardDragListeners removed - using Global Delegation
       }
 
       // Setup drag and drop for column reordering
       this.setupColumnDragAndDrop();
+
+      // Initialize SortableJS for cards (now that DOM is ready)
+      if (this.kanbanOverlay) {
+        this.initSortable(this.kanbanOverlay);
+      }
 
     } catch (error: any) {
       console.error('[PrinChat UI] Error rendering Kanban columns:', error);
@@ -9911,7 +10066,7 @@ class WhatsAppUIOverlay {
   /**
    * Create a column DOM element
    */
-  private createColumnElement(column: any): HTMLElement {
+  private createColumnElement(column: any, leads: any[] = []): HTMLElement {
     const columnEl = document.createElement('div');
     columnEl.className = 'princhat-kanban-column';
     columnEl.setAttribute('data-column-id', column.id);
@@ -9950,93 +10105,64 @@ class WhatsAppUIOverlay {
           </svg>
         </button>
       </div>
-      <div class="princhat-kanban-column-body">
-        ${column.name === 'Recentes' ? `
-          <!-- Enhanced mockup lead cards -->
-          <div class="princhat-kanban-lead-card" draggable="true">
+      <div class="princhat-kanban-column-body" data-column-id="${column.id}">
+
+        ${leads.map((lead: any) => `
+          <div class="princhat-kanban-lead-card" draggable="true" data-lead-id="${lead.id}">
             <div class="princhat-kanban-lead-photo">
-              <div class="princhat-kanban-lead-photo-placeholder">R</div>
+              ${lead.photo ?
+        `<img src="${lead.photo}" alt="${lead.name}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">` :
+        `<div class="princhat-kanban-lead-photo-placeholder">${lead.name.charAt(0).toUpperCase()}</div>`
+      }
             </div>
             <div class="princhat-kanban-lead-info">
               <div class="princhat-kanban-lead-header">
-                <h4 class="princhat-kanban-lead-name">Renato Caetano</h4>
+                <h4 class="princhat-kanban-lead-name">${lead.name || 'Desconhecido'}</h4>
                 <div class="princhat-kanban-lead-time-badge">
-                  <span class="princhat-kanban-lead-time">20:18</span>
-                  <span class="princhat-kanban-lead-unread" data-count="9+">9+</span>
+                  ${lead.lastMessageTime ? `<span class="princhat-kanban-lead-time">${new Date(lead.lastMessageTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>` : ''}
+                  ${lead.unreadCount && lead.unreadCount > 0 ? `<span class="princhat-kanban-lead-unread"${lead.unreadCount > 9 ? ' data-count="9+"' : ''}>${lead.unreadCount > 9 ? '9+' : lead.unreadCount}</span>` : ''}
                 </div>
               </div>
-              <p class="princhat-kanban-lead-preview">Olá, gostaria de saber mais sobre...</p>
+              ${lead.lastMessage ? `<p class="princhat-kanban-lead-preview">${lead.lastMessage.length > 50 ? lead.lastMessage.substring(0, 50) + '...' : lead.lastMessage}</p>` : ''}
               
-              <!-- Tags (show only 1 to prevent line breaks) -->
-              <div class="princhat-kanban-lead-tags">
-                <span class="princhat-kanban-tag" style="background: rgba(33, 150, 243, 0.15); color: #2196f3;">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
-                    <line x1="7" x2="7.01" y1="7" y2="7"/>
-                  </svg>
-                  Cliente VIP
-                </span>
-                <span class="princhat-kanban-tag-more">+3</span>
-                <!-- Tooltip with all tags -->
-                <div class="princhat-kanban-tags-tooltip">
+              <!-- Tags -->
+              ${lead.tags && lead.tags.length > 0 ? `
+                <div class="princhat-kanban-lead-tags">
                   <span class="princhat-kanban-tag" style="background: rgba(33, 150, 243, 0.15); color: #2196f3;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
                       <line x1="7" x2="7.01" y1="7" y2="7"/>
                     </svg>
-                    Cliente VIP
+                    ${lead.tags[0]}
                   </span>
-                  <span class="princhat-kanban-tag" style="background: rgba(76, 175, 80, 0.15); color: #4caf50;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
-                      <line x1="7" x2="7.01" y1="7" y2="7"/>
-                    </svg>
-                    Prospect
-                  </span>
-                  <span class="princhat-kanban-tag" style="background: rgba(156, 39, 176, 0.15); color: #9c27b0;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
-                      <line x1="7" x2="7.01" y1="7" y2="7"/>
-                    </svg>
-                    Premium
-                  </span>
-                  <span class="princhat-kanban-tag" style="background: rgba(255, 87, 34, 0.15); color: #ff5722;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
-                      <line x1="7" x2="7.01" y1="7" y2="7"/>
-                    </svg>
-                    Urgente
-                  </span>
+                  ${lead.tags.length > 1 ? `<span class="princhat-kanban-tag-more">+${lead.tags.length - 1}</span>` : ''}
                 </div>
-              </div>
+              ` : ''}
               
-              <!-- Metadata indicators -->
+              <!-- Metadata - ALWAYS show icons, even with 0 count -->
               <div class="princhat-kanban-lead-meta">
-                <div class="princhat-kanban-meta-item" title="2 notas">
+                <div class="princhat-kanban-meta-item" title="${lead.notesCount || 0} nota${(lead.notesCount || 0) > 1 ? 's' : ''}">
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
-                    <path d="M2 6h4"/>
-                    <path d="M2 10h4"/>
-                    <path d="M2 14h4"/>
-                    <path d="M2 18h4"/>
+                    <path d="M2 6h4"/><path d="M2 10h4"/><path d="M2 14h4"/><path d="M2 18h4"/>
                     <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>
                   </svg>
-                  <span>2</span>
+                  <span>${lead.notesCount || 0}</span>
                 </div>
-                <div class="princhat-kanban-meta-item" title="1 agendamento">
+                <div class="princhat-kanban-meta-item" title="${lead.schedulesCount || 0} agendamento${(lead.schedulesCount || 0) > 1 ? 's' : ''}">
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <rect width="18" height="18" x="3" y="4" rx="2" ry="2"/>
                     <line x1="16" x2="16" y1="2" y2="6"/>
                     <line x1="8" x2="8" y1="2" y2="6"/>
                     <line x1="3" x2="21" y1="10" y2="10"/>
                   </svg>
-                  <span>1</span>
+                  <span>${lead.schedulesCount || 0}</span>
                 </div>
-                <div class="princhat-kanban-meta-item" title="3 scripts enviados">
+                <div class="princhat-kanban-meta-item" title="${lead.scriptsCount || 0} script${(lead.scriptsCount || 0) > 1 ? 's' : ''}">
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
                   </svg>
-                  <span>3</span>
+                  <span>${lead.scriptsCount || 0}</span>
                 </div>
                 <div class="princhat-kanban-meta-item princhat-kanban-meta-action" title="Ver chat completo">
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -10044,110 +10170,16 @@ class WhatsAppUIOverlay {
                     <circle cx="12" cy="12" r="3"/>
                   </svg>
                 </div>
-              </div>
-            </div>
-          </div>
-          
-          <div class="princhat-kanban-lead-card">
-            <div class="princhat-kanban-lead-photo">
-              <div class="princhat-kanban-lead-photo-placeholder">M</div>
-            </div>
-            <div class="princhat-kanban-lead-info">
-              <div class="princhat-kanban-lead-header">
-                <h4 class="princhat-kanban-lead-name">Maria Silva</h4>
-                <div class="princhat-kanban-lead-time-badge">
-                  <span class="princhat-kanban-lead-time">19:45</span>
-                  <span class="princhat-kanban-lead-unread">1</span>
-                </div>
-              </div>
-              <p class="princhat-kanban-lead-preview">Bom dia! Tenho interesse no produto</p>
-              
-              <!-- Tags -->
-              <div class="princhat-kanban-lead-tags">
-                <span class="princhat-kanban-tag" style="background: rgba(255, 152, 0, 0.15); color: #ff9800;">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
-                    <line x1="7" x2="7.01" y1="7" y2="7"/>
-                  </svg>
-                  Negociação
-                </span>
-              </div>
-              
-              <!-- Metadata indicators -->
-              <div class="princhat-kanban-lead-meta">
-                <div class="princhat-kanban-meta-item" title="1 nota">
+                <div class="princhat-kanban-meta-item princhat-kanban-delete-btn" title="Excluir card">
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
-                    <path d="M2 6h4"/>
-                    <path d="M2 10h4"/>
-                    <path d="M2 14h4"/>
-                    <path d="M2 18h4"/>
-                    <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>
-                  </svg>
-                  <span>1</span>
-                </div>
-                <div class="princhat-kanban-meta-item" title="2 agendamentos">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect width="18" height="18" x="3" y="4" rx="2" ry="2"/>
-                    <line x1="16" x2="16" y1="2" y2="6"/>
-                    <line x1="8" x2="8" y1="2" y2="6"/>
-                    <line x1="3" x2="21" y1="10" y2="10"/>
-                  </svg>
-                  <span>2</span>
-                </div>
-                <div class="princhat-kanban-meta-item princhat-kanban-meta-action" title="Ver chat completo">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
-                    <circle cx="12" cy="12" r="3"/>
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                   </svg>
                 </div>
               </div>
             </div>
           </div>
-          
-          <div class="princhat-kanban-lead-card">
-            <div class="princhat-kanban-lead-photo">
-              <div class="princhat-kanban-lead-photo-placeholder">J</div>
-            </div>
-            <div class="princhat-kanban-lead-info">
-              <div class="princhat-kanban-lead-header">
-                <h4 class="princhat-kanban-lead-name">João Pedro</h4>
-                <span class="princhat-kanban-lead-time">18:32</span>
-              </div>
-              <p class="princhat-kanban-lead-preview">Pode me enviar mais informações?</p>
-              
-              <!-- Tags (show only 1) -->
-              <div class="princhat-kanban-lead-tags">
-                <span class="princhat-kanban-tag" style="background: rgba(33, 150, 243, 0.15); color: #2196f3;">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
-                    <line x1="7" x2="7.01" y1="7" y2="7"/>
-                  </svg>
-                  Importante
-                </span>
-                <span class="princhat-kanban-tag-more">+1</span>
-              </div>
-              
-              <!-- Metadata indicators (sem notas/agendamentos) -->
-              <div class="princhat-kanban-lead-meta">
-                <div class="princhat-kanban-meta-item" title="1 script enviado">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-                  </svg>
-                  <span>1</span>
-                </div>
-                <div class="princhat-kanban-meta-item princhat-kanban-meta-action" title="Ver chat completo">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
-                    <circle cx="12" cy="12" r="3"/>
-                  </svg>
-                </div>
-              </div>
-            </div>
-          </div>
-        ` : `
-          <p class="princhat-kanban-empty-message">Nenhum lead ainda</p>
-        `}
+       `).join('')}
       </div>
     `;
 
@@ -10222,101 +10254,143 @@ class WhatsAppUIOverlay {
       });
     });
 
+    // Drag listeners are now handled globally by setupGlobalKanbanListeners
+    // No local listeners needed here
+
     return columnEl;
   }
 
   /**
-   * Setup drag and drop for column reordering
+  /**
+   * Setup GLOBAL drag listeners on the overlay to handle dynamic elements
+   * This uses Event Delegation to ensure listeners persist even after DOM updates
    */
-  private setupColumnDragAndDrop() {
-    const columns = this.kanbanOverlay?.querySelectorAll('.princhat-kanban-column');
-    if (!columns) return;
+  /**
+   * Initialize SortableJS for drag and drop
+   * This replaces manual drag listeners with a robust library solution
+   */
+  private initSortable(overlay: HTMLElement) {
+    console.log('[PrinChat] Initializing SortableJS');
 
-    let draggedColumn: HTMLElement | null = null;
+    const columns = overlay.querySelectorAll('.princhat-kanban-column-body');
 
     columns.forEach((column) => {
-      const dragBtn = column.querySelector('.princhat-kanban-column-drag') as HTMLElement;
-      if (!dragBtn || dragBtn.hasAttribute('disabled')) return;
+      new Sortable(column as HTMLElement, {
+        group: 'kanban', // Allow dragging between lists
+        animation: 150,  // Smooth animation
+        ghostClass: 'princhat-kanban-ghost', // Class for the placeholder
+        dragClass: 'princhat-kanban-drag',   // Class for the dragging item
+        delay: 50, // Small delay to prevent accidental drags
+        delayOnTouchOnly: true,
 
-      // Make column draggable only from the drag handle
-      (column as HTMLElement).setAttribute('draggable', 'true');
 
-      // Set drag data only when dragging from handle
-      let isDraggingFromHandle = false;
+        onEnd: (evt) => {
+          const itemEl = evt.item;  // dragged HTMLElement
+          const toEl = evt.to;      // target list
+          // const fromEl = evt.from;  // previous list
 
-      dragBtn.addEventListener('mousedown', () => {
-        isDraggingFromHandle = true;
-      });
+          const leadId = itemEl.getAttribute('data-lead-id');
+          const newColumnId = toEl.getAttribute('data-column-id');
+          const newIndex = evt.newIndex;
 
-      dragBtn.addEventListener('mouseup', () => {
-        isDraggingFromHandle = false;
-      });
+          console.log('[PrinChat] Sortable drop:', { leadId, to: newColumnId, index: newIndex });
 
-      (column as HTMLElement).addEventListener('dragstart', (e: any) => {
-        if (!isDraggingFromHandle) {
-          e.preventDefault();
-          return;
-        }
-
-        draggedColumn = column as HTMLElement;
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/html', column.innerHTML);
-        (column as HTMLElement).classList.add('dragging');
-        console.log('[PrinChat UI] Started dragging column:', draggedColumn.getAttribute('data-column-id'));
-      });
-
-      (column as HTMLElement).addEventListener('dragover', (e: any) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-
-        if (draggedColumn && draggedColumn !== column) {
-          (column as HTMLElement).classList.add('drag-over');
+          if (leadId && newColumnId) {
+            // Sync with backend
+            this.requestFromContentScript({
+              type: 'MOVE_KANBAN_LEAD',
+              payload: {
+                leadId,
+                newColumnId,
+                newOrder: newIndex || 0
+              }
+            }).catch(err => console.error('[PrinChat] Error moving lead:', err));
+          }
         }
       });
+    });
 
-      (column as HTMLElement).addEventListener('dragleave', () => {
-        (column as HTMLElement).classList.remove('drag-over');
-      });
+    // Still need the global delegate for DELETE button and other clicks
+    this.setupGlobalClickListeners(overlay);
+  }
 
-      (column as HTMLElement).addEventListener('drop', async (e: any) => {
+  /**
+   * Setup global click listeners (delegated)
+   * Separated from Drag listeners since we used SortableJS for drags
+   */
+  private setupGlobalClickListeners(overlay: HTMLElement) {
+    // CLICK - Delegated to Delete Button
+    overlay.addEventListener('click', async (e: Event) => {
+      const deleteBtn = (e.target as HTMLElement).closest('.princhat-kanban-delete-btn') as HTMLElement;
+      if (deleteBtn) {
         e.preventDefault();
         e.stopPropagation();
 
-        if (draggedColumn && draggedColumn !== column) {
-          const draggedId = draggedColumn.getAttribute('data-column-id');
-          const targetOrder = parseInt((column as HTMLElement).getAttribute('data-column-order') || '0');
+        const card = deleteBtn.closest('.princhat-kanban-lead-card') as HTMLElement;
+        if (!card) return;
 
-          console.log('[PrinChat UI] Reordering column:', draggedId, 'to order:', targetOrder);
+        const leadId = card.getAttribute('data-lead-id');
+        const leadName = card.querySelector('.princhat-kanban-lead-name')?.textContent || 'este card';
 
-          try {
-            // Update order in database
-            await this.requestFromContentScript({
-              type: 'UPDATE_COLUMN_ORDER',
-              payload: { columnId: draggedId, newOrder: targetOrder }
-            });
+        if (window.confirm(`Tem certeza que deseja remover "${leadName}" do Kanban?`)) {
+          console.log('[PrinChat] Deleting lead:', leadId);
 
-            // Re-render columns
-            await this.renderKanbanColumns();
-          } catch (error) {
-            console.error('[PrinChat UI] Error reordering column:', error);
+          // Visual removal immediately
+          card.style.transition = 'all 0.3s ease';
+          card.style.opacity = '0';
+          card.style.transform = 'scale(0.8)';
+
+          setTimeout(() => card.remove(), 300);
+
+          if (leadId) {
+            try {
+              await this.requestFromContentScript({
+                type: 'DELETE_KANBAN_LEAD',
+                payload: { leadId }
+              });
+              console.log('[PrinChat] Lead deleted successfully');
+            } catch (error) {
+              console.error('[PrinChat] Error deleting lead:', error);
+            }
           }
         }
+      }
+    });
+  }
 
-        // Clean up
-        columns.forEach(col => {
-          (col as HTMLElement).classList.remove('drag-over', 'dragging');
-        });
-        draggedColumn = null;
-        isDraggingFromHandle = false;
-      });
+  /**
+   * Setup drag and drop for column reordering
+   * Refactored to use SortableJS to avoid conflicts with card dragging
+   */
+  private setupColumnDragAndDrop() {
+    const container = this.kanbanOverlay?.querySelector('.princhat-kanban-columns-container');
+    if (!container) return;
 
-      (column as HTMLElement).addEventListener('dragend', () => {
-        columns.forEach(col => {
-          (col as HTMLElement).classList.remove('drag-over', 'dragging');
-        });
-        draggedColumn = null;
-        isDraggingFromHandle = false;
-      });
+    console.log('[PrinChat] Initializing SortableJS for Columns');
+
+    new Sortable(container as HTMLElement, {
+      animation: 150,
+      handle: '.princhat-kanban-column-drag', // Drag handle selector within list items
+      draggable: '.princhat-kanban-column',   // Specifies which items inside the element should be draggable
+      ghostClass: 'princhat-kanban-ghost',
+      dragClass: 'princhat-kanban-drag',
+      direction: 'horizontal',
+
+      onEnd: (evt) => {
+        const itemEl = evt.item;
+        const newIndex = evt.newIndex;
+        const columnId = itemEl.getAttribute('data-column-id');
+
+        // The 'newIndex' from Sortable is 0-based index in the DOM list
+        console.log('[PrinChat] Column reordered:', { columnId, newIndex });
+
+        if (columnId && newIndex !== undefined) {
+          this.requestFromContentScript({
+            type: 'UPDATE_COLUMN_ORDER',
+            payload: { columnId, newOrder: newIndex }
+          }).catch(err => console.error('[PrinChat] Error reordering column:', err));
+        }
+      }
     });
   }
 
@@ -10660,6 +10734,80 @@ class WhatsAppUIOverlay {
     modal.addEventListener('click', (e) => {
       if (e.target === modal) modal.remove();
     });
+  }
+
+  /**
+   * Listen for user interactions that imply navigation (Sidebar clicks)
+   */
+  private detectChatNavigation() {
+    const side = document.querySelector('#side');
+    if (side) {
+      side.addEventListener('click', () => {
+        // User clicked sidebar -> Potential navigation
+        // console.log('[PrinChat UI] Navigation detected (Sidebar click)');
+        this.handleNavigationStart();
+      }, { capture: true }); // Capture early
+    }
+
+    // Also listen for KeyDown (Alt+Tab or Arrow keys could switch chat)
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        // Potential navigation via keyboard
+      }
+    });
+  }
+
+  /**
+   * Handle start of navigation: clear artifacts and prepare for switch
+   */
+  private handleNavigationStart() {
+    this.invalidateChatCache();
+    this.setButtonsLoadingState(true);
+  }
+
+  /**
+   * Wait for the Chat ID to change (polling)
+   * This is crucial because UI updates BEFORE the Store updates active chat.
+   */
+  private async waitForChatIdChange(oldId: string | null, maxAttempts = 20): Promise<string | null> {
+    let attempts = 0;
+
+    return new Promise((resolve) => {
+      const check = async () => {
+        attempts++;
+        // Force fetch current ID from store (bypassing our cache)
+        this.invalidateChatCache();
+        const newId = await this.getActiveChatId();
+
+        // If ID is different and valid, WE ARE SYNCED
+        // Also if oldId was null and we got a newId, that counts
+        if (newId && newId !== oldId) {
+          // console.log(`[PrinChat UI] Chat ID changed: ${oldId} -> ${newId} (Attempt ${attempts})`);
+          resolve(newId);
+          return;
+        }
+
+        if (attempts >= maxAttempts) {
+          // console.log('[PrinChat UI] Chat ID wait timeout - using last known:', newId);
+          resolve(newId); // Return whatever we have
+          return;
+        }
+
+        setTimeout(check, 100); // Poll every 100ms
+      };
+      check();
+    });
+  }
+
+  /**
+   * Helper to set buttons to loading state (hide badges)
+   */
+  private setButtonsLoadingState(isLoading: boolean) {
+    const notesBadge = document.querySelector('.notes-badge') as HTMLElement;
+    if (notesBadge) notesBadge.style.opacity = isLoading ? '0.5' : '1';
+
+    const scheduleBtn = document.querySelector('.princhat-schedule-button');
+    if (scheduleBtn) scheduleBtn.classList.toggle('loading', isLoading);
   }
 
 }

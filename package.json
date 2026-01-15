@@ -24,6 +24,7 @@
     "@tiptap/extension-link": "^3.14.0",
     "@tiptap/extension-youtube": "^3.14.0",
     "@tiptap/starter-kit": "^3.14.0",
+    "@types/sortablejs": "^1.15.9",
     "@wppconnect/wa-js": "^3.19.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -32,6 +33,7 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "sonner": "^2.0.7",
+    "sortablejs": "^1.15.6",
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
