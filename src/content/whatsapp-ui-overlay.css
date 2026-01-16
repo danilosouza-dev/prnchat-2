@@ -5616,6 +5616,11 @@ body.princhat-kanban-active div.x1n2onr6>span {
   color: #e91e63;
 }
 
+/* Thicker dots for column menu */
+.princhat-kanban-column-menu-btn svg circle {
+  r: 1.5;
+}
+
 /* Main container for column content */
 .princhat-kanban-column-body {
   flex: 1;
@@ -5710,8 +5715,7 @@ body.princhat-kanban-active div.x1n2onr6>span {
   padding: 4px 8px;
   border-radius: 4px;
   transition: all 0.2s;
-  cursor: pointer;
-  /* Add pointer cursor */
+  cursor: pointer !important;
 }
 
 .princhat-kanban-meta-item:hover {
@@ -5729,6 +5733,17 @@ body.princhat-kanban-active div.x1n2onr6>span {
 .princhat-kanban-meta-item:hover svg {
   color: #e91e63;
   /* Pink icon on hover */
+}
+
+/* Card menu button - add hover area */
+.princhat-kanban-card-menu-btn {
+  padding: 6px 8px;
+  /* Rectangular like column menu */
+}
+
+.princhat-kanban-card-menu-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  cursor: pointer !important;
 }
 
 .princhat-kanban-menu-item:hover {
@@ -6158,8 +6173,10 @@ body.princhat-kanban-active div.x1n2onr6>span {
 
 /* Unread messages badge */
 .princhat-kanban-lead-unread {
-  background: #4caf50;
-  color: #fff;
+  background: #25D366;
+  /* WhatsApp green */
+  color: #111b21;
+  /* WhatsApp dark text */
   font-size: 10px;
   font-weight: 700;
   padding: 0 3px;
@@ -6404,4 +6421,58 @@ body.princhat-kanban-active div.x1n2onr6>span {
   transform: scale(1.02);
   cursor: grabbing !important;
   z-index: 10000;
+}
+
+/* ========================================
+ * CARD ACTIONS DROPDOWN MENU
+ * ======================================== */
+
+.princhat-kanban-card-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  background: #1a1a1a !important;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  z-index: 10000;
+  min-width: 200px;
+  overflow: hidden;
+  padding: 8px 0;
+  animation: fadeIn 0.15s ease;
+  pointer-events: auto;
+}
+
+.princhat-kanban-card-dropdown-item {
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  color: #e0e0e0 !important;
+  background: transparent !important;
+  font-size: 14px;
+  transition: background 0.2s, color 0.2s;
+}
+
+.princhat-kanban-card-dropdown-item:hover {
+  background: #2a2a2a !important;
+}
+
+.princhat-kanban-card-dropdown-item svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: #9e9e9e !important;
+  transition: color 0.2s;
+}
+
+.princhat-kanban-card-dropdown-item:hover svg {
+  color: #e91e63 !important;
+}
+
+.princhat-kanban-card-dropdown-item span {
+  flex: 1;
+  font-weight: 500;
+  text-align: left;
 }

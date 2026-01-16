@@ -9972,7 +9972,96 @@ class WhatsAppUIOverlay {
 
     await this.renderKanbanColumns();
 
+    // Setup real-time update listeners
+    this.setupKanbanRealtimeListeners();
+
     console.log('[PrinChat UI] ✅ Kanban overlay opened');
+  }
+
+  /**
+   * Setup real-time Kanban update listeners
+   */
+  private setupKanbanRealtimeListeners() {
+    // Listen for lead updates
+    document.addEventListener('PrinChatKanbanLeadUpdated', (event: any) => {
+      if (!this.isKanbanOpen) return;
+
+      const { leadId, updates } = event.detail;
+      console.log('[PrinChat UI] 🔄 Lead updated:', leadId, updates);
+
+      // Find and update the card in DOM
+      const card = this.kanbanOverlay?.querySelector(`.princhat-kanban-lead-card[data-lead-id="${leadId}"]`);
+      if (card) {
+        // Update last message preview
+        if (updates.lastMessage) {
+          let previewEl = card.querySelector('.princhat-kanban-lead-preview');
+          if (!previewEl) {
+            // Create preview element if it doesn't exist
+            previewEl = document.createElement('p');
+            previewEl.className = 'princhat-kanban-lead-preview';
+            const headerEl = card.querySelector('.princhat-kanban-lead-header');
+            if (headerEl) {
+              headerEl.insertAdjacentElement('afterend', previewEl);
+            }
+          }
+          if (previewEl) {
+            const preview = updates.lastMessage.length > 50 ? updates.lastMessage.substring(0, 50) + '...' : updates.lastMessage;
+            previewEl.textContent = preview;
+          }
+        }
+
+        // Update time
+        if (updates.lastMessageTime) {
+          const timeEl = card.querySelector('.princhat-kanban-lead-time');
+          if (timeEl) {
+            const time = new Date(updates.lastMessageTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+            timeEl.textContent = time;
+          }
+        }
+
+        // Update unread count badge
+        if (updates.unreadCount !== undefined) {
+          const timeBadgeEl = card.querySelector('.princhat-kanban-lead-time-badge');
+          if (timeBadgeEl) {
+            // Remove old badge if exists
+            const oldBadge = timeBadgeEl.querySelector('.princhat-kanban-lead-unread');
+            if (oldBadge) oldBadge.remove();
+
+            // Add new badge
+            if (updates.unreadCount > 0) {
+              const badge = document.createElement('span');
+              badge.className = 'princhat-kanban-lead-unread';
+              if (updates.unreadCount > 9) {
+                badge.setAttribute('data-count', '9+');
+                badge.textContent = '9+';
+              } else {
+                badge.textContent = String(updates.unreadCount);
+              }
+              timeBadgeEl.appendChild(badge);
+            }
+          }
+        }
+
+        // Add animation
+        card.classList.add('princhat-kanban-card-updated');
+        setTimeout(() => card.classList.remove('princhat-kanban-card-updated'), 300);
+
+        console.log('[PrinChat UI] ✅ Card updated in DOM');
+      }
+    });
+
+    // Listen for new lead creation
+    document.addEventListener('PrinChatKanbanLeadCreated', async (event: any) => {
+      if (!this.isKanbanOpen) return;
+
+      const { lead } = event.detail;
+      console.log('[PrinChat UI] ➕ New lead created:', lead.name);
+
+      // Re-render Kanban to show new card
+      await this.renderKanbanColumns();
+    });
+
+    console.log('[PrinChat UI] 🔊 Real-time listeners setup');
   }
 
   /**
@@ -10225,16 +10314,16 @@ class WhatsAppUIOverlay {
                   </svg>
                   <span>${lead.scriptsCount || 0}</span>
                 </div>
-                <div class="princhat-kanban-meta-item princhat-kanban-meta-action" title="Ver chat completo">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
-                    <circle cx="12" cy="12" r="3"/>
-                  </svg>
-                </div>
-                <div class="princhat-kanban-meta-item princhat-kanban-delete-btn" title="Excluir card">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="3 6 5 6 21 6"></polyline>
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                
+                <!-- Spacer to push menu button to the right -->
+                <div style="flex: 1;"></div>
+                
+                <!-- 3-dot menu button (on the right) -->
+                <div class="princhat-kanban-meta-item princhat-kanban-card-menu-btn" title="Mais ações" data-lead-id="${lead.id}" data-chat-id="${lead.chatId}">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="5" r="1.5" fill="currentColor" stroke="none"/>
+                    <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+                    <circle cx="12" cy="19" r="1.5" fill="currentColor" stroke="none"/>
                   </svg>
                 </div>
               </div>
@@ -10414,6 +10503,124 @@ class WhatsAppUIOverlay {
               console.error('[PrinChat] Error deleting lead:', error);
             }
           }
+        }
+      }
+
+      // CLICK - Card Menu Button (3 dots)
+      const menuBtn = (e.target as HTMLElement).closest('.princhat-kanban-card-menu-btn') as HTMLElement;
+      if (menuBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Close any other open dropdowns
+        overlay.querySelectorAll('.princhat-kanban-card-dropdown').forEach(d => d.remove());
+
+        // Get chat info from button
+        const chatId = menuBtn.getAttribute('data-chat-id');
+
+        // Create dropdown
+        const dropdown = document.createElement('div');
+        dropdown.className = 'princhat-kanban-card-dropdown';
+        dropdown.innerHTML = `
+          <div class="princhat-kanban-card-dropdown-item" data-action="open-chat" data-chat-id="${chatId}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+            <span>Abrir conversa</span>
+          </div>
+          <div class="princhat-kanban-card-dropdown-item" data-action="close-deal" data-chat-id="${chatId}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" x2="12" y1="2" y2="22"/>
+              <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+            </svg>
+            <span>Faturar card</span>
+          </div>
+          <div class="princhat-kanban-card-dropdown-item" data-action="delete-card" data-chat-id="${chatId}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+            <span>Excluir card</span>
+          </div>
+        `;
+
+        // Position dropdown
+        menuBtn.style.position = 'relative';
+        menuBtn.appendChild(dropdown);
+
+        // Close dropdown when clicking outside
+        setTimeout(() => {
+          const closeDropdown = (event: MouseEvent) => {
+            if (!dropdown.contains(event.target as Node)) {
+              dropdown.remove();
+              document.removeEventListener('click', closeDropdown);
+            }
+          };
+          document.addEventListener('click', closeDropdown);
+        }, 0);
+      }
+
+      // CLICK - Card Menu Dropdown Items
+      const dropdownItem = (e.target as HTMLElement).closest('.princhat-kanban-card-dropdown-item') as HTMLElement;
+      if (dropdownItem) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const action = dropdownItem.getAttribute('data-action');
+        const chatId = dropdownItem.getAttribute('data-chat-id');
+
+        // Close dropdown
+        dropdownItem.closest('.princhat-kanban-card-dropdown')?.remove();
+
+        switch (action) {
+          case 'open-chat':
+            if (chatId) {
+              // Close Kanban and open chat
+              this.closeKanbanOverlay();
+              await this.requestFromContentScript({
+                type: 'NAVIGATE_TO_CHAT',
+                payload: { chatId }
+              });
+            }
+            break;
+          case 'close-deal':
+            if (chatId) {
+              // Close deal - mark as complete/closed
+              console.log('[PrinChat] Close deal for:', chatId);
+              // TODO: Implement close deal logic
+            }
+            break;
+          case 'delete-card':
+            // Get lead info for confirmation
+            const card = (e.target as HTMLElement).closest('.princhat-kanban-lead-card') as HTMLElement;
+            if (card) {
+              const leadId = card.getAttribute('data-lead-id');
+              const leadName = card.querySelector('.princhat-kanban-lead-name')?.textContent || 'este card';
+
+              if (window.confirm(`Tem certeza que deseja remover "${leadName}" do Kanban?`)) {
+                console.log('[PrinChat] Deleting lead:', leadId);
+
+                // Visual removal
+                card.style.transition = 'all 0.3s ease';
+                card.style.opacity = '0';
+                card.style.transform = 'scale(0.8)';
+                setTimeout(() => card.remove(), 300);
+
+                if (leadId) {
+                  try {
+                    await this.requestFromContentScript({
+                      type: 'DELETE_KANBAN_LEAD',
+                      payload: { leadId }
+                    });
+                    console.log('[PrinChat] Lead deleted successfully');
+                  } catch (error) {
+                    console.error('[PrinChat] Error deleting lead:', error);
+                  }
+                }
+              }
+            }
+            break;
         }
       }
     });
