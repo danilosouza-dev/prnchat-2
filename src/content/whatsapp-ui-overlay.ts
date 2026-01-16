@@ -6613,6 +6613,9 @@ class WhatsAppUIOverlay {
           });
         }
 
+        // Force update of global schedule badge in header
+        await this.updateGlobalSchedulesBadge();
+
         reRenderCallback();
       }
     );
