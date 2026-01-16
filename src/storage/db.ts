@@ -849,6 +849,8 @@ class DatabaseService {
       console.log('[PrinChat DB] Initializing default Kanban columns...');
 
       const now = Date.now();
+      const columnIds: string[] = [];
+
       for (const column of DEFAULT_KANBAN_COLUMNS) {
         const kanbanColumn: KanbanColumn = {
           ...column,
@@ -857,8 +859,41 @@ class DatabaseService {
           updatedAt: now,
         };
         await db.put('kanban_columns', kanbanColumn);
+        columnIds.push(kanbanColumn.id);
         console.log('[PrinChat DB] Created default column:', kanbanColumn.name);
       }
+
+      // Create Sample Lead "Renato Caetano" in the first column (Recentes)
+      if (columnIds.length > 0) {
+        const sampleLead: LeadContact = {
+          id: `lead_${now}_sample`,
+          chatId: '5511999999999@c.us',
+          name: 'Renato Caetano',
+          columnId: columnIds[0], // Recentes
+          order: 0,
+          phone: '5511999999999',
+          photo: undefined, // Will force placebo
+          unreadCount: 9,
+          lastMessage: 'Olá, gostaria de saber mais sobre...',
+          lastMessageTime: now - 3600000, // 1 hour ago
+          tags: ['CLIENTE VIP', 'Novo'],
+          notesCount: 2,
+          schedulesCount: 1,
+          scriptsCount: 3,
+          createdAt: now,
+          updatedAt: now
+        };
+        await db.put('kanban_leads', sampleLead);
+        console.log('[PrinChat DB] Created sample lead: Renato Caetano');
+
+        // Trigger storage update
+        if (typeof chrome !== 'undefined' && chrome.storage) {
+          await chrome.storage.local.set({
+            kanban_leads: Date.now()
+          });
+        }
+      }
+
       console.log('[PrinChat DB] ✅ Default Kanban columns initialized');
     }
   }
@@ -1097,6 +1132,33 @@ class DatabaseService {
   async saveLead(lead: LeadContact): Promise<void> {
     const db = await this.init();
     await db.put('kanban_leads', { ...lead, updatedAt: Date.now() });
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        kanban_leads: Date.now()
+      });
+    }
+  }
+
+  /**
+   * Update a lead partially
+   */
+  async updateLead(id: string, updates: Partial<LeadContact>): Promise<void> {
+    const db = await this.init();
+    const lead = await db.get('kanban_leads', id);
+
+    if (!lead) {
+      throw new Error(`Lead with id ${id} not found`);
+    }
+
+    const updatedLead: LeadContact = {
+      ...lead,
+      ...updates,
+      updatedAt: Date.now(),
+    };
+
+    await db.put('kanban_leads', updatedLead);
 
     // Trigger chrome.storage change event
     if (typeof chrome !== 'undefined' && chrome.storage) {

@@ -467,6 +467,21 @@ class BackgroundService {
         })();
         return true;
 
+      case 'UPDATE_KANBAN_LEAD':
+        (async () => {
+          try {
+            console.log('[Background] UPDATE_KANBAN_LEAD request received:', message.payload);
+            const { id, updates } = message.payload;
+            await db.updateLead(id, updates);
+            console.log('[Background] Lead updated:', id);
+            sendResponse({ success: true });
+          } catch (error: any) {
+            console.error('[Background] Error updating Kanban lead:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
       case 'MOVE_KANBAN_LEAD':
         (async () => {
           try {

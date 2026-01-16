@@ -25,7 +25,8 @@ export interface KanbanColumn {
  * Represents a contact/lead in the Kanban system
  */
 export interface LeadContact {
-    id: string;              // WhatsApp Chat ID
+    id: string;              // WhatsApp Chat ID (Main ID)
+    chatId: string;          // Explicit Chat ID (for compatibility)
     name: string;            // Contact name
     phone: string;           // Phone number
     photo?: string;          // Profile photo URL (base64 or blob URL)
@@ -35,6 +36,10 @@ export interface LeadContact {
     lastMessageTime?: number; // Timestamp of last message
     notes?: string;          // User notes about this lead
     tags?: string[];         // Tags for categorization
+    unreadCount?: number;    // Number of unread messages
+    notesCount?: number;     // Number of notes
+    schedulesCount?: number; // Number of schedules
+    scriptsCount?: number;   // Number of scripts executed
     createdAt: number;       // When added to Kanban
     updatedAt: number;       // Last modification
 }

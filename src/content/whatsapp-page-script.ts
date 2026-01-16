@@ -1221,50 +1221,58 @@
         Store.Msg.on('add', (msg: any) => {
           // Only process incoming messages (not sent by us)
           if (msg && !msg.id.fromMe && msg.type === 'chat' && msg.body) {
-            // Get message timestamp (convert to milliseconds if needed)
-            const msgTimestamp = msg.t ? msg.t * 1000 : Date.now();
-            const messageAge = Date.now() - msgTimestamp;
+            (async () => {
+              const now = Date.now();
+              // Get message timestamp (convert to milliseconds if needed)
+              const msgTimestamp = msg.t ? msg.t * 1000 : now;
+              const messageAge = now - msgTimestamp;
 
-            // Skip if message is older than MAX_MESSAGE_AGE
-            // Also skip messages that happened before script loaded (history messages)
-            if (messageAge > MAX_MESSAGE_AGE || msgTimestamp < scriptLoadTime) {
-              console.log('[PrinChat] Skipping old/history message:', {
-                body: msg.body.substring(0, 30),
-                age: messageAge,
-                msgTime: new Date(msgTimestamp).toLocaleTimeString(),
-                loadTime: new Date(scriptLoadTime).toLocaleTimeString()
-              });
-              return;
-            }
-
-            // Create unique message ID
-            const messageId = `${msg.id.id}_${msg.from}_${msg.t}`;
-
-            // Skip if already processed
-            if (processedMessages.has(messageId)) {
-              console.log('[PrinChat] Skipping duplicate message:', msg.body.substring(0, 30));
-              return;
-            }
-
-            // Mark as processed
-            processedMessages.add(messageId);
-
-            // Clean up old processed messages periodically
-            if (processedMessages.size > 100) {
-              const oldMessages = Array.from(processedMessages).slice(0, 50);
-              oldMessages.forEach(id => processedMessages.delete(id));
-            }
-
-            console.log('[PrinChat] New message received:', msg.body, `(age: ${messageAge}ms)`);
-
-            // Notify content script about new message
-            document.dispatchEvent(new CustomEvent('PrinChatIncomingMessage', {
-              detail: {
-                messageText: msg.body,
-                chatId: msg.from?.toString() || '',
-                timestamp: msgTimestamp
+              // Skip if message is older than MAX_MESSAGE_AGE
+              // Also skip messages that happened before script loaded (history messages)
+              if (messageAge > MAX_MESSAGE_AGE || msgTimestamp < scriptLoadTime) {
+                console.log('[PrinChat] Skipping old/history message:', {
+                  body: msg.body.substring(0, 30),
+                  age: messageAge,
+                  msgTime: new Date(msgTimestamp).toLocaleTimeString(),
+                  loadTime: new Date(scriptLoadTime).toLocaleTimeString()
+                });
+                return;
               }
-            }));
+
+              // Create unique message ID
+              const messageId = `${msg.id.id}_${msg.from}_${msg.t}`;
+
+              // Skip if already processed
+              if (processedMessages.has(messageId)) {
+                console.log('[PrinChat] Skipping duplicate message:', msg.body.substring(0, 30));
+                return;
+              }
+
+              // Mark as processed
+              processedMessages.add(messageId);
+
+              // Clean up old processed messages periodically
+              if (processedMessages.size > 100) {
+                const oldMessages = Array.from(processedMessages).slice(0, 50);
+                oldMessages.forEach(id => processedMessages.delete(id));
+              }
+
+              console.log('[PrinChat] New message received:', msg.body, `(age: ${messageAge}ms)`);
+
+              // Get chatId from message (can be LID, getChatInfo will handle it)
+              const chatId = msg.id?.remote?.toString() || msg.from?.toString() || '';
+              console.log('[PrinChat] Chat ID from message:', chatId);
+
+              // Notify content script about new message
+              // getChatInfo in the injector will fetch name/photo
+              document.dispatchEvent(new CustomEvent('PrinChatIncomingMessage', {
+                detail: {
+                  messageText: msg.body,
+                  chatId: chatId,
+                  timestamp: msgTimestamp
+                }
+              }));
+            })();
           }
         });
         console.log('[PrinChat] Message monitoring active (with deduplication)');
