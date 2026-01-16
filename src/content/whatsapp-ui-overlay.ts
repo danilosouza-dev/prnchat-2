@@ -168,9 +168,15 @@ class WhatsAppUIOverlay {
   private isKanbanOpen: boolean = false;
 
   private currentChatId: string | null = null; // Track current chat ID for sync detection
+  private chatCacheInvalidateTimer: NodeJS.Timeout | null = null; // Debounce timer for cache invalidation
+  private isRenderingKanban: boolean = false; // Lock to prevent concurrent Kanban renders
+  private instanceId: string = Math.random().toString(36).substring(7); // Debug ID
 
 
   constructor() {
+    console.log(`[PrinChat UI] 🏁 Constructor called. Instance ID: ${this.instanceId}`);
+    console.log(`[PrinChat UI] 📍 Location: ${window.location.href}`);
+    console.log(`[PrinChat UI] 🖼️ Window Top? ${window.self === window.top}`);
     this.init();
   }
 
@@ -700,19 +706,19 @@ class WhatsAppUIOverlay {
 
     // Return cached value if still valid
     if (this.cachedChatId && (now - this.cachedChatTimestamp) < this.CHAT_CACHE_TTL) {
-      console.log('[PrinChat UI] Using cached chat ID:', this.cachedChatId);
+      // console.log('[PrinChat UI] Using cached chat ID:', this.cachedChatId);
       return this.cachedChatId;
     }
 
     // Fetch fresh chat ID with retry
-    console.log('[PrinChat UI] Fetching active chat (cache expired or empty)...');
+    // console.log('[PrinChat UI] Fetching active chat (cache expired or empty)...');
 
     let attempts = 0;
     const maxAttempts = 3;
 
     while (attempts < maxAttempts) {
       attempts++;
-      console.log(`[PrinChat UI] Attempt ${attempts}/${maxAttempts} to get active chat...`);
+      // console.log(`[PrinChat UI] Attempt ${attempts}/${maxAttempts} to get active chat...`);
 
       try {
         const chatResponse = await this.requestFromContentScript({
@@ -750,10 +756,40 @@ class WhatsAppUIOverlay {
    * Invalidate chat cache when user changes chat
    * Called by monitorChatChanges when chat changes are detected
    */
+
   private invalidateChatCache() {
-    console.log('[PrinChat UI] Invalidating chat cache');
-    this.cachedChatId = null;
-    this.cachedChatTimestamp = 0;
+    if (this.chatCacheInvalidateTimer) {
+      clearTimeout(this.chatCacheInvalidateTimer);
+    }
+
+    this.chatCacheInvalidateTimer = setTimeout(() => {
+      console.log('[PrinChat UI] Invalidating chat cache (Debounced)');
+      this.cachedChatId = null;
+      this.cachedChatTimestamp = 0;
+    }, 500); // 500ms debounce
+  }
+
+  /**
+   * Check if current environment is WhatsApp Business
+   * URL is often the same (web.whatsapp.com), so we check for specific assets
+   */
+  private isWhatsAppBusiness(): boolean {
+    // Check 1: Hostname (some business versions use business.whatsapp.com)
+    if (window.location.hostname.includes('business')) return true;
+
+    // Check 2: Intro image asset (reliable method)
+    // Business usually has 'business' in the intro asset name
+    const introImg = document.querySelector('[data-asset-intro-image-light]');
+    if (introImg) {
+      const assetName = introImg.getAttribute('data-asset-intro-image-light') || '';
+      if (assetName.includes('business')) return true;
+    }
+
+    // Check 3: Check for specific Business UI elements (Catalog icon, etc)
+    // This selector targets the catalog icon often present in business header/sidebar
+    if (document.querySelector('span[data-icon="business-catalog"]')) return true;
+
+    return false;
   }
 
   /**
@@ -9597,7 +9633,8 @@ class WhatsAppUIOverlay {
       const activeSchedules = schedules.filter(s => s.status === 'pending' || s.status === 'paused');
       const scheduleCount = activeSchedules.length;
 
-      console.log('[PrinChat UI] Active schedule count for this chat:', scheduleCount, '(total:', schedules.length, ')');
+      // Log only on significant change or error, not every poll
+      // console.log('[PrinChat UI] Active schedule count for this chat:', scheduleCount);
 
       // Find existing button
       const existingButton = chatHeader.querySelector('.princhat-schedule-button') as HTMLElement;
@@ -9649,7 +9686,38 @@ class WhatsAppUIOverlay {
       // PRIMARY: MutationObserver to catch changes immediately
       let debounceTimer: NodeJS.Timeout | null = null;
 
-      const observer = new MutationObserver(() => {
+      const observer = new MutationObserver((mutations) => {
+        // Ignore PrinChat internal updates to prevent infinite loops
+        const isInternalUpdate = mutations.every(m => {
+          const target = m.target as HTMLElement;
+          // Check if mutation is related to our buttons or badges
+          return target.classList?.contains('princhat-schedule-button') ||
+            target.classList?.contains('princhat-notes-button') ||
+            target.closest?.('.princhat-schedule-button') ||
+            target.closest?.('.princhat-notes-button') ||
+            target.classList?.contains('princhat-schedule-badge') ||
+            // Check added nodes
+            (m.type === 'childList' && Array.from(m.addedNodes).some((n: any) =>
+              n.classList?.contains('princhat-schedule-button') || n.classList?.contains('princhat-notes-button')
+            ));
+        });
+
+        if (isInternalUpdate) return;
+
+        // OPTIMIZATION: In Business, ignore irrelevant changes to avoid loops
+        if (this.isWhatsAppBusiness()) {
+          const hasRelevantChanges = mutations.some(mutation => {
+            // Ignore style/class changes if they don't affect structure
+            if (mutation.type === 'attributes' &&
+              ['style', 'class', 'role', 'tabindex'].includes(mutation.attributeName || '')) {
+              return false;
+            }
+            return true;
+          });
+
+          if (!hasRelevantChanges) return;
+        }
+
         // Chat header changed
         const oldChatId = this.currentChatId; // Capture current known ID
         this.invalidateChatCache();
@@ -9669,12 +9737,19 @@ class WhatsAppUIOverlay {
             this.updateScheduleButton(true);
             this.updateNotesBadge(true);
           }
-        }, 50);
+        }, this.isWhatsAppBusiness() ? 300 : 50); // Slower debounce for Business
       });
 
       const mainContainer = document.querySelector('#main');
       if (mainContainer) {
-        observer.observe(mainContainer, { childList: true, subtree: true });
+        // Business optimization: Don't observe subtree if possible to reduce noise, 
+        // but chat changes usually require subtree. We rely on the filter above.
+        observer.observe(mainContainer, {
+          childList: true,
+          subtree: true,
+          attributes: this.isWhatsAppBusiness(), // Only watch attributes in Business to filter them
+          attributeFilter: this.isWhatsAppBusiness() ? ['data-testid', 'data-id'] : undefined
+        });
         console.log('[PrinChat UI] ✓ Chat header monitor active (Observer)');
       } else {
         // Fallback for initial load
@@ -9691,12 +9766,15 @@ class WhatsAppUIOverlay {
 
       // SECONDARY: Polling Interval (Fail-safe for chat switches)
       // This guarantees persistence even if observer detaches
-      console.log('[PrinChat UI] Starting persistence polling (1.5s interval)...');
+      // Relaxed interval for Business to prevent CPU spikes
+      const pollInterval = this.isWhatsAppBusiness() ? 5000 : 3000;
+      console.log(`[PrinChat UI] Starting persistence polling (${pollInterval}ms interval)...`);
+
       setInterval(() => {
         // Polling checks should NOT force refresh unless missing buttons found
         // to avoid spamming the content script
         this.checkAndInjectButtons(false);
-      }, 1500);
+      }, pollInterval);
 
       // Listen for schedule changes events
       document.addEventListener('PrinChatSchedulesChanged', () => {
@@ -9840,10 +9918,11 @@ class WhatsAppUIOverlay {
       buttonSpan.appendChild(button);
       buttonWrapper.appendChild(buttonSpan);
 
-      // Insert AFTER the Meta AI wrapper (below it)
+      // Insert as the LAST element in the sidebar container
+      // ensuring consistent positioning in Business and Normal versions
       if (metaAiWrapper.parentElement) {
-        metaAiWrapper.parentElement.insertBefore(buttonWrapper, metaAiWrapper.nextSibling);
-        console.log('[PrinChat UI] ✅ Kanban button inserted after Meta AI');
+        metaAiWrapper.parentElement.appendChild(buttonWrapper);
+        console.log('[PrinChat UI] ✅ Kanban button appended to sidebar end');
       } else {
         console.error('[PrinChat UI] ❌ Could not find parent element to insert button');
         return;
@@ -9907,6 +9986,13 @@ class WhatsAppUIOverlay {
    * Open Kanban fullscreen overlay
    */
   private async openKanbanOverlay() {
+    if (this.isKanbanOpen || this.kanbanOverlay || document.querySelector('.princhat-kanban-overlay')) {
+      console.log('[PrinChat UI] Kanban overlay already exists, focusing it.');
+      this.isKanbanOpen = true; // Ensure state sync
+      this.kanbanOverlay = document.querySelector('.princhat-kanban-overlay') as HTMLElement;
+      return;
+    }
+
     console.log('[PrinChat UI] Opening Kanban overlay...');
 
     // Modify global header: hide extension icons, show "Nova Coluna" button
@@ -9965,7 +10051,8 @@ class WhatsAppUIOverlay {
     if (whatsappContent) {
       whatsappContent.appendChild(overlay);
     } else {
-      document.body.appendChild(overlay);
+      console.warn('[PrinChat UI] ⚠️ Could not find #app to mount Kanban overlay. Aborting to avoid pollution.');
+      // document.body.appendChild(overlay); // DISABLE FALLBACK to prevent ghost overlays in iframes
     }
 
     this.kanbanOverlay = overlay;
@@ -10129,6 +10216,12 @@ class WhatsAppUIOverlay {
    * Render Kanban columns from database
    */
   private async renderKanbanColumns() {
+    if (this.isRenderingKanban) {
+      console.log('[PrinChat UI] ⚠️ Kanban render already in progress, skipping duplication...');
+      return;
+    }
+
+    this.isRenderingKanban = true;
     console.log('[PrinChat UI] Rendering Kanban columns...');
 
     const container = this.kanbanOverlay?.querySelector('.princhat-kanban-columns-container');
@@ -10143,7 +10236,8 @@ class WhatsAppUIOverlay {
       const columns = response?.data || [];
       console.log('[PrinChat UI] Loaded', columns.length, 'Kanban columns');
 
-      // Clear container
+      // Clear container IMMEDIATELY before async fetching to prevent visual duplication
+      // if another render happens
       container.innerHTML = '';
 
       // Fetch all leads from background
@@ -10155,7 +10249,7 @@ class WhatsAppUIOverlay {
       console.log('[PrinChat UI] 🔍 Fetching contact info for all leads...');
       const leadsWithContactInfo = await Promise.all(
         allLeads.map(async (lead: any) => {
-          console.log('[PrinChat UI] 🔍 Processing lead:', lead.id, 'chatId:', lead.chatId);
+          // console.log('[PrinChat UI] 🔍 Processing lead:', lead.id, 'chatId:', lead.chatId);
 
           // Skip if chatId is completely missing
           if (!lead.chatId) {
@@ -10166,12 +10260,12 @@ class WhatsAppUIOverlay {
           // For LIDs, try to fetch anyway - maybe it was converted to real ID
           // For real IDs, always try to fetch
           try {
-            console.log('[PrinChat UI] 🔍 Calling getContactInfo for:', lead.chatId);
+            // console.log('[PrinChat UI] 🔍 Calling getContactInfo for:', lead.chatId);
             const info = await this.getContactInfo(lead.chatId);
-            console.log('[PrinChat UI] 📥 Got contact info:', info);
+            // console.log('[PrinChat UI] 📥 Got contact info:', info);
 
             if (info.chatName || info.chatPhoto) {
-              console.log('[PrinChat UI] ✅ Updating lead with fetched info');
+              // console.log('[PrinChat UI] ✅ Updating lead with fetched info');
               return {
                 ...lead,
                 name: info.chatName || lead.name,
@@ -10213,6 +10307,8 @@ class WhatsAppUIOverlay {
     } catch (error: any) {
       console.error('[PrinChat UI] Error rendering Kanban columns:', error);
       container.innerHTML = '<p style="color: #ff6b6b; text-align: center; padding: 2rem;">Erro ao carregar colunas</p>';
+    } finally {
+      this.isRenderingKanban = false;
     }
   }
 
@@ -11084,12 +11180,38 @@ class WhatsAppUIOverlay {
 }
 
 // Initialize when DOM is ready
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
-    new WhatsAppUIOverlay();
-  });
+// Singleton Guard to prevent multiple injections (common in WhatsApp Business iframes/updates)
+if ((window as any).__PRINCHAT_UI_INSTANCE__) {
+  console.log('[PrinChat UI] ⚠️ Instance already running, skipping duplicate initialization');
 } else {
-  new WhatsAppUIOverlay();
+  const init = () => {
+    // FRAME GUARD: Strict isolation to top frame only
+    // WhatsApp Business uses iframes for tracking/tools, we must NOT run there.
+    if (window.self !== window.top) {
+      // console.log('[PrinChat UI] 🛑 Aborting init: Running in iframe');
+      // console.log('[PrinChat UI] 🛑 Aborting init: Running in iframe');
+      return;
+    }
+
+    // DOM LOCK (Matches across contexts if they share DOM)
+    if (document.documentElement.getAttribute('data-princhat-loaded')) {
+      console.log('[PrinChat UI] 🛑 DOM Lock found: Extension already loaded in this document.');
+      return;
+    }
+    document.documentElement.setAttribute('data-princhat-loaded', 'true');
+
+    // Double check inside init to be safe against race conditions
+    if ((window as any).__PRINCHAT_UI_INSTANCE__) return;
+
+    console.log('[PrinChat UI] 🚀 Initializing singleton instance');
+    (window as any).__PRINCHAT_UI_INSTANCE__ = new WhatsAppUIOverlay();
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
 }
 
 // Export for potential external access

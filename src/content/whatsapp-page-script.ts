@@ -1053,13 +1053,16 @@
           return;
         }
 
-        // Try to find the chat first
+        // Try to find the chat first with robustness
         let chat;
         try {
-          chat = await Store.Chat.find(chatId);
-          console.log('[PrinChat Page] Chat found:', chatId);
+          if (Store.Chat.find) chat = await Store.Chat.find(chatId);
         } catch (findError) {
-          console.log('[PrinChat Page] Chat not found, will try to create/open:', findError);
+          console.log('[PrinChat Page] Chat not found via find(), trying fallback:', findError);
+        }
+
+        if (!chat && Store.Chat.get) {
+          try { chat = Store.Chat.get(chatId); } catch (e) { }
         }
 
         if (chat) {
@@ -1096,15 +1099,38 @@
           return;
         }
 
-        console.log('[PrinChat Page] Getting chat info for:', chatId);
+        // console.log('[PrinChat Page] Getting chat info for:', chatId);
 
-        // Find the chat by ID
-        const chat = await Store.Chat.find(chatId);
+        // Proteção Robusta para WhatsApp Business (API Instável)
+        let chat;
+        try {
+          // Tenta find (async)
+          if (typeof Store.Chat.find === 'function') {
+            chat = await Store.Chat.find(chatId);
+          }
+        } catch (e) {
+          // Silent catch for Business API changes
+        }
+
+        // Fallback para get (sync)
+        if (!chat && Store.Chat.get) {
+          try {
+            chat = Store.Chat.get(chatId);
+          } catch (e) { /* silent fail */ }
+        }
 
         if (!chat) {
-          console.log('[PrinChat Page] Chat not found:', chatId);
+          console.log('[PrinChat Page] ⚠️ Chat object not found via any API. Returning minimal info fallback.');
+          // Retorna sucesso parcial para não quebrar a UI
           document.dispatchEvent(new CustomEvent('PrinChatChatInfoResult', {
-            detail: { success: false, error: 'Chat not found', requestId }
+            detail: {
+              success: true,
+              chatName: chatId.replace('@c.us', '').replace('@s.whatsapp.net', ''),
+              chatId,
+              chatPhoto: undefined,
+              isFallback: true,
+              requestId
+            }
           }));
           return;
         }
