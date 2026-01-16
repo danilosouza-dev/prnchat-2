@@ -10014,6 +10014,26 @@ class WhatsAppUIOverlay {
   }
 
   /**
+   * Get contact info for a specific chat (used for Kanban hydration)
+   */
+  private async getContactInfo(chatId: string): Promise<{ chatName?: string, chatPhoto?: string }> {
+    try {
+      const response = await this.requestFromContentScript({
+        type: 'GET_CHAT_INFO',
+        payload: { chatId }
+      });
+
+      return {
+        chatName: response?.data?.chatName || response?.data?.name,
+        chatPhoto: response?.data?.chatPhoto
+      };
+    } catch (error) {
+      console.error('[PrinChat UI] Error fetching contact info:', error);
+      return {};
+    }
+  }
+
+  /**
    * Render Kanban columns from database
    */
   private async renderKanbanColumns() {
@@ -10039,9 +10059,50 @@ class WhatsAppUIOverlay {
       const allLeads = leadsResponse?.data || [];
       console.log('[PrinChat UI] Loaded', allLeads.length, 'total leads');
 
-      // Render each column with its leads
+      // **CRITICAL: Fetch contact info for ALL leads BEFORE rendering**
+      console.log('[PrinChat UI] 🔍 Fetching contact info for all leads...');
+      const leadsWithContactInfo = await Promise.all(
+        allLeads.map(async (lead: any) => {
+          console.log('[PrinChat UI] 🔍 Processing lead:', lead.id, 'chatId:', lead.chatId);
+
+          // Skip if chatId is completely missing
+          if (!lead.chatId) {
+            console.warn('[PrinChat UI] ⚠️ Lead has no chatId:', lead.id);
+            return lead;
+          }
+
+          // For LIDs, try to fetch anyway - maybe it was converted to real ID
+          // For real IDs, always try to fetch
+          try {
+            console.log('[PrinChat UI] 🔍 Calling getContactInfo for:', lead.chatId);
+            const info = await this.getContactInfo(lead.chatId);
+            console.log('[PrinChat UI] 📥 Got contact info:', info);
+
+            if (info.chatName || info.chatPhoto) {
+              console.log('[PrinChat UI] ✅ Updating lead with fetched info');
+              return {
+                ...lead,
+                name: info.chatName || lead.name,
+                photo: info.chatPhoto || lead.photo
+              };
+            } else if (lead.chatId.endsWith('@lid')) {
+              console.warn('[PrinChat UI] ⚠️ LID not converted yet, keeping original data:', lead.chatId);
+            } else {
+              console.warn('[PrinChat UI] ⚠️ No name or photo returned for:', lead.chatId);
+            }
+          } catch (e) {
+            console.error('[PrinChat UI] ❌ Error fetching contact info for', lead.chatId, e);
+          }
+
+          return lead;
+        })
+      );
+
+      console.log('[PrinChat UI] ✅ Contact info fetched, rendering columns...');
+
+      // Render each column with its leads (now with contact info!)
       for (const column of columns) {
-        const columnLeads = allLeads.filter((l: any) => l.columnId === column.id)
+        const columnLeads = leadsWithContactInfo.filter((l: any) => l.columnId === column.id)
           .sort((a: any, b: any) => a.order - b.order);
         const columnEl = this.createColumnElement(column, columnLeads);
         container.appendChild(columnEl);

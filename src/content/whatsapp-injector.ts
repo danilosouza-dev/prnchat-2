@@ -584,7 +584,7 @@
       // Listen for incoming messages from page script (for triggers)
       document.addEventListener('PrinChatIncomingMessage', async (event: any) => {
         const { messageText, chatId, timestamp } = event.detail;
-        console.log('[PrinChat] Incoming message detected:', messageText);
+        console.log('[PrinChat] Incoming message detected:', messageText, 'from:', chatId);
 
         // Send to service worker to check triggers
         try {
@@ -616,21 +616,27 @@
             const leadsResponse = await chrome.runtime.sendMessage({ type: 'GET_ALL_KANBAN_LEADS' });
             const allLeads = leadsResponse?.data || [];
 
-            // Check if contact already in Kanban
-            const existingLead = allLeads.find((l: any) => l.id === chatId);
+            // Check if contact already in Kanban (check both id and chatId)
+            const existingLead = allLeads.find((l: any) => l.id === chatId || l.chatId === chatId);
             if (existingLead) {
               console.log('[PrinChat Kanban] Contact already in Kanban:', chatId);
               return;
             }
 
-            // Get contact info
+            // Get contact info using getChatInfo (works for LIDs too)
+            console.log('[PrinChat Kanban] Fetching contact info for:', chatId);
             const chatInfoResponse = await this.getChatInfo(chatId);
-            if (!chatInfoResponse.success) {
-              console.warn('[PrinChat Kanban] Could not get chat info for:', chatId);
-              return;
-            }
 
-            const { chatName, chatPhoto } = chatInfoResponse;
+            let chatName = '';
+            let chatPhoto = '';
+
+            if (chatInfoResponse.success) {
+              chatName = chatInfoResponse.chatName || '';
+              chatPhoto = chatInfoResponse.chatPhoto || '';
+              console.log('[PrinChat Kanban] Got contact info:', { name: chatName, hasPhoto: !!chatPhoto });
+            } else {
+              console.warn('[PrinChat Kanban] Could not get chat info, using chatId as name');
+            }
 
             // Get Recentes column ID
             const columnsResponse = await chrome.runtime.sendMessage({ type: 'GET_KANBAN_COLUMNS' });
@@ -644,16 +650,17 @@
 
             // Create new lead
             const newLead = {
-              phone: chatId,
+              phone: chatId.split('@')[0],
+              chatId: chatId,
               name: chatName || chatId.split('@')[0],
-              photo: chatPhoto,
+              photo: chatPhoto || '',
               columnId: recentesColumn.id,
-              order: 0, // Top of column
+              order: 0,
               lastMessage: messageText,
               lastMessageTime: timestamp || Date.now()
             };
 
-            console.log('[PrinChat Kanban] Auto-adding contact to Recentes:', newLead.name);
+            console.log('[PrinChat Kanban] Auto-adding contact to Recentes:', newLead.name, 'with photo:', !!newLead.photo);
 
             // Save to database
             await chrome.runtime.sendMessage({

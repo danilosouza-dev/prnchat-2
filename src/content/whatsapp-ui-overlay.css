@@ -6251,7 +6251,7 @@ body.princhat-kanban-active div.x1n2onr6>span {
 /* Metadata indicators row */
 .princhat-kanban-lead-meta {
   display: flex;
-  gap: 12px;
+  gap: 0;
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid rgba(255, 255, 255, 0.05);
