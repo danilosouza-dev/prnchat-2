@@ -619,7 +619,33 @@
             // Check if contact already in Kanban (check both id and chatId)
             const existingLead = allLeads.find((l: any) => l.id === chatId || l.chatId === chatId);
             if (existingLead) {
-              console.log('[PrinChat Kanban] Contact already in Kanban:', chatId);
+              console.log('[PrinChat Kanban] Contact already in Kanban, updating:', chatId);
+
+              // Update existing lead: increment unread, update message and time
+              const updates = {
+                lastMessage: messageText,
+                lastMessageTime: timestamp || Date.now(),
+                unreadCount: (existingLead.unreadCount || 0) + 1
+              };
+
+              await chrome.runtime.sendMessage({
+                type: 'UPDATE_KANBAN_LEAD',
+                payload: {
+                  id: existingLead.id,
+                  updates: updates
+                }
+              });
+
+              console.log('[PrinChat Kanban] ✅ Updated existing lead, unread:', updates.unreadCount);
+
+              // Dispatch event for real-time UI update
+              document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
+                detail: {
+                  leadId: existingLead.id,
+                  updates: updates
+                }
+              }));
+
               return;
             }
 
@@ -648,7 +674,7 @@
               return;
             }
 
-            // Create new lead
+            // Create new lead with unread count
             const newLead = {
               phone: chatId.split('@')[0],
               chatId: chatId,
@@ -657,10 +683,11 @@
               columnId: recentesColumn.id,
               order: 0,
               lastMessage: messageText,
-              lastMessageTime: timestamp || Date.now()
+              lastMessageTime: timestamp || Date.now(),
+              unreadCount: 1  // New message just arrived
             };
 
-            console.log('[PrinChat Kanban] Auto-adding contact to Recentes:', newLead.name, 'with photo:', !!newLead.photo);
+            console.log('[PrinChat Kanban] Auto-adding contact to Recentes:', newLead.name, 'with photo:', !!newLead.photo, 'unread: 1');
 
             // Save to database
             await chrome.runtime.sendMessage({
@@ -669,6 +696,13 @@
             });
 
             console.log('[PrinChat Kanban] ✅ Contact added to Recentes');
+
+            // Dispatch event for real-time UI update (new card)
+            document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadCreated', {
+              detail: {
+                lead: newLead
+              }
+            }));
 
           } catch (kanbanError: any) {
             console.error('[PrinChat Kanban] Error auto-adding to Kanban:', kanbanError);
