@@ -6408,18 +6408,23 @@ body.princhat-kanban-active div.x1n2onr6>span {
 /* Ghost element (placeholder where item will drop) */
 .princhat-kanban-ghost {
   opacity: 0.4 !important;
-  background: rgba(233, 30, 99, 0.1) !important;
+  background: rgba(233, 30, 99, 0.05) !important;
   border: 2px dashed #e91e63 !important;
   border-radius: 8px;
 }
 
-/* Dragging element (the item being moved) */
+/* Reset any visibility hacks on children */
+.princhat-kanban-ghost>* {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+/* Dragging element (the item being moved) - Applies to NATIVE drag image in some browsers or falls back to Sortable logic */
 .princhat-kanban-drag {
   opacity: 1 !important;
   background: #2a2a2a !important;
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4) !important;
   transform: scale(1.02);
-  cursor: grabbing !important;
   z-index: 10000;
 }
 
