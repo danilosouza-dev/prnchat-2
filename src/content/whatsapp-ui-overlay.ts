@@ -136,6 +136,8 @@ class WhatsAppUIOverlay {
   private completedScripts: ScriptExecution[] = [];
   private scriptTimers: Map<string, NodeJS.Timeout> = new Map();
   private renderedCardIds: Set<string> = new Set(); // Track which cards have been rendered to avoid re-animating them
+  private renderDebounceTimer: any = null; // Timer for debouncing Kanban renders
+  private areKanbanListenersSetup: boolean = false; // Flag to prevent duplicate listeners
 
   // Message Execution System (PARALLEL execution like scripts run independently)
   private runningMessages: Map<string, MessageExecution> = new Map();
@@ -171,6 +173,7 @@ class WhatsAppUIOverlay {
   private currentChatId: string | null = null; // Track current chat ID for sync detection
   private chatCacheInvalidateTimer: NodeJS.Timeout | null = null; // Debounce timer for cache invalidation
   private isRenderingKanban: boolean = false; // Lock to prevent concurrent Kanban renders
+  private sortableInstances: Sortable[] = []; // Track SortableJS instances for cleanup
   private instanceId: string = Math.random().toString(36).substring(7); // Debug ID
 
 
@@ -10073,6 +10076,9 @@ class WhatsAppUIOverlay {
    * Setup real-time Kanban update listeners
    */
   private setupKanbanRealtimeListeners() {
+    if (this.areKanbanListenersSetup) return;
+    this.areKanbanListenersSetup = true;
+
     // Listen for lead updates
     document.addEventListener('PrinChatKanbanLeadUpdated', (event: any) => {
       if (!this.isKanbanOpen) return;
@@ -10149,7 +10155,7 @@ class WhatsAppUIOverlay {
       console.log('[PrinChat UI] ➕ New lead created:', lead.name);
 
       // Re-render Kanban to show new card
-      await this.renderKanbanColumns();
+      this.queueKanbanRender();
     });
 
     // Listen for label/tag changes (colors or new labels)
@@ -10163,9 +10169,9 @@ class WhatsAppUIOverlay {
 
         // Only re-render if Kanban is currently open
         if (this.isKanbanOpen) {
-          console.log('[PrinChat UI] 🔄 Kanban open - re-rendering...');
-          await this.renderKanbanColumns();
-          console.log('[PrinChat UI] ✅ Re-render done!');
+          console.log('[PrinChat UI] 🔄 Kanban open - queuing re-render...');
+          this.queueKanbanRender();
+          // await this.renderKanbanColumns(); // Removed to use debounce
         } else {
           console.log('[PrinChat UI] 💤 Kanban closed - will fetch fresh on next open');
         }
@@ -10237,6 +10243,21 @@ class WhatsAppUIOverlay {
   }
 
   /**
+   * Queue a Kanban render with debounce
+   * This prevents multiple rapid renders causing race conditions
+   */
+  private queueKanbanRender() {
+    if (this.renderDebounceTimer) {
+      clearTimeout(this.renderDebounceTimer);
+    }
+
+    console.log('[PrinChat UI] ⏳ Queuing Kanban render (debounced 1000ms)...');
+    this.renderDebounceTimer = setTimeout(() => {
+      this.renderKanbanColumns();
+    }, 1000);
+  }
+
+  /**
    * Render Kanban columns from database
    */
   private async renderKanbanColumns() {
@@ -10262,6 +10283,7 @@ class WhatsAppUIOverlay {
 
       // Clear container IMMEDIATELY before async fetching to prevent visual duplication
       // if another render happens
+      this.destroySortables(); // Cleanup old drag instances
       container.innerHTML = '';
 
       // 1. Fetch GLOBAL labels definition (ID -> Color/Name) - Use cached if available
@@ -10307,7 +10329,10 @@ class WhatsAppUIOverlay {
                 ...lead,
                 name: info.chatName || lead.name,
                 photo: info.chatPhoto || lead.photo,
-                labels: info.labels || []
+                labels: info.labels || [],
+                // SYNC TAGS: Critical for real-time updates. 
+                // The UI uses 'tags' (IDs) to render, so we must update it from the fresh 'labels' (Objects).
+                tags: (info.labels || []).map((l: any) => l.id)
               };
             } else if (lead.chatId.endsWith('@lid')) {
               console.warn('[PrinChat UI] ⚠️ LID not converted yet, keeping original data:', lead.chatId);
@@ -10640,6 +10665,23 @@ class WhatsAppUIOverlay {
    * This uses Event Delegation to ensure listeners persist even after DOM updates
    */
   /**
+  * Destroy existing Sortable instances to prevent memory leaks and duplication
+  */
+  private destroySortables() {
+    if (this.sortableInstances.length > 0) {
+      console.log('[PrinChat] 🧹 Destroying', this.sortableInstances.length, 'SortableJS instances');
+      this.sortableInstances.forEach(instance => {
+        try {
+          instance.destroy();
+        } catch (e) {
+          console.error('[PrinChat] Error destroying Sortable:', e);
+        }
+      });
+      this.sortableInstances = [];
+    }
+  }
+
+  /**
    * Initialize SortableJS for drag and drop
    * This replaces manual drag listeners with a robust library solution
    */
@@ -10649,19 +10691,20 @@ class WhatsAppUIOverlay {
     const columns = overlay.querySelectorAll('.princhat-kanban-column-body');
 
     columns.forEach((column) => {
-      new Sortable(column as HTMLElement, {
+      const instance = new Sortable(column as HTMLElement, {
         group: 'kanban', // Allow dragging between lists
         animation: 150,  // Smooth animation
         ghostClass: 'princhat-kanban-ghost', // Class for the placeholder
-        dragClass: 'princhat-kanban-drag',   // Class for the dragging item
+        dragClass: 'princhat-kanban-drag',   // Class for the dragging item (restored for native drag if needed)
         delay: 50, // Small delay to prevent accidental drags
         delayOnTouchOnly: true,
         filter: '.princhat-no-drag', // Disable dragging on specific elements
         preventOnFilter: false, // Allow clicks on filtered elements
 
+        // Native Drag & Drop (No forceFallback)
 
         onEnd: (evt) => {
-          const itemEl = evt.item;  // dragged HTMLElement
+          const itemEl = evt.item as HTMLElement;  // dragged HTMLElement
           const toEl = evt.to;      // target list
           // const fromEl = evt.from;  // previous list
 
@@ -10676,7 +10719,6 @@ class WhatsAppUIOverlay {
             this.requestFromContentScript({
               type: 'MOVE_KANBAN_LEAD',
               payload: {
-                leadId,
                 newColumnId,
                 newOrder: newIndex || 0
               }
@@ -10684,6 +10726,8 @@ class WhatsAppUIOverlay {
           }
         }
       });
+
+      this.sortableInstances.push(instance);
     });
 
     // Still need the global delegate for DELETE button and other clicks

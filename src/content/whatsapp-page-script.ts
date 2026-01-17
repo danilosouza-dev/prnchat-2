@@ -1361,22 +1361,13 @@
             }
           };
 
-          // Strategy 1: WPPConnect
-          if (WPP?.label?.getLabels) {
-            console.log('[PrinChat Page] 🏷️ Strategy 1: WPP.label.getLabels');
-            try {
-              const labels = await WPP.label.getLabels(chatId);
-              if (labels && Array.isArray(labels)) {
-                labels.forEach((l: any) => addLabel(l.id, l.name, l.color, l));
-              }
-            } catch (e) { console.error('WPP.label.getLabels failed', e); }
-          }
 
-          // Strategy 2: Store.Label
-          if (chatTags.length === 0 && Store?.Label) {
-            console.log('[PrinChat Page] 🏷️ Strategy 2: Store.Label');
+          // Strategy 1: Store.Label (Prioritize internal Store as it updates instantly)
+          if (Store?.Label) {
+            console.log('[PrinChat Page] 🏷️ Strategy 1: Store.Label (using chat object)');
             const labelIds = chat.labels || [];
             console.log('[PrinChat Page] 🔍 chat.labels from Store.Chat:', labelIds);
+
             if (labelIds.length > 0) {
               const allLabels = Store.Label.models || Store.Label._models || [];
               labelIds.forEach((labelId: string) => {
@@ -1386,45 +1377,45 @@
                 }
 
                 if (label) {
-                  console.log('[PrinChat Page] 🏷️ Found label:', label.name, label.id);
+                  console.log('[PrinChat Page] 🏷️ Found label (Store):', label.name, label.id);
                   addLabel(label.id, label.name, label.color || label.hexColor, label);
                 } else {
                   addLabel(labelId, `Tag ${labelId}`, undefined);
                 }
               });
             } else {
-              console.log('[PrinChat Page] ⚠️ No labels found in chat.labels array');
+              console.log('[PrinChat Page] ⚠️ No labels found in chat.labels property');
             }
           }
 
-          // Strategy 3: WPP.chat.get inspection
+          // Strategy 2: WPPConnect (Fallback)
+          if (chatTags.length === 0 && WPP?.label?.getLabels) {
+            console.log('[PrinChat Page] 🏷️ Strategy 2: WPP.label.getLabels');
+            try {
+              const labels = await WPP.label.getLabels(chatId);
+              if (labels && Array.isArray(labels)) {
+                labels.forEach((l: any) => addLabel(l.id, l.name, l.color, l));
+              }
+            } catch (e) { console.error('WPP.label.getLabels failed', e); }
+          }
+
+          // Strategy 3: WPP.chat.get inspection (Final Fallback)
           if (chatTags.length === 0 && WPP?.chat?.get) {
-            // ... existing strat 3 mostly okay, just updating addLabel usage if needed
-            // Refactoring loop to use new addLabel
+            console.log('[PrinChat Page] 🏷️ Strategy 3: WPP.chat.get');
             try {
               const wppChat = await WPP.chat.get(chatId);
-              if (wppChat && wppChat.labels) {
-                const labels = wppChat.labels;
-                if (Array.isArray(labels) && labels.length > 0) {
-                  const allLabels = Store?.Label?.models || Store?.Label?._models || [];
-                  labels.forEach((l: any) => {
-                    if (typeof l === 'string') {
-                      let labelObj = Store?.Label?.get(l);
-                      if (!labelObj && allLabels.length > 0) {
-                        labelObj = allLabels.find((m: any) => m.id === l || m.id == l);
-                      }
-                      if (labelObj) {
-                        addLabel(labelObj.id, labelObj.name, labelObj.color || labelObj.hexColor, labelObj);
-                      } else {
-                        addLabel(l, `Tag ${l}`, undefined);
-                      }
-                    } else if (l.name) {
-                      addLabel(l.id, l.name, l.color, l);
-                    }
-                  });
-                }
+              if (wppChat && wppChat.labels && Array.isArray(wppChat.labels)) {
+                wppChat.labels.forEach((l: any) => {
+                  if (typeof l === 'object' && l.id && l.name) {
+                    addLabel(l.id, l.name, l.color, l);
+                  } else if (typeof l === 'string') {
+                    addLabel(l, `Tag ${l}`, undefined);
+                  }
+                });
               }
-            } catch (e) { console.error('Strategy 3 failed', e); }
+            } catch (e) {
+              console.error('Strategy 3 failed', e);
+            }
           }
 
           console.log('[PrinChat Page] 🏷️ FINAL TAGS:', chatTags);
@@ -1757,6 +1748,27 @@
     } catch (error: any) {
       const errorMessage = error?.message || String(error);
       console.error('[PrinChat] ❌ Failed to setup label monitoring:', errorMessage, error);
+    }
+
+    // Monitor Chat Label Assignments (Adding/Removing tags from contacts)
+    try {
+      if (Store.Chat && typeof Store.Chat.on === 'function') {
+        Store.Chat.on('change:labels', (chatModel: any) => {
+          console.log('[PrinChat Page] 🏷️👥 Chat Labels Changed!', chatModel?.id?._serialized);
+          console.log('[PrinChat Page] 🔍 New labels for chat:', chatModel?.labels);
+
+          window.dispatchEvent(new CustomEvent('PrinChatLabelsChanged', {
+            detail: {
+              timestamp: Date.now(),
+              reason: 'chat_labels_change',
+              chatId: chatModel?.id?._serialized
+            }
+          }));
+        });
+        console.log('[PrinChat] ✅ Chat.change:labels monitoring active');
+      }
+    } catch (e) {
+      console.error('[PrinChat] ❌ Failed to setup chat label monitoring:', e);
     }
 
 
