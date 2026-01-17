@@ -60,6 +60,94 @@
     });
   }
 
+  // Helper to ensure Store.Label is available (crucial for Tags)
+  async function ensureLabels() {
+    console.log('[PrinChat] ensureLabels called');
+    const Store = (window as any).Store;
+    if (Store && Store.Label) return;
+
+    const WPP = (window as any).WPP;
+    console.log('[PrinChat] Store.Label missing. WPP available?', !!WPP);
+
+    // Strategy A: Use WPP.webpack to find LabelCollection
+    if (WPP && WPP.webpack) {
+      try {
+        console.log('[PrinChat] Searching modules via WPP.webpack...');
+        // Search for module containing LabelCollection
+        // Usually exports { LabelCollection: ... } or default { LabelCollection: ... }
+        const labelModule = WPP.webpack.search((m: any) => (
+          (m.LabelCollection && m.LabelCollection.models) ||
+          (m.default && m.default.LabelCollection && m.default.LabelCollection.models) ||
+          (m.LabelCollection && m.LabelCollection.get)
+        ));
+
+        if (labelModule) {
+          const found = labelModule.LabelCollection || (labelModule.default && labelModule.default.LabelCollection);
+          if (found) {
+            Store.Label = found;
+            console.log('[PrinChat] ✅ Found and assigned Store.Label using WPP.webpack');
+            return;
+          }
+        }
+      } catch (e) { console.error('[PrinChat] Error searching WPP webpack for Label:', e); }
+    }
+
+    // Strategy B: Manual Webpack Search (if WPP fails or is missing)
+    try {
+      const chunk = (window as any).webpackChunkwhatsapp_web_client;
+      if (chunk && Array.isArray(chunk)) {
+        console.log('[PrinChat] Searching modules via manual webpack chunk...');
+        let foundLabel: any = null;
+
+        // Push a module request to access require
+        chunk.push([
+          ['princhat_label_finder_' + Date.now()],
+          {},
+          (require: any) => {
+            if (require.m) {
+              const modules = require.m;
+              for (const id in modules) {
+                try {
+                  const mod = require(id);
+                  if (!mod) continue;
+
+                  // Check both default and direct exports
+                  const exports = [mod, mod.default];
+                  for (const exp of exports) {
+                    if (!exp) continue;
+
+                    // Heuristics for LabelCollection
+                    if (exp.LabelCollection && (exp.LabelCollection.get || exp.LabelCollection.models)) {
+                      foundLabel = exp.LabelCollection;
+                      break;
+                    }
+
+                    // Sometimes it's the default export itself
+                    if (exp.get && exp.models && exp.add && exp.remove && (exp.checksum !== undefined || exp.length !== undefined)) {
+                      // Candidate for a Collection. Check if it has 'label' in it? Hard to know without strings.
+                      // But LabelCollection is usually the only one managing labels.
+                      // Let's assume look for a specific property if we knew it.
+                    }
+                  }
+                  if (foundLabel) break;
+                } catch (e) { /* ignore require errors */ }
+              }
+            }
+          }
+        ]);
+
+        if (foundLabel) {
+          Store.Label = foundLabel;
+          console.log('[PrinChat] ✅ Found and assigned Store.Label using manual webpack search');
+        }
+      }
+    } catch (e) { console.error('[PrinChat] Manual webpack search failed:', e); }
+
+    if (!Store.Label) {
+      console.warn('[PrinChat] ❌ CULT NOT FIND STORE.LABEL (Tags will be missing names)');
+    }
+  }
+
   // Helper functions for chat presence simulation
   async function simulateTyping(chat: any, durationMs: number = 3000) {
     const Store = (window as any).Store;
@@ -130,8 +218,11 @@
   }
 
   // Initialize after Store loads
-  waitForStore().then(() => {
+  waitForStore().then(async () => {
     const Store = (window as any).Store;
+
+    // Ensure Labels are loaded (Critical for tags)
+    await ensureLabels();
 
     // Track active animations for cancellation
     const activeAnimations = new Map<string, { stopAnimation: () => Promise<void> }>();
@@ -1222,14 +1313,332 @@
           console.error('[PrinChat Page] Error getting chat photo:', errorMessage, e);
         }
 
+        // --- FETCH LABELS/TAGS (WhatsApp Business) ---
+        let chatTags: string[] = [];
+        let chatLabels: { id: string, name: string, color?: string }[] = [];
+
+        try {
+          console.log('[PrinChat Page] 🏷️ STARTING TAG FETCH for:', chatId);
+          const Store = (window as any).Store;
+          const WPP = (window as any).WPP;
+
+
+          // Helper to extract color
+          const extractColor = (labelModel: any): string | undefined => {
+            if (!labelModel) return undefined;
+            // 1. Direct hex property
+            if (labelModel.color && typeof labelModel.color === 'string') return labelModel.color;
+            if (labelModel.hexColor) return labelModel.hexColor;
+
+            // 2. Decimal color (WhatsApp sometimes uses integer representation)
+            // Convert decimal to hex: 4294967295 -> #FFFFFF
+            // But usually label.color is null/undefined if standard, or a Specific ID map is needed.
+            // Actually, Store.Label models usually have a 'color' property (decimal) or 'hexColor'.
+            // If it is a number:
+            if (typeof labelModel.color === 'number') {
+              // Convert decimal color to hex
+              // Often (color >>> 0).toString(16)
+              // But ensure it has # prefix and 6 chars
+              let hex = (labelModel.color >>> 0).toString(16);
+              while (hex.length < 6) hex = '0' + hex;
+              // Sometimes alpha is included (8 chars), we might want just RGB
+              if (hex.length > 6) hex = hex.substring(hex.length - 6);
+              return '#' + hex;
+            }
+
+            return undefined;
+          };
+
+          // Helper to add label
+          const addLabel = (id: string, name: string, rawColor?: any, model?: any) => {
+            if (!chatLabels.find(l => l.id === id)) {
+              let finalColor = rawColor;
+              if (!finalColor && model) {
+                finalColor = extractColor(model);
+              }
+              chatLabels.push({ id, name, color: finalColor });
+              chatTags.push(name);
+            }
+          };
+
+          // Strategy 1: WPPConnect
+          if (WPP?.label?.getLabels) {
+            console.log('[PrinChat Page] 🏷️ Strategy 1: WPP.label.getLabels');
+            try {
+              const labels = await WPP.label.getLabels(chatId);
+              if (labels && Array.isArray(labels)) {
+                labels.forEach((l: any) => addLabel(l.id, l.name, l.color, l));
+              }
+            } catch (e) { console.error('WPP.label.getLabels failed', e); }
+          }
+
+          // Strategy 2: Store.Label
+          if (chatTags.length === 0 && Store?.Label) {
+            console.log('[PrinChat Page] 🏷️ Strategy 2: Store.Label');
+            const labelIds = chat.labels || [];
+            console.log('[PrinChat Page] 🔍 chat.labels from Store.Chat:', labelIds);
+            if (labelIds.length > 0) {
+              const allLabels = Store.Label.models || Store.Label._models || [];
+              labelIds.forEach((labelId: string) => {
+                let label = Store.Label.get(labelId);
+                if (!label && allLabels.length > 0) {
+                  label = allLabels.find((m: any) => m.id === labelId || m.id._serialized === labelId);
+                }
+
+                if (label) {
+                  console.log('[PrinChat Page] 🏷️ Found label:', label.name, label.id);
+                  addLabel(label.id, label.name, label.color || label.hexColor, label);
+                } else {
+                  addLabel(labelId, `Tag ${labelId}`, undefined);
+                }
+              });
+            } else {
+              console.log('[PrinChat Page] ⚠️ No labels found in chat.labels array');
+            }
+          }
+
+          // Strategy 3: WPP.chat.get inspection
+          if (chatTags.length === 0 && WPP?.chat?.get) {
+            // ... existing strat 3 mostly okay, just updating addLabel usage if needed
+            // Refactoring loop to use new addLabel
+            try {
+              const wppChat = await WPP.chat.get(chatId);
+              if (wppChat && wppChat.labels) {
+                const labels = wppChat.labels;
+                if (Array.isArray(labels) && labels.length > 0) {
+                  const allLabels = Store?.Label?.models || Store?.Label?._models || [];
+                  labels.forEach((l: any) => {
+                    if (typeof l === 'string') {
+                      let labelObj = Store?.Label?.get(l);
+                      if (!labelObj && allLabels.length > 0) {
+                        labelObj = allLabels.find((m: any) => m.id === l || m.id == l);
+                      }
+                      if (labelObj) {
+                        addLabel(labelObj.id, labelObj.name, labelObj.color || labelObj.hexColor, labelObj);
+                      } else {
+                        addLabel(l, `Tag ${l}`, undefined);
+                      }
+                    } else if (l.name) {
+                      addLabel(l.id, l.name, l.color, l);
+                    }
+                  });
+                }
+              }
+            } catch (e) { console.error('Strategy 3 failed', e); }
+          }
+
+          console.log('[PrinChat Page] 🏷️ FINAL TAGS:', chatTags);
+
+        } catch (tagError) {
+          console.error('[PrinChat Page] Error fetching tags:', tagError);
+        }
+
         document.dispatchEvent(new CustomEvent('PrinChatChatInfoResult', {
-          detail: { success: true, chatName, chatId, chatPhoto, requestId }
+          detail: {
+            success: true,
+            chatName,
+            chatId,
+            chatPhoto,
+            requestId,
+            tags: chatTags, // Array of strings ['VIP', 'New']
+            labels: chatLabels // Array of objects [{id, name, color}]
+          }
         }));
       } catch (error: any) {
         const errorMessage = error?.message || String(error);
         console.error('[PrinChat Page] Error getting chat info:', errorMessage, error);
         document.dispatchEvent(new CustomEvent('PrinChatChatInfoResult', {
           detail: { success: false, error: error.message, requestId: event.detail?.requestId }
+        }));
+      }
+    });
+
+    // Event Listener for GET_ALL_LABELS (Global Dictionary)
+    document.addEventListener('PrinChatGetAllLabels', async (event: any) => {
+      const requestId = event.detail?.requestId;
+
+      const fetchLabelsInternal = async (attemptsLeft: number = 3): Promise<any[]> => {
+        console.log(`[PrinChat Page] 🏷️ Fetching ALL labels (Attempts left: ${attemptsLeft})...`);
+        const Store = (window as any).Store;
+        const WPP = (window as any).WPP;
+
+        const allLabels: any[] = [];
+        const seenIds = new Set<string>();
+
+        // WhatsApp Business Label Palette - EXACT VISUAL MAPPING (2024)
+        // Mapped from actual WhatsApp color picker grid (4 rows x 5 columns)
+        // Row 1: Salmon, Light Cyan, Yellow, Light Purple, Gray-Blue
+        // Row 2: Teal, Light Pink, Gold/Mustard, Periwinkle, Lime
+        // Row 3: Darker Cyan, Salmon Pink, Mint Green, Red, Royal Blue
+        // Row 4: Bright Lime, Orange, Sky Blue, Lilac, Purple
+        const WA_LABEL_PALETTE = [
+          '#FF9E9E', // 0  - Salmon/Coral (Row 1, Col 1)
+          '#5AB5E5', // 1  - Light Cyan (Row 1, Col 2)
+          '#FDD835', // 2  - Yellow (Row 1, Col 3)
+          '#C594D7', // 3  - Light Purple (Row 1, Col 4)
+          '#90A4AE', // 4  - Gray-Blue (Row 1, Col 5)
+          '#26C6DA', // 5  - Teal/Turquoise (Row 2, Col 1)
+          '#F48FB1', // 6  - Light Pink (Row 2, Col 2)
+          '#FFB300', // 7  - Gold/Mustard (Row 2, Col 3)
+          '#7986CB', // 8  - Periwinkle Blue (Row 2, Col 4)
+          '#D4E157', // 9  - Lime Yellow-Green (Row 2, Col 5)
+          '#00ACC1', // 10 - Darker Cyan (Row 3, Col 1)
+          '#FFAB91', // 11 - Salmon Pink (Row 3, Col 2)
+          '#81C784', // 12 - Mint Green (Row 3, Col 3)
+          '#E57373', // 13 - Red (Row 3, Col 4)
+          '#42A5F5', // 14 - Royal/Bright Blue ← "Novo cliente"
+          '#9CCC65', // 15 - Bright Lime Green ← "Novo pedido"
+          '#FF9800', // 16 - Orange (Row 4, Col 2)
+          '#64B5F6', // 17 - Sky Blue (Row 4, Col 3)
+          '#BA68C8', // 18 - Lilac (Row 4, Col 4)
+          '#9575CD'  // 19 - Purple (Row 4, Col 5)
+        ];
+
+        // Persistence: Load cached valid colors
+        let cachedColors: Record<string, string> = {};
+        let paletteByIndex: Record<number, string> = {}; // NEW: Map colorIndex → actualColor
+
+        try {
+          const cache = JSON.parse(localStorage.getItem('princhat_label_cache') || '{}');
+          cachedColors = cache.byName || {};
+          paletteByIndex = cache.byIndex || {};
+        } catch (e) { console.error('Error loading label cache', e); }
+
+        // DOM Calibration Helper - Extract ACTUAL WhatsApp colors by scraping rendered labels
+        const calibrateLabelsFromDOM = () => {
+          try {
+            console.log('[PrinChat Page] 🎨 Starting DOM color calibration...');
+
+            // Strategy: Find label elements that have colorIndex data attribute or nearby
+            // Common selectors for label chips in WhatsApp Business
+            const labelSelectors = [
+              'span[class*="label"]',
+              'div[class*="label"]',
+              '[data-testid*="label"]',
+              'span[title]', // Tags often have title attribute
+              'div[role="button"] span[dir="auto"]'
+            ];
+
+            labelSelectors.forEach(selector => {
+              const elements = document.querySelectorAll(selector);
+              elements.forEach((el: any) => {
+                if (!el.innerText) return;
+                const name = el.innerText.trim();
+                if (!name || name.length > 30) return;
+
+                const style = window.getComputedStyle(el);
+                const bg = style.backgroundColor;
+
+                if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
+                  // Store by name
+                  cachedColors[name] = bg;
+                  console.log(`[PrinChat Page] 👁️  Found "${name}": ${bg}`);
+                }
+              });
+            });
+
+            console.log(`[PrinChat Page] ✅ Calibration complete. Found ${Object.keys(cachedColors).length} colors by name.`);
+
+            // Save
+            localStorage.setItem('princhat_label_cache', JSON.stringify({
+              byName: cachedColors,
+              byIndex: paletteByIndex
+            }));
+          } catch (e) {
+            console.error('[PrinChat Page] Calibration error:', e);
+          }
+        };
+
+        // Run calibration immediately
+        calibrateLabelsFromDOM();
+
+        const addDef = (l: any) => {
+          if (!l || seenIds.has(l.id)) return;
+
+          // 🔍 DEBUG: Log EVERYTHING WPPConnect gives us for this label
+          console.log(`[PrinChat Page] 📋 RAW LABEL DATA for "${l.name || l.id}":`, JSON.stringify(l, null, 2));
+
+          let finalColor: string | undefined = undefined;
+          let colorSource = 'unknown';
+
+          // PRIORITY 1: DOM Calibration (name-based lookup from visual scraping)
+          if (cachedColors[l.name]) {
+            finalColor = cachedColors[l.name];
+            colorSource = `DOM calibration (name: "${l.name}")`;
+          }
+
+          // PRIORITY 2: Use colorIndex with WA_LABEL_PALETTE
+          else if (typeof l.colorIndex === 'number' && l.colorIndex >= 0 && l.colorIndex < WA_LABEL_PALETTE.length) {
+            finalColor = WA_LABEL_PALETTE[l.colorIndex];
+            colorSource = `Palette[${l.colorIndex}]`;
+          }
+
+          // PRIORITY 3: Fallback to default blue
+          else {
+            finalColor = '#2196f3';
+            colorSource = 'fallback default';
+          }
+
+          console.log(`[PrinChat Page] 🎨 Color for "${l.name}": ${finalColor} (source: ${colorSource})`);
+
+          allLabels.push({
+            id: l.id,
+            name: l.name,
+            color: finalColor
+          });
+
+          seenIds.add(l.id);
+        };
+
+        // 1. WPP
+        if (WPP?.label?.getLabels) {
+          try {
+            const wppLabels = await WPP.label.getLabels();
+            if (Array.isArray(wppLabels)) {
+              wppLabels.forEach(addDef);
+            }
+          } catch (e) { console.error('WPP fetch failed', e); }
+        }
+
+        // 2. Store.Label (common)
+        if (Store?.Label) {
+          const models = Store.Label.models || Store.Label._models || Store.Label.getModelsArray?.() || [];
+          models.forEach(addDef);
+        }
+
+        // 3. Store.Labels (plural fallback)
+        if (Store?.Labels) {
+          const models = Store.Labels.models || Store.Labels._models || [];
+          models.forEach(addDef);
+        }
+
+        if (allLabels.length > 0) return allLabels;
+
+        // If empty and we have attempts, wait and retry
+        if (attemptsLeft > 0) {
+          await new Promise(r => setTimeout(r, 1000));
+          return fetchLabelsInternal(attemptsLeft - 1);
+        }
+
+        return [];
+      };
+
+      try {
+        const allLabels = await fetchLabelsInternal();
+        console.log(`[PrinChat Page] 🏷️ Found ${allLabels.length} global labels.`);
+
+        document.dispatchEvent(new CustomEvent('PrinChatGetAllLabelsResult', {
+          detail: {
+            success: true,
+            labels: allLabels,
+            requestId
+          }
+        }));
+
+      } catch (error: any) {
+        console.error('[PrinChat Page] Error fetching all labels:', error);
+        document.dispatchEvent(new CustomEvent('PrinChatGetAllLabelsResult', {
+          detail: { success: false, error: error.message, requestId }
         }));
       }
     });
@@ -1307,6 +1716,49 @@
       const errorMessage = error?.message || String(error);
       console.error('[PrinChat] Failed to setup message monitoring:', errorMessage, error);
     }
+
+    // Monitor Label Changes for Real-time Sync
+    try {
+      console.log('[PrinChat] 🔍 Setting up Label monitoring...');
+      console.log('[PrinChat] Store.Label exists?', !!Store.Label);
+      console.log('[PrinChat] Store.Label.on type:', typeof Store.Label?.on);
+
+      if (Store.Label && typeof Store.Label.on === 'function') {
+        Store.Label.on('change', (model: any) => {
+          console.log('[PrinChat Page] 🏷️🔥 Label CHANGE event fired!', model?.name || model?.id);
+          // Clear cached colors and re-calibrate
+          try {
+            localStorage.removeItem('princhat_label_cache');
+          } catch (e) { }
+
+          // Notify UI overlay to refresh labels - USE WINDOW TO CROSS WORLDS
+          window.dispatchEvent(new CustomEvent('PrinChatLabelsChanged', {
+            detail: { timestamp: Date.now(), reason: 'change' }
+          }));
+          console.log('[PrinChat Page] ✅ Dispatched PrinChatLabelsChanged (via window)');
+        });
+
+        Store.Label.on('add', (model: any) => {
+          console.log('[PrinChat Page] 🏷️➕ Label ADD event fired!', model?.name || model?.id);
+          try {
+            localStorage.removeItem('princhat_label_cache');
+          } catch (e) { }
+
+          window.dispatchEvent(new CustomEvent('PrinChatLabelsChanged', {
+            detail: { timestamp: Date.now(), reason: 'add' }
+          }));
+          console.log('[PrinChat Page] ✅ Dispatched PrinChatLabelsChanged (via window)');
+        });
+
+        console.log('[PrinChat] ✅ Label monitoring active (real-time sync)');
+      } else {
+        console.warn('[PrinChat] ⚠️ Store.Label.on not available - real-time sync disabled');
+      }
+    } catch (error: any) {
+      const errorMessage = error?.message || String(error);
+      console.error('[PrinChat] ❌ Failed to setup label monitoring:', errorMessage, error);
+    }
+
 
   }).catch(() => {
     // Initialization failed silently

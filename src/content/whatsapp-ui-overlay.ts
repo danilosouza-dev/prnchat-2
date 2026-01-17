@@ -128,6 +128,7 @@ class WhatsAppUIOverlay {
   private confirmingMessageId: string | null = null;
   private confirmingScriptId: string | null = null;
   private requireConfirmation: boolean = true;
+  private globalLabels: any[] = []; // Cached global labels for color/name lookup
   private showShortcuts: boolean = true;
   private showScriptExecutionPopup: boolean = true;
   private showMessageExecutionPopup: boolean = true; // Show popup for delayed messages
@@ -10151,6 +10152,28 @@ class WhatsAppUIOverlay {
       await this.renderKanbanColumns();
     });
 
+    // Listen for label/tag changes (colors or new labels)
+    window.addEventListener('PrinChatLabelsChanged', async (event: any) => {
+      try {
+        console.log('[PrinChat UI] 🏷️📥 Label change detected!', event.detail);
+
+        // ALWAYS clear cache (even if Kanban closed) to ensure fresh data on next open
+        this.globalLabels = [];
+        console.log('[PrinChat UI] ✅ Cache cleared');
+
+        // Only re-render if Kanban is currently open
+        if (this.isKanbanOpen) {
+          console.log('[PrinChat UI] 🔄 Kanban open - re-rendering...');
+          await this.renderKanbanColumns();
+          console.log('[PrinChat UI] ✅ Re-render done!');
+        } else {
+          console.log('[PrinChat UI] 💤 Kanban closed - will fetch fresh on next open');
+        }
+      } catch (error) {
+        console.error('[PrinChat UI] ❌ Error:', error);
+      }
+    });
+
     console.log('[PrinChat UI] 🔊 Real-time listeners setup');
   }
 
@@ -10195,7 +10218,7 @@ class WhatsAppUIOverlay {
   /**
    * Get contact info for a specific chat (used for Kanban hydration)
    */
-  private async getContactInfo(chatId: string): Promise<{ chatName?: string, chatPhoto?: string }> {
+  private async getContactInfo(chatId: string): Promise<{ chatName?: string, chatPhoto?: string, labels?: any[] }> {
     try {
       const response = await this.requestFromContentScript({
         type: 'GET_CHAT_INFO',
@@ -10204,7 +10227,8 @@ class WhatsAppUIOverlay {
 
       return {
         chatName: response?.data?.chatName || response?.data?.name,
-        chatPhoto: response?.data?.chatPhoto
+        chatPhoto: response?.data?.chatPhoto,
+        labels: response?.data?.labels || []
       };
     } catch (error) {
       console.error('[PrinChat UI] Error fetching contact info:', error);
@@ -10222,7 +10246,7 @@ class WhatsAppUIOverlay {
     }
 
     this.isRenderingKanban = true;
-    console.log('[PrinChat UI] Rendering Kanban columns...');
+    console.log('[PrinChat UI] 🎨 Rendering Kanban columns at', Date.now());
 
     const container = this.kanbanOverlay?.querySelector('.princhat-kanban-columns-container');
     if (!container) return;
@@ -10239,6 +10263,19 @@ class WhatsAppUIOverlay {
       // Clear container IMMEDIATELY before async fetching to prevent visual duplication
       // if another render happens
       container.innerHTML = '';
+
+      // 1. Fetch GLOBAL labels definition (ID -> Color/Name) - Use cached if available
+      if (this.globalLabels.length === 0) {
+        try {
+          const labelsResp = await this.requestFromContentScript({ type: 'GET_ALL_LABELS' });
+          if (labelsResp && labelsResp.data && labelsResp.data.labels) {
+            this.globalLabels = labelsResp.data.labels;
+            console.log('[PrinChat UI] Loaded global labels dictionary:', this.globalLabels.length);
+          }
+        } catch (e) { console.error('[PrinChat UI] Failed to load global labels:', e); }
+      } else {
+        console.log('[PrinChat UI] Using cached global labels:', this.globalLabels.length);
+      }
 
       // Fetch all leads from background
       const leadsResponse = await this.requestFromContentScript({ type: 'GET_ALL_KANBAN_LEADS' });
@@ -10269,7 +10306,8 @@ class WhatsAppUIOverlay {
               return {
                 ...lead,
                 name: info.chatName || lead.name,
-                photo: info.chatPhoto || lead.photo
+                photo: info.chatPhoto || lead.photo,
+                labels: info.labels || []
               };
             } else if (lead.chatId.endsWith('@lid')) {
               console.warn('[PrinChat UI] ⚠️ LID not converted yet, keeping original data:', lead.chatId);
@@ -10284,13 +10322,42 @@ class WhatsAppUIOverlay {
         })
       );
 
-      console.log('[PrinChat UI] ✅ Contact info fetched, rendering columns...');
+      console.log('[PrinChat UI] ✅ Contact info fetched');
+      console.log('[PrinChat UI] 🔍 Sample lead after fetch:', leadsWithContactInfo[0]?.name, 'has', leadsWithContactInfo[0]?.labels?.length, 'labels');
+      console.log('[PrinChat UI] 🔍 Sample lead labels:', leadsWithContactInfo[0]?.labels);
+
+      console.log('[PrinChat UI] 💾 Persisting to IndexedDB...');
+
+      // CRITICAL: Save updated labels back to IndexedDB
+      // This ensures tags persist across Kanban open/close cycles
+      for (const lead of leadsWithContactInfo) {
+        if (lead.labels && lead.labels.length > 0) {
+          try {
+            await this.requestFromContentScript({
+              type: 'UPDATE_KANBAN_LEAD',
+              payload: {
+                leadId: lead.id,
+                updates: {
+                  name: lead.name,
+                  photo: lead.photo,
+                  labels: lead.labels
+                }
+              }
+            });
+            console.log('[PrinChat UI] 💾 Saved tags to IndexedDB for lead:', lead.id, lead.labels);
+          } catch (e) {
+            console.error('[PrinChat UI] ❌ Failed to save tags for lead:', lead.id, e);
+          }
+        }
+      }
+
+      console.log('[PrinChat UI] ✅ Tags persisted, rendering columns...');
 
       // Render each column with its leads (now with contact info!)
       for (const column of columns) {
         const columnLeads = leadsWithContactInfo.filter((l: any) => l.columnId === column.id)
           .sort((a: any, b: any) => a.order - b.order);
-        const columnEl = this.createColumnElement(column, columnLeads);
+        const columnEl = this.createColumnElement(column, columnLeads, this.globalLabels);
         container.appendChild(columnEl);
 
         // setupCardDragListeners removed - using Global Delegation
@@ -10315,7 +10382,10 @@ class WhatsAppUIOverlay {
   /**
    * Create a column DOM element
    */
-  private createColumnElement(column: any, leads: any[] = []): HTMLElement {
+  /**
+   * Create a column DOM element
+   */
+  private createColumnElement(column: any, leads: any[] = [], globalLabels: any[] = []): HTMLElement {
     const columnEl = document.createElement('div');
     columnEl.className = 'princhat-kanban-column';
     columnEl.setAttribute('data-column-id', column.id);
@@ -10357,7 +10427,7 @@ class WhatsAppUIOverlay {
       <div class="princhat-kanban-column-body" data-column-id="${column.id}">
 
         ${leads.map((lead: any) => `
-          <div class="princhat-kanban-lead-card" draggable="true" data-lead-id="${lead.id}">
+          <div class="princhat-kanban-lead-card" data-lead-id="${lead.id}">
             <div class="princhat-kanban-lead-photo">
               ${lead.photo ?
         `<img src="${lead.photo}" alt="${lead.name}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">` :
@@ -10377,58 +10447,113 @@ class WhatsAppUIOverlay {
               <!-- Tags -->
               ${lead.tags && lead.tags.length > 0 ? `
                 <div class="princhat-kanban-lead-tags">
-                  <span class="princhat-kanban-tag" style="background: rgba(33, 150, 243, 0.15); color: #2196f3;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
-                      <line x1="7" x2="7.01" y1="7" y2="7"/>
-                    </svg>
-                    ${lead.tags[0]}
-                  </span>
-                  ${lead.tags.length > 1 ? `<span class="princhat-kanban-tag-more">+${lead.tags.length - 1}</span>` : ''}
-                </div>
-              ` : ''}
+                  ${(() => {
+          const firstTag = lead.tags[0];
+
+          // LOOKUP STRATEGY: 
+          // 1. Try to find by ID (if tag matches a label ID).
+          // 2. Try to find by Name (case-insensitive).
+          let labelInfo = globalLabels.find(l => l.id === firstTag || (l.name && l.name.toLowerCase() === firstTag.toLowerCase()));
+
+          // Fallback: Check lead.labels (per-chat info) if global lookup failed
+          if (!labelInfo && lead.labels) {
+            labelInfo = lead.labels.find((l: any) =>
+              String(l.id) === String(firstTag) ||
+              l.name?.toLowerCase() === String(firstTag).toLowerCase()
+            );
+          }
+
+          let labelColor = labelInfo?.color;
+          let labelName = labelInfo?.name || firstTag;
+
+          // CSS Logic:
+          // User Feedback: "Red vira salmon" -> Means they hate the transparency (15%).
+          // New Strategy: Use SOLID background (Real Color) and WHITE text with shadow for readability.
+
+          let finalBg = 'rgba(33, 150, 243, 0.15)'; // Default Blue
+          let finalColor = '#2196f3';
+          let textShadow = 'none';
+
+          if (labelColor) {
+            // Treat ALL colors (Hex or RGB) as the SOLID background
+            finalBg = labelColor;
+            finalColor = '#ffffff'; // Always white text on solid tags
+            textShadow = '0 1px 2px rgba(0,0,0,0.4)'; // Ensure contrast on light backgrounds
+
+            // Special case: If it's the "Default Blue" fallback coming from code, keeps it?
+            // No, if labelColor exists, it's real.
+          }
+
+          // Force text-transform: non and white color
+          return `
+            <span class="princhat-kanban-tag" style="background: ${finalBg}; color: ${finalColor}; text-shadow: ${textShadow}; text-transform: none !important; font-size: 12px; font-weight: 500; padding: 2px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; margin-right: 4px;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+                <line x1="7" x2="7.01" y1="7" y2="7"/>
+              </svg>
+              ${labelName}
+            </span>
+          `;
+        })()}
+                  
+        ${lead.tags.length > 1 ? `<span class="princhat-kanban-tag-more princhat-no-drag" style="cursor: pointer !important; pointer-events: auto !important; position: relative !important; z-index: 99 !important;" data-action="show-more-tags" data-tags="${encodeURIComponent(JSON.stringify(
+          (() => {
+            const remainingTags = lead.tags.slice(1);
+            return remainingTags.map((tag: string) => {
+              let info = globalLabels.find(l => l.id === tag || (l.name && l.name.toLowerCase() === tag.toLowerCase()));
+              if (!info && lead.labels) info = lead.labels.find((l: any) => l.id === tag || (l.name && l.name.toLowerCase() === tag.toLowerCase()));
+
+              return {
+                name: info?.name || tag,
+                color: info?.color || '#2196f3'
+              };
+            });
+          })()
+        ))}">+${lead.tags.length - 1}</span>` : ''}
+      </div>
+              ` : ''
+      }
               
-              <!-- Metadata - ALWAYS show icons, even with 0 count -->
-              <div class="princhat-kanban-lead-meta">
-                <div class="princhat-kanban-meta-item" title="${lead.notesCount || 0} nota${(lead.notesCount || 0) > 1 ? 's' : ''}">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
-                    <path d="M2 6h4"/><path d="M2 10h4"/><path d="M2 14h4"/><path d="M2 18h4"/>
-                    <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>
-                  </svg>
-                  <span>${lead.notesCount || 0}</span>
-                </div>
-                <div class="princhat-kanban-meta-item" title="${lead.schedulesCount || 0} agendamento${(lead.schedulesCount || 0) > 1 ? 's' : ''}">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect width="18" height="18" x="3" y="4" rx="2" ry="2"/>
-                    <line x1="16" x2="16" y1="2" y2="6"/>
-                    <line x1="8" x2="8" y1="2" y2="6"/>
-                    <line x1="3" x2="21" y1="10" y2="10"/>
-                  </svg>
-                  <span>${lead.schedulesCount || 0}</span>
-                </div>
-                <div class="princhat-kanban-meta-item" title="${lead.scriptsCount || 0} script${(lead.scriptsCount || 0) > 1 ? 's' : ''}">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-                  </svg>
-                  <span>${lead.scriptsCount || 0}</span>
-                </div>
-                
-                <!-- Spacer to push menu button to the right -->
-                <div style="flex: 1;"></div>
-                
-                <!-- 3-dot menu button (on the right) -->
-                <div class="princhat-kanban-meta-item princhat-kanban-card-menu-btn" title="Mais ações" data-lead-id="${lead.id}" data-chat-id="${lead.chatId}">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="5" r="1.5" fill="currentColor" stroke="none"/>
-                    <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
-                    <circle cx="12" cy="19" r="1.5" fill="currentColor" stroke="none"/>
-                  </svg>
-                </div>
-              </div>
-            </div>
-          </div>
-       `).join('')}
+      <!-- Metadata - ALWAYS show icons, even with 0 count -->
+      <div class="princhat-kanban-lead-meta">
+        <div class="princhat-kanban-meta-item" title="${lead.notesCount || 0} nota${(lead.notesCount || 0) !== 1 ? 's' : ''}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
+            <path d="M2 6h4"/> <path d="M2 10h4"/> <path d="M2 14h4"/> <path d="M2 18h4"/>
+            <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>
+          </svg>
+          <span>${lead.notesCount || 0}</span>
+        </div>
+        <div class="princhat-kanban-meta-item" title="${lead.schedulesCount || 0} agendamento${(lead.schedulesCount || 0) !== 1 ? 's' : ''}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="18" height="18" x="3" y="4" rx="2" ry="2"/>
+            <line x1="16" x2="16" y1="2" y2="6"/>
+            <line x1="8" x2="8" y1="2" y2="6"/>
+            <line x1="3" x2="21" y1="10" y2="10"/>
+          </svg>
+          <span>${lead.schedulesCount || 0}</span>
+        </div>
+        <div class="princhat-kanban-meta-item" title="${lead.scriptsCount || 0} script${(lead.scriptsCount || 0) !== 1 ? 's' : ''}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+          </svg>
+          <span>${lead.scriptsCount || 0}</span>
+        </div>
+
+        <!-- Spacer to push menu button to the right -->
+        <div style="flex: 1;"></div>
+
+        <!-- 3-dot menu button (on the right) -->
+        <div class="princhat-kanban-meta-item princhat-kanban-card-menu-btn" title="Mais ações" data-lead-id="${lead.id}" data-chat-id="${lead.chatId}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="5" r="1.5" fill="currentColor" stroke="none"/>
+            <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+            <circle cx="12" cy="19" r="1.5" fill="currentColor" stroke="none"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+                                                          `).join('')}
       </div>
     `;
 
@@ -10531,6 +10656,8 @@ class WhatsAppUIOverlay {
         dragClass: 'princhat-kanban-drag',   // Class for the dragging item
         delay: 50, // Small delay to prevent accidental drags
         delayOnTouchOnly: true,
+        filter: '.princhat-no-drag', // Disable dragging on specific elements
+        preventOnFilter: false, // Allow clicks on filtered elements
 
 
         onEnd: (evt) => {
@@ -10570,6 +10697,157 @@ class WhatsAppUIOverlay {
   private setupGlobalClickListeners(overlay: HTMLElement) {
     // CLICK - Delegated to Delete Button
     overlay.addEventListener('click', async (e: Event) => {
+      // 1. Check Dropdown Item FIRST
+      const dropdownItem = (e.target as HTMLElement).closest('.princhat-kanban-card-dropdown-item') as HTMLElement;
+      if (dropdownItem) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const action = dropdownItem.getAttribute('data-action');
+        const chatId = dropdownItem.getAttribute('data-chat-id');
+        const menuLeadId = dropdownItem.getAttribute('data-lead-id'); // Read explicit leadID
+
+        console.log('[PrinChat] Dropdown action:', action, 'ChatID:', chatId, 'LeadID:', menuLeadId);
+
+        // Close dropdown
+        dropdownItem.closest('.princhat-kanban-card-dropdown')?.remove();
+
+        switch (action) {
+          case 'open-chat':
+            if (chatId) {
+              this.closeKanbanOverlay();
+              await this.requestFromContentScript({
+                type: 'NAVIGATE_TO_CHAT',
+                payload: { chatId }
+              });
+            }
+            break;
+
+          case 'close-deal':
+            if (chatId) {
+              console.log('[PrinChat] Close deal for:', chatId);
+              // TODO: Implement close deal logic
+            }
+            break;
+
+          case 'delete-card':
+            // Priority: Use explicit leadId from dropdown, fallback to DOM traversal
+            let leadId = menuLeadId;
+            let leadName = 'este card';
+            let cardElement: HTMLElement | null = null;
+
+            // Try to find DOM element for visual removal
+            if (!leadId) {
+              const card = dropdownItem.closest('.princhat-kanban-lead-card') as HTMLElement;
+              if (card) {
+                leadId = card.getAttribute('data-lead-id');
+                leadName = card.querySelector('.princhat-kanban-lead-name')?.textContent || 'este card';
+                cardElement = card;
+              }
+            } else {
+              // Try to find card by ID if we have leadId but no direct DOM ancestry (rare)
+              cardElement = overlay.querySelector(`.princhat-kanban-lead-card[data-lead-id="${leadId}"]`) as HTMLElement;
+              if (cardElement) {
+                leadName = cardElement.querySelector('.princhat-kanban-lead-name')?.textContent || 'este card';
+              }
+            }
+
+            console.log('[PrinChat] Delete request for LeadID:', leadId);
+
+            if (leadId) {
+              if (window.confirm(`Tem certeza que deseja remover "${leadName}" do Kanban?`)) {
+                console.log('[PrinChat] User confirmed deletion for:', leadId);
+
+                // Visual removal
+                if (cardElement) {
+                  cardElement.style.transition = 'all 0.3s ease';
+                  cardElement.style.opacity = '0';
+                  cardElement.style.transform = 'scale(0.8)';
+                  setTimeout(() => cardElement?.remove(), 300);
+                }
+
+                try {
+                  await this.requestFromContentScript({
+                    type: 'DELETE_KANBAN_LEAD',
+                    payload: { leadId }
+                  });
+                  console.log('[PrinChat] Lead deleted successfully via API');
+                } catch (error) {
+                  console.error('[PrinChat] Error deleting lead:', error);
+                }
+              } else {
+                console.log('[PrinChat] User cancelled deletion');
+              }
+            } else {
+              console.error('[PrinChat] Could not identify Lead ID for deletion');
+            }
+            break;
+        }
+        return; // Stop processing
+      }
+
+      // 2. Check Menu Btn (The 3 dots wrapper)
+      const menuBtn = (e.target as HTMLElement).closest('.princhat-kanban-card-menu-btn') as HTMLElement;
+      if (menuBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Close any other open dropdowns
+        overlay.querySelectorAll('.princhat-kanban-card-dropdown').forEach(d => d.remove());
+
+        // Get info from button
+        const chatId = menuBtn.getAttribute('data-chat-id');
+        const leadId = menuBtn.getAttribute('data-lead-id');
+
+        console.log('[PrinChat] Opening menu for Lead:', leadId, 'Chat:', chatId);
+
+        // Create dropdown
+        const dropdown = document.createElement('div');
+        dropdown.className = 'princhat-kanban-card-dropdown';
+        // Pass data-lead-id to the items!
+        dropdown.innerHTML = `
+          <div class="princhat-kanban-card-dropdown-item" data-action="open-chat" data-chat-id="${chatId}" data-lead-id="${leadId}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+            <span>Abrir conversa</span>
+          </div>
+          <div class="princhat-kanban-card-dropdown-item" data-action="close-deal" data-chat-id="${chatId}" data-lead-id="${leadId}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" x2="12" y1="2" y2="22"/>
+              <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+            </svg>
+            <span>Faturar card</span>
+          </div>
+          <div class="princhat-kanban-card-dropdown-item" data-action="delete-card" data-chat-id="${chatId}" data-lead-id="${leadId}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+            <span>Excluir card</span>
+          </div>
+        `;
+
+        // Position dropdown
+        menuBtn.style.position = 'relative';
+        menuBtn.appendChild(dropdown);
+
+        // Close dropdown when clicking outside
+        setTimeout(() => {
+          const closeDropdown = (event: MouseEvent) => {
+            if (!dropdown.contains(event.target as Node)) {
+              dropdown.remove();
+              document.removeEventListener('click', closeDropdown);
+            }
+          };
+          document.addEventListener('click', closeDropdown);
+        }, 0);
+
+        return;
+      }
+
+      // 3. Check Delete Btn (Legacy/Backup)
       const deleteBtn = (e.target as HTMLElement).closest('.princhat-kanban-delete-btn') as HTMLElement;
       if (deleteBtn) {
         e.preventDefault();
@@ -10604,125 +10882,131 @@ class WhatsAppUIOverlay {
           }
         }
       }
-
-      // CLICK - Card Menu Button (3 dots)
-      const menuBtn = (e.target as HTMLElement).closest('.princhat-kanban-card-menu-btn') as HTMLElement;
-      if (menuBtn) {
-        e.preventDefault();
-        e.stopPropagation();
-
-        // Close any other open dropdowns
-        overlay.querySelectorAll('.princhat-kanban-card-dropdown').forEach(d => d.remove());
-
-        // Get chat info from button
-        const chatId = menuBtn.getAttribute('data-chat-id');
-
-        // Create dropdown
-        const dropdown = document.createElement('div');
-        dropdown.className = 'princhat-kanban-card-dropdown';
-        dropdown.innerHTML = `
-          <div class="princhat-kanban-card-dropdown-item" data-action="open-chat" data-chat-id="${chatId}">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
-              <circle cx="12" cy="12" r="3"/>
-            </svg>
-            <span>Abrir conversa</span>
-          </div>
-          <div class="princhat-kanban-card-dropdown-item" data-action="close-deal" data-chat-id="${chatId}">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="12" x2="12" y1="2" y2="22"/>
-              <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
-            </svg>
-            <span>Faturar card</span>
-          </div>
-          <div class="princhat-kanban-card-dropdown-item" data-action="delete-card" data-chat-id="${chatId}">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="3 6 5 6 21 6"></polyline>
-              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-            </svg>
-            <span>Excluir card</span>
-          </div>
-        `;
-
-        // Position dropdown
-        menuBtn.style.position = 'relative';
-        menuBtn.appendChild(dropdown);
-
-        // Close dropdown when clicking outside
-        setTimeout(() => {
-          const closeDropdown = (event: MouseEvent) => {
-            if (!dropdown.contains(event.target as Node)) {
-              dropdown.remove();
-              document.removeEventListener('click', closeDropdown);
-            }
-          };
-          document.addEventListener('click', closeDropdown);
-        }, 0);
-      }
-
-      // CLICK - Card Menu Dropdown Items
-      const dropdownItem = (e.target as HTMLElement).closest('.princhat-kanban-card-dropdown-item') as HTMLElement;
-      if (dropdownItem) {
-        e.preventDefault();
-        e.stopPropagation();
-
-        const action = dropdownItem.getAttribute('data-action');
-        const chatId = dropdownItem.getAttribute('data-chat-id');
-
-        // Close dropdown
-        dropdownItem.closest('.princhat-kanban-card-dropdown')?.remove();
-
-        switch (action) {
-          case 'open-chat':
-            if (chatId) {
-              // Close Kanban and open chat
-              this.closeKanbanOverlay();
-              await this.requestFromContentScript({
-                type: 'NAVIGATE_TO_CHAT',
-                payload: { chatId }
-              });
-            }
-            break;
-          case 'close-deal':
-            if (chatId) {
-              // Close deal - mark as complete/closed
-              console.log('[PrinChat] Close deal for:', chatId);
-              // TODO: Implement close deal logic
-            }
-            break;
-          case 'delete-card':
-            // Get lead info for confirmation
-            const card = (e.target as HTMLElement).closest('.princhat-kanban-lead-card') as HTMLElement;
-            if (card) {
-              const leadId = card.getAttribute('data-lead-id');
-              const leadName = card.querySelector('.princhat-kanban-lead-name')?.textContent || 'este card';
-
-              if (window.confirm(`Tem certeza que deseja remover "${leadName}" do Kanban?`)) {
-                console.log('[PrinChat] Deleting lead:', leadId);
-
-                // Visual removal
-                card.style.transition = 'all 0.3s ease';
-                card.style.opacity = '0';
-                card.style.transform = 'scale(0.8)';
-                setTimeout(() => card.remove(), 300);
-
-                if (leadId) {
-                  try {
-                    await this.requestFromContentScript({
-                      type: 'DELETE_KANBAN_LEAD',
-                      payload: { leadId }
-                    });
-                    console.log('[PrinChat] Lead deleted successfully');
-                  } catch (error) {
-                    console.error('[PrinChat] Error deleting lead:', error);
-                  }
-                }
-              }
-            }
-            break;
-        }
-      }
     });
+
+
+
+    // CRITICAL: Stop propagation on MOUSE DOWN to prevent SortableJS from starting drag
+    // This must use CAPTURE phase to run before Sortable's listeners
+    this.kanbanOverlay?.addEventListener('mousedown', (e) => {
+      const moreTagsBtn = (e.target as HTMLElement).closest('[data-action="show-more-tags"]') as HTMLElement;
+      if (moreTagsBtn) {
+        console.log('[PrinChat UI] Blocking drag on tag button (Capture Phase) & Opening Tooltip');
+        e.stopPropagation(); // Stop SortableJS
+
+        // --- TOOLTIP LOGIC START ---
+        // Remove any existing tooltips first
+        const existing = document.querySelector('.princhat-kanban-tags-tooltip');
+        if (existing) existing.remove();
+
+        const tagsJson = moreTagsBtn.getAttribute('data-tags');
+        if (!tagsJson) return;
+
+        try {
+          const tagsOrLabels = JSON.parse(decodeURIComponent(tagsJson));
+          if (!tagsOrLabels || !tagsOrLabels.length) return;
+
+          // Create tooltip
+          const tooltip = document.createElement('div');
+          tooltip.className = 'princhat-kanban-tags-tooltip';
+
+          tagsOrLabels.forEach((item: string | any) => {
+            const tagEl = document.createElement('span');
+            tagEl.className = 'princhat-kanban-tooltip-tag';
+
+            // Unify structure
+            const isObject = typeof item === 'object' && item !== null;
+            const tagName = isObject ? item.name : item;
+
+            // SOLID COLOR LOGIC (matching main tags)
+            const bgColor = isObject && item.color ? item.color : 'rgba(33, 150, 243, 0.15)';
+            const textColor = isObject && item.color ? '#ffffff' : '#2196f3';
+            const textShadow = isObject && item.color ? '0 1px 2px rgba(0,0,0,0.4)' : 'none';
+
+            // Apply inline style for dynamic color
+            tagEl.style.cssText = `
+                background-color: ${bgColor};
+                color: ${textColor};
+                text-shadow: ${textShadow};
+                display: flex;
+                align-items: center;
+                gap: 4px;
+            `;
+
+            // SVG Icon
+            tagEl.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+                  <line x1="7" x2="7.01" y1="7" y2="7"/>
+                </svg>
+                ${tagName}
+            `;
+
+            tooltip.appendChild(tagEl);
+          });
+
+          document.body.appendChild(tooltip);
+
+          // Position
+          const rect = moreTagsBtn.getBoundingClientRect();
+          tooltip.style.position = 'fixed';
+          tooltip.style.top = `${rect.bottom + 5}px`;
+          // Align left edge of tooltip with left edge of button, but clamp to screen
+          tooltip.style.left = `${rect.left}px`;
+          tooltip.style.transform = 'none'; // distinct from previous centered approach
+
+          // Styling (inline to maintain self-containment without CSS rebuilds)
+          tooltip.style.zIndex = '99999';
+          tooltip.style.backgroundColor = '#1f2937';
+          tooltip.style.border = '1px solid #374151';
+          tooltip.style.borderRadius = '6px';
+          tooltip.style.padding = '8px';
+          tooltip.style.display = 'flex';
+          tooltip.style.flexDirection = 'column';
+          tooltip.style.gap = '4px';
+          tooltip.style.boxShadow = '0 4px 6px rgba(0,0,0,0.3)';
+          tooltip.style.minWidth = '120px';
+
+          // Tag styling via injected stylesheet to scope it
+          const styleId = 'princhat-tags-tooltip-style';
+          if (!document.getElementById(styleId)) {
+            const styleSheet = document.createElement('style');
+            styleSheet.id = styleId;
+            styleSheet.textContent = `
+                .princhat-kanban-tooltip-tag {
+                    background: rgba(33, 150, 243, 0.15);
+                    color: #2196f3;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    font-size: 12px;
+                    white-space: nowrap;
+                    border-radius: 4px;
+                    font-size: 12px;
+                    white-space: nowrap;
+                    /* text-transform: uppercase removed based on user feedback */
+                }
+              `;
+            document.head.appendChild(styleSheet);
+          }
+
+          // Close on click outside
+          setTimeout(() => {
+            const closeTooltip = (ev: MouseEvent) => {
+              if (!tooltip.contains(ev.target as Node) && ev.target !== moreTagsBtn) {
+                tooltip.remove();
+                document.removeEventListener('click', closeTooltip);
+              }
+            };
+            document.addEventListener('click', closeTooltip);
+          }, 100); // Increased timeout slightly to avoid immediate close
+
+        } catch (err) {
+          console.error('Error parsing tags data:', err);
+        }
+        // --- TOOLTIP LOGIC END ---
+      }
+    }, { capture: true });
+
   }
 
   /**

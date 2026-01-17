@@ -622,11 +622,22 @@
               console.log('[PrinChat Kanban] Contact already in Kanban, updating:', chatId);
 
               // Update existing lead: increment unread, update message and time
-              const updates = {
+              // ALSO sync tags/name/photo to keep them fresh
+              console.log('[PrinChat Kanban] Syncing latest contact info...');
+              const chatInfo = await this.getChatInfo(chatId);
+
+              const updates: any = {
                 lastMessage: messageText,
                 lastMessageTime: timestamp || Date.now(),
                 unreadCount: (existingLead.unreadCount || 0) + 1
               };
+
+              if (chatInfo.success && chatInfo.data) {
+                if (chatInfo.data.chatName) updates.name = chatInfo.data.chatName;
+                if (chatInfo.data.chatPhoto) updates.photo = chatInfo.data.chatPhoto;
+                if (chatInfo.data.tags) updates.tags = chatInfo.data.tags;
+                console.log('[PrinChat Kanban] Synced tags:', updates.tags);
+              }
 
               await chrome.runtime.sendMessage({
                 type: 'UPDATE_KANBAN_LEAD',
@@ -656,10 +667,10 @@
             let chatName = '';
             let chatPhoto = '';
 
-            if (chatInfoResponse.success) {
-              chatName = chatInfoResponse.chatName || '';
-              chatPhoto = chatInfoResponse.chatPhoto || '';
-              console.log('[PrinChat Kanban] Got contact info:', { name: chatName, hasPhoto: !!chatPhoto });
+            if (chatInfoResponse.success && chatInfoResponse.data) {
+              chatName = chatInfoResponse.data.chatName || '';
+              chatPhoto = chatInfoResponse.data.chatPhoto || '';
+              console.log('[PrinChat Kanban] Got contact info:', { name: chatName, hasPhoto: !!chatPhoto, tags: chatInfoResponse.data.tags });
             } else {
               console.warn('[PrinChat Kanban] Could not get chat info, using chatId as name');
             }
@@ -684,10 +695,11 @@
               order: 0,
               lastMessage: messageText,
               lastMessageTime: timestamp || Date.now(),
-              unreadCount: 1  // New message just arrived
+              unreadCount: 1,  // New message just arrived
+              tags: chatInfoResponse.data?.tags || [] // Add tags from WA Business
             };
 
-            console.log('[PrinChat Kanban] Auto-adding contact to Recentes:', newLead.name, 'with photo:', !!newLead.photo, 'unread: 1');
+            console.log('[PrinChat Kanban] Auto-adding contact to Recentes:', newLead.name, 'with photo:', !!newLead.photo, 'unread: 1', 'tags:', newLead.tags.length);
 
             // Save to database
             await chrome.runtime.sendMessage({
@@ -1423,6 +1435,9 @@
             return { success: false, error: chatInfo.error || 'Could not get chat info' };
           }
 
+        case 'GET_ALL_LABELS':
+          return await this.getAllLabels();
+
         case 'SAVE_SCHEDULE':
         case 'GET_SCHEDULES_BY_CHAT':
         case 'DELETE_SCHEDULE':
@@ -2052,7 +2067,13 @@
               const chatPhoto = event.detail.chatPhoto;
               resolve({
                 success: true,
-                data: { chatName: event.detail.chatName, chatId: event.detail.chatId, chatPhoto }
+                data: {
+                  chatName: event.detail.chatName,
+                  chatId: event.detail.chatId,
+                  chatPhoto,
+                  tags: event.detail.tags,
+                  labels: event.detail.labels
+                }
               });
             } else {
               resolve({ success: false, error: event.detail.error });
@@ -2063,6 +2084,35 @@
         document.addEventListener('PrinChatChatInfoResult', handler);
         document.dispatchEvent(new CustomEvent('PrinChatGetChatInfo', {
           detail: { requestId, chatId }
+        }));
+      });
+    }
+
+    private async getAllLabels(): Promise<any> {
+      return new Promise((resolve) => {
+        const requestId = `labels-${Date.now()}`;
+
+        // Timeout
+        const timeout = setTimeout(() => {
+          document.removeEventListener('PrinChatGetAllLabelsResult', handler);
+          resolve({ success: false, error: 'Timeout fetching labels' });
+        }, 8000); // 8s timeout for robustness
+
+        const handler = (event: any) => {
+          if (event.detail?.requestId === requestId) {
+            clearTimeout(timeout);
+            document.removeEventListener('PrinChatGetAllLabelsResult', handler);
+            resolve({
+              success: event.detail.success,
+              data: { labels: event.detail.labels }, // Wrap in 'data' as UI expects response.data.labels
+              error: event.detail.error
+            });
+          }
+        };
+
+        document.addEventListener('PrinChatGetAllLabelsResult', handler);
+        document.dispatchEvent(new CustomEvent('PrinChatGetAllLabels', {
+          detail: { requestId }
         }));
       });
     }

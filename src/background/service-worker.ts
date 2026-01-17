@@ -471,9 +471,9 @@ class BackgroundService {
         (async () => {
           try {
             console.log('[Background] UPDATE_KANBAN_LEAD request received:', message.payload);
-            const { id, updates } = message.payload;
-            await db.updateLead(id, updates);
-            console.log('[Background] Lead updated:', id);
+            const { leadId, updates } = message.payload;
+            await db.updateLead(leadId, updates);
+            console.log('[Background] Lead updated:', leadId);
             sendResponse({ success: true });
           } catch (error: any) {
             console.error('[Background] Error updating Kanban lead:', error);
