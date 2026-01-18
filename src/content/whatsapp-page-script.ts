@@ -1192,26 +1192,106 @@
 
         // console.log('[PrinChat Page] Getting chat info for:', chatId);
 
-        // Proteção Robusta para WhatsApp Business (API Instável)
-        let chat;
-        try {
-          // Tenta find (async)
-          if (typeof Store.Chat.find === 'function') {
-            chat = await Store.Chat.find(chatId);
+        // CRITICAL: Detect Standard vs Business WhatsApp
+        // Better detection: Check if there are actual labels/tags, not just if Store.Label exists
+        const hasLabels = Store?.Label?.models?.length > 0 || Store?.Label?._models?.length > 0;
+        const isStandardWhatsApp = !hasLabels;
+        let chat, contact;
+
+        console.log('[PrinChat Page] Detection: isStandard=', isStandardWhatsApp, 'Store.Label exists=', !!Store?.Label, 'hasLabels=', hasLabels);
+
+        // ID variants to try (including @lid format used in Standard WhatsApp!)
+        const idsToTry = [chatId];
+        if (chatId.indexOf('@') === -1) {
+          idsToTry.push(`${chatId}@c.us`);
+          idsToTry.push(`${chatId}@s.whatsapp.net`);
+          idsToTry.push(`${chatId}@lid`);
+        } else {
+          // Add cross-format attempts
+          const baseId = chatId.split('@')[0];
+          if (!idsToTry.includes(`${baseId}@c.us`)) idsToTry.push(`${baseId}@c.us`);
+          if (!idsToTry.includes(`${baseId}@s.whatsapp.net`)) idsToTry.push(`${baseId}@s.whatsapp.net`);
+          if (!idsToTry.includes(`${baseId}@lid`)) idsToTry.push(`${baseId}@lid`);
+        }
+
+        console.log('[PrinChat Page] IDs to try:', idsToTry);
+
+        if (isStandardWhatsApp) {
+          // ⚡ FAST PATH for Standard WhatsApp (sync only, no hanging async calls)
+          console.log('[PrinChat Page] 🚀 Using FAST path (Standard WhatsApp)');
+
+          // Try sync Store.Chat.get first
+          if (Store?.Chat?.get) {
+            for (const id of idsToTry) {
+              if (chat) break;
+              try { chat = Store.Chat.get(id); } catch (e) { }
+            }
           }
-        } catch (e) {
-          // Silent catch for Business API changes
+
+          // Try sync Store.Contact.get (NOT find - sync only!)
+          if (Store?.Contact?.get) {
+            for (const id of idsToTry) {
+              if (contact) break;
+              try { contact = Store.Contact.get(id); } catch (e) { }
+            }
+          }
+
+          // Extract contact from chat if available
+          if (!contact && chat?.contact) {
+            contact = chat.contact;
+          }
+
+          // WPP as primary fallback for Standard (fast and reliable)
+          if (!contact && (window as any).WPP?.contact?.get) {
+            try {
+              contact = await (window as any).WPP.contact.get(chatId);
+            } catch (e) { }
+          }
+
+        } else {
+          // 🏢 BUSINESS PATH (can use async find safely)
+          console.log('[PrinChat Page] 🏢 Using Business path (with async find)');
+
+          // Helper for async find
+          const findInStore = async (storeProp: any, id: string) => {
+            if (storeProp?.find) {
+              try { return await storeProp.find(id); } catch (e) { }
+            }
+            if (storeProp?.get) {
+              try { return storeProp.get(id); } catch (e) { }
+            }
+            return null;
+          };
+
+          // Try Contact.find
+          if (Store?.Contact) {
+            for (const id of idsToTry) {
+              if (contact) break;
+              contact = await findInStore(Store.Contact, id);
+            }
+          }
+
+          // Try Chat.find
+          if (Store?.Chat) {
+            for (const id of idsToTry) {
+              if (chat) break;
+              chat = await findInStore(Store.Chat, id);
+            }
+          }
+
+          // Extract contact from chat
+          if (!contact && chat?.contact) {
+            contact = chat.contact;
+          }
+
+          // WPP Fallback
+          if (!contact && (window as any).WPP?.contact?.get) {
+            try { contact = await (window as any).WPP.contact.get(chatId); } catch (e) { }
+          }
         }
 
-        // Fallback para get (sync)
-        if (!chat && Store.Chat.get) {
-          try {
-            chat = Store.Chat.get(chatId);
-          } catch (e) { /* silent fail */ }
-        }
-
-        if (!chat) {
-          console.log('[PrinChat Page] ⚠️ Chat object not found via any API. Returning minimal info fallback.');
+        if (!chat && !contact) {
+          console.log('[PrinChat Page] ⚠️ Chat/Contact object not found via any API. Returning minimal info fallback.');
           // Retorna sucesso parcial para não quebrar a UI
           document.dispatchEvent(new CustomEvent('PrinChatChatInfoResult', {
             detail: {
@@ -1226,13 +1306,30 @@
           return;
         }
 
-        console.log('[PrinChat Page] Chat found:', chat);
+        // 3. Extract Basic Info - EXHAUSTIVE SEARCH
+        let chatName =
+          contact?.name ||
+          contact?.pushname ||
+          contact?.shortName ||
+          contact?.displayName ||
+          contact?.verifiedName ||
+          contact?.formattedName ||
+          chat?.formattedTitle ||
+          chat?.name ||
+          chat?.contact?.name ||
+          chat?.contact?.pushname ||
+          chat?.contact?.shortName ||
+          chatId.replace('@c.us', '');
 
-        // Get contact name from chat
-        const contact = chat.contact;
-        const chatName = contact?.pushname || contact?.name || contact?.formattedName ||
-          chat.formattedTitle || chat.name ||
-          chat.id?.user || 'Unknown';
+        // WPP Name Fallback (If Standard WA fails Store lookups)
+        if ((!chatName || chatName.includes('@')) && (window as any).WPP?.chat?.get) {
+          try {
+            const wppChat = await (window as any).WPP.chat.get(chatId);
+            if (wppChat) {
+              chatName = wppChat.name || wppChat.contact?.name || wppChat.contact?.pushname || chatName;
+            }
+          } catch (e) { }
+        }
 
         console.log('[PrinChat Page] Chat name:', chatName);
 
@@ -1241,13 +1338,49 @@
         try {
           console.log('[PrinChat Page] Checking for chat photo...');
 
-          // Strategy 1: Try WPPConnect API first (most reliable)
-          if ((window as any).WPP?.contact?.getProfilePictureUrl) {
+          // Strategy 1: Try contact.profilePicThumb (Memory - Fast)
+          if (!chatPhoto && contact?.profilePicThumb) {
+            // console.log('[PrinChat Page] Trying contact.profilePicThumb...');
+            chatPhoto = contact.profilePicThumb.eurl || contact.profilePicThumb.imgFull || contact.profilePicThumb.img;
+            if (chatPhoto) console.log('[PrinChat Page] ✅ Got photo from contact.profilePicThumb');
+          }
+
+          // Strategy 2: Try chat.profilePicThumb (Memory - Fast)
+          if (!chatPhoto && chat?.profilePicThumb) {
+            // console.log('[PrinChat Page] Trying chat.profilePicThumb...');
+            chatPhoto = chat.profilePicThumb.eurl || chat.profilePicThumb.imgFull || chat.profilePicThumb.img;
+            if (chatPhoto) console.log('[PrinChat Page] ✅ Got photo from chat.profilePicThumb');
+          }
+
+          // Strategy 3: Try contact.img field directly (Memory - Fast)
+          if (!chatPhoto && contact?.img) {
+            // console.log('[PrinChat Page] Trying contact.img...');
+            chatPhoto = contact.img;
+            if (chatPhoto) console.log('[PrinChat Page] ✅ Got photo from contact.img');
+          }
+
+          // Strategy 4: Try Store.ProfilePicThumb.find() (DB - Medium)
+          if (!chatPhoto && (window as any).Store?.ProfilePicThumb) {
+            // console.log('[PrinChat Page] Trying Store.ProfilePicThumb.find()...');
+            try {
+              const profilePic = await (window as any).Store.ProfilePicThumb.find(chat.id);
+              if (profilePic) {
+                // console.log('[PrinChat Page] ProfilePicThumb object:', profilePic);
+                chatPhoto = profilePic.eurl || profilePic.imgFull || profilePic.img;
+                if (chatPhoto) console.log('[PrinChat Page] ✅ Got photo from Store.ProfilePicThumb');
+              }
+            } catch (storeError) {
+              console.log('[PrinChat Page] Store.ProfilePicThumb.find() failed:', storeError);
+            }
+          }
+
+          // Strategy 5: Try WPPConnect API (Network/Full - Slow/Reliable)
+          if (!chatPhoto && (window as any).WPP?.contact?.getProfilePictureUrl) {
             console.log('[PrinChat Page] Trying WPP.contact.getProfilePictureUrl...');
             try {
               const pictureUrl = await (window as any).WPP.contact.getProfilePictureUrl(chatId);
               if (pictureUrl) {
-                console.log('[PrinChat Page] Got photo from WPP:', pictureUrl);
+                console.log('[PrinChat Page] ✅ Got photo from WPP:', pictureUrl);
                 chatPhoto = pictureUrl;
               }
             } catch (wppError) {
@@ -1255,43 +1388,7 @@
             }
           }
 
-          // Strategy 2: Try contact.profilePicThumb
-          if (!chatPhoto && contact?.profilePicThumb) {
-            console.log('[PrinChat Page] Trying contact.profilePicThumb...');
-            chatPhoto = contact.profilePicThumb.eurl || contact.profilePicThumb.imgFull || contact.profilePicThumb.img;
-            if (chatPhoto) console.log('[PrinChat Page] Got photo from contact.profilePicThumb');
-          }
-
-          // Strategy 3: Try chat.profilePicThumb
-          if (!chatPhoto && chat?.profilePicThumb) {
-            console.log('[PrinChat Page] Trying chat.profilePicThumb...');
-            chatPhoto = chat.profilePicThumb.eurl || chat.profilePicThumb.imgFull || chat.profilePicThumb.img;
-            if (chatPhoto) console.log('[PrinChat Page] Got photo from chat.profilePicThumb');
-          }
-
-          // Strategy 4: Try contact.img field directly
-          if (!chatPhoto && contact?.img) {
-            console.log('[PrinChat Page] Trying contact.img...');
-            chatPhoto = contact.img;
-            if (chatPhoto) console.log('[PrinChat Page] Got photo from contact.img');
-          }
-
-          // Strategy 5: Try Store.ProfilePicThumb.find()
-          if (!chatPhoto && (window as any).Store?.ProfilePicThumb) {
-            console.log('[PrinChat Page] Trying Store.ProfilePicThumb.find()...');
-            try {
-              const profilePic = await (window as any).Store.ProfilePicThumb.find(chat.id);
-              if (profilePic) {
-                console.log('[PrinChat Page] ProfilePicThumb object:', profilePic);
-                chatPhoto = profilePic.eurl || profilePic.imgFull || profilePic.img;
-                if (chatPhoto) console.log('[PrinChat Page] Got photo from Store.ProfilePicThumb');
-              }
-            } catch (storeError) {
-              console.log('[PrinChat Page] Store.ProfilePicThumb.find() failed:', storeError);
-            }
-          }
-
-          // Strategy 6: Try forcing a refresh via Store.ProfilePicThumb
+          // Strategy 6: Try forcing a refresh via Store.ProfilePicThumb (Network - Slowest)
           if (!chatPhoto && (window as any).Store?.ProfilePicThumb) {
             console.log('[PrinChat Page] Trying to force refresh ProfilePicThumb...');
             try {
@@ -1300,7 +1397,7 @@
               if (profilePicModel) {
                 console.log('[PrinChat Page] ProfilePicThumb via get():', profilePicModel);
                 chatPhoto = profilePicModel.eurl || profilePicModel.imgFull || profilePicModel.img;
-                if (chatPhoto) console.log('[PrinChat Page] Got photo from Store.ProfilePicThumb.get()');
+                if (chatPhoto) console.log('[PrinChat Page] ✅ Got photo from Store.ProfilePicThumb.get()');
               }
             } catch (getError) {
               console.log('[PrinChat Page] Store.ProfilePicThumb.get() failed:', getError);
@@ -1363,9 +1460,11 @@
 
 
           // Strategy 1: Store.Label (Prioritize internal Store as it updates instantly)
+          // If Store.Label exists, we are on Business (or it's supported).
+          // If NOT, we assume Standard WhatsApp and SKIP everything to avoid delays.
           if (Store?.Label) {
             console.log('[PrinChat Page] 🏷️ Strategy 1: Store.Label (using chat object)');
-            const labelIds = chat.labels || [];
+            const labelIds = chat?.labels || [];
             console.log('[PrinChat Page] 🔍 chat.labels from Store.Chat:', labelIds);
 
             if (labelIds.length > 0) {
@@ -1386,36 +1485,46 @@
             } else {
               console.log('[PrinChat Page] ⚠️ No labels found in chat.labels property');
             }
-          }
 
-          // Strategy 2: WPPConnect (Fallback)
-          if (chatTags.length === 0 && WPP?.label?.getLabels) {
-            console.log('[PrinChat Page] 🏷️ Strategy 2: WPP.label.getLabels');
-            try {
-              const labels = await WPP.label.getLabels(chatId);
-              if (labels && Array.isArray(labels)) {
-                labels.forEach((l: any) => addLabel(l.id, l.name, l.color, l));
-              }
-            } catch (e) { console.error('WPP.label.getLabels failed', e); }
-          }
+            // ONLY try fallbacks if we ARE on Business (Store.Label exists) but failed to find tags?
+            // Actually, if Store.Label exists, we probably have what we need. 
+            // The fallbacks below (Strategy 2 & 3) use WPP/Store methods mainly useful if our specific chat lookup failed?
+            // But if Store.Label is MISSING, we definitely want to skip them.
 
-          // Strategy 3: WPP.chat.get inspection (Final Fallback)
-          if (chatTags.length === 0 && WPP?.chat?.get) {
-            console.log('[PrinChat Page] 🏷️ Strategy 3: WPP.chat.get');
-            try {
-              const wppChat = await WPP.chat.get(chatId);
-              if (wppChat && wppChat.labels && Array.isArray(wppChat.labels)) {
-                wppChat.labels.forEach((l: any) => {
-                  if (typeof l === 'object' && l.id && l.name) {
-                    addLabel(l.id, l.name, l.color, l);
-                  } else if (typeof l === 'string') {
-                    addLabel(l, `Tag ${l}`, undefined);
-                  }
-                });
-              }
-            } catch (e) {
-              console.error('Strategy 3 failed', e);
+            // Strategy 2: WPPConnect (Fallback) - Only run if likely Business
+            if (chatTags.length === 0 && WPP?.label?.getLabels) {
+              console.log('[PrinChat Page] 🏷️ Strategy 2: WPP.label.getLabels');
+              try {
+                const labels = await WPP.label.getLabels(chatId);
+                if (labels && Array.isArray(labels)) {
+                  labels.forEach((l: any) => addLabel(l.id, l.name, l.color, l));
+                }
+              } catch (e) { console.error('WPP.label.getLabels failed', e); }
             }
+
+            // Strategy 3: WPP.chat.get inspection (Final Fallback) - Only run if likely Business
+            if (chatTags.length === 0 && WPP?.chat?.get) {
+              console.log('[PrinChat Page] 🏷️ Strategy 3: WPP.chat.get');
+              try {
+                const wppChat = await WPP.chat.get(chatId);
+                if (wppChat && wppChat.labels && Array.isArray(wppChat.labels)) {
+                  wppChat.labels.forEach((l: any) => {
+                    if (typeof l === 'object' && l.id && l.name) {
+                      addLabel(l.id, l.name, l.color, l);
+                    } else if (typeof l === 'string') {
+                      addLabel(l, `Tag ${l}`, undefined);
+                    }
+                  });
+                }
+              } catch (e) {
+                console.error('Strategy 3 failed', e);
+              }
+            }
+
+          } else {
+            // Store.Label is undefined -> Standard WhatsApp.
+            // SKIP all label fetching strategies to prevent delay.
+            // console.log('[PrinChat Page] ⚡ Standard WhatsApp detected (No Store.Label). Skipping tag fetch.');
           }
 
           console.log('[PrinChat Page] 🏷️ FINAL TAGS:', chatTags);
@@ -1770,6 +1879,8 @@
     } catch (e) {
       console.error('[PrinChat] ❌ Failed to setup chat label monitoring:', e);
     }
+
+
 
 
   }).catch(() => {

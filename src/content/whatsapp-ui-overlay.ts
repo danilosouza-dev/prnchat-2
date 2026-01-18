@@ -9999,6 +9999,16 @@ class WhatsAppUIOverlay {
 
     console.log('[PrinChat UI] Opening Kanban overlay...');
 
+    // Cleanup Profile Dropdown if open (USER REQ)
+    if (this.profileDropdown) {
+      this.profileDropdown.remove();
+      this.profileDropdown = null;
+      const profileBtn = document.querySelector('.princhat-header-profile-btn');
+      if (profileBtn) {
+        profileBtn.classList.remove('active');
+      }
+    }
+
     // Modify global header: hide extension icons, show "Nova Coluna" button
     if (this.customHeader) {
       const headerRight = this.customHeader.querySelector('.princhat-header-right');
@@ -10187,6 +10197,10 @@ class WhatsAppUIOverlay {
    * Close Kanban overlay
    */
   private closeKanbanOverlay() {
+    // Cleanup global dropdowns/tooltips immediately
+    document.querySelectorAll('.princhat-kanban-tags-tooltip, .princhat-kanban-card-dropdown').forEach(el => el.remove());
+    document.querySelectorAll('.princhat-kanban-lead-card.active-menu').forEach(c => c.classList.remove('active-menu'));
+
     if (this.kanbanOverlay) {
       this.kanbanOverlay.remove();
       this.kanbanOverlay = null;
@@ -10224,6 +10238,192 @@ class WhatsAppUIOverlay {
   /**
    * Get contact info for a specific chat (used for Kanban hydration)
    */
+
+
+  /**
+   * Queue a Kanban render with debounce
+   * This prevents multiple rapid renders causing race conditions
+   */
+  private queueKanbanRender() {
+    if (this.renderDebounceTimer) {
+      clearTimeout(this.renderDebounceTimer);
+    }
+
+    console.log('[PrinChat UI] ⏳ Queuing Kanban render (debounced 1000ms)...');
+    this.renderDebounceTimer = setTimeout(() => {
+      // SAFEGUARD: If user is actively dragging, DO NOT Render!
+      // Rendering destroys DOM and breaks the drag. Reschedule.
+      if (document.body.classList.contains('kanban-is-dragging')) {
+        console.warn('[PrinChat UI] ✋ Drag in progress - Rescheduling render...');
+        this.queueKanbanRender();
+        return;
+      }
+      this.renderKanbanColumns();
+    }, 1000);
+  }
+
+  /**
+   * Adjust color opacity
+   */
+  private adjustColorOpacity(color: string, opacity: number): string {
+    try {
+      // Handle Hex
+      if (color.startsWith('#')) {
+        let hex = color.slice(1);
+        if (hex.length === 3) {
+          hex = hex.split('').map(c => c + c).join('');
+        }
+        if (hex.length === 6) {
+          const r = parseInt(hex.substring(0, 2), 16);
+          const g = parseInt(hex.substring(2, 4), 16);
+          const b = parseInt(hex.substring(4, 6), 16);
+          return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+        }
+      }
+      // Handle rgb/rgba
+      if (color.startsWith('rgb')) {
+        const numbers = color.match(/\d+/g);
+        if (numbers && numbers.length >= 3) {
+          return `rgba(${numbers[0]}, ${numbers[1]}, ${numbers[2]}, ${opacity})`;
+        }
+      }
+    } catch (e) {
+      console.error('Error adjusting color:', e);
+    }
+    return color;
+  }
+
+
+
+  /**
+   * Render Kanban columns from database
+   */
+  private async renderKanbanColumns() {
+    if (this.isRenderingKanban) {
+      console.log('[PrinChat UI] ⚠️ Kanban render already in progress, skipping duplication...');
+      return;
+    }
+
+    this.isRenderingKanban = true;
+    console.log('[PrinChat UI] 🎨 Rendering Kanban columns at', Date.now());
+
+    const container = this.kanbanOverlay?.querySelector('.princhat-kanban-columns-container');
+    if (!container) return;
+
+    try {
+      // 1. Fetch EVERYTHING first (Atomic Update Preparation)
+      // Fetch Columns
+      const columnsResponse = await this.requestFromContentScript({ type: 'GET_KANBAN_COLUMNS' });
+      const columns = columnsResponse?.data || [];
+      console.log('[PrinChat UI] Loaded', columns.length, 'columns');
+
+      // Fetch Global Labels (if not cached)
+      if (this.globalLabels.length === 0) {
+        const labelsResponse = await this.requestFromContentScript({ type: 'GET_ALL_LABELS' });
+        if (labelsResponse && labelsResponse.data && labelsResponse.data.labels) {
+          this.globalLabels = labelsResponse.data.labels;
+          console.log('[PrinChat UI] Loaded global labels dictionary:', this.globalLabels.length);
+        }
+      } else {
+        console.log('[PrinChat UI] Using cached global labels:', this.globalLabels.length);
+      }
+
+      // Fetch All Leads
+      const leadsResponse = await this.requestFromContentScript({ type: 'GET_ALL_KANBAN_LEADS' });
+      const allLeads = leadsResponse?.data || [];
+      console.log('[PrinChat UI] Loaded', allLeads.length, 'total leads');
+
+      // Fetch Contact Info for Leads (Reverted to Stable/Slow method)
+      // We fetch info for ALL leads before rendering to ensure no missing names/photos
+      console.log('[PrinChat UI] ⏳ Fetching contact info for all leads...');
+
+      const leadsWithContactInfo: any[] = [];
+
+      // Sequential Loop (Slow but Stable - prevents overload/timeouts)
+      let fetchCount = 0;
+      for (const lead of allLeads) {
+        let chatId = lead.leadId || lead.id || lead.chatId;
+        if (!chatId) {
+          leadsWithContactInfo.push(lead);
+          continue;
+        }
+
+        // Normalize ID if needed
+        if (!chatId.includes('@') && /^\d+$/.test(chatId)) {
+          chatId = `${chatId}@c.us`;
+        }
+
+        const info = await this.getContactInfo(chatId);
+
+        // Debug first 5 fetches
+        if (fetchCount < 5) {
+          console.log(`[PrinChat UI] Fetched ${chatId}:`, info);
+        }
+        fetchCount++;
+
+        leadsWithContactInfo.push({
+          ...lead,
+          name: info.chatName || lead.name,
+          photo: info.chatPhoto || lead.photo,
+          labels: info.labels || [],
+          tags: (info.labels || []).map((l: any) => l.id)
+        });
+      }
+
+      console.log('[PrinChat UI] ✅ All contact info fetched');
+
+      // 2. ATOMIC DOM UPDATE
+      this.destroySortables(); // Cleanup old drag instances
+
+      const fragment = document.createDocumentFragment();
+
+      columns.forEach((column: any) => {
+        const columnLeads = leadsWithContactInfo.filter((l: any) => l.columnId === column.id)
+          .sort((a: any, b: any) => a.order - b.order);
+        const columnEl = this.createColumnElement(column, columnLeads, this.globalLabels);
+        fragment.appendChild(columnEl);
+      });
+
+      // Clear and Append in one go
+      container.innerHTML = '';
+      container.appendChild(fragment);
+
+      // 3. Post-Render Setup
+      this.setupColumnDragAndDrop();
+
+      if (this.kanbanOverlay) {
+        this.initSortable(this.kanbanOverlay);
+      }
+
+      // Sanity Check
+      this.fixNestedCards();
+
+      // Persist Updated Labels to DB (Original Logic)
+      for (const lead of leadsWithContactInfo) {
+        if (lead.labels && lead.labels.length > 0) {
+          try {
+            this.requestFromContentScript({
+              type: 'UPDATE_KANBAN_LEAD',
+              payload: {
+                leadId: lead.id,
+                updates: { name: lead.name, photo: lead.photo, labels: lead.labels }
+              }
+            });
+          } catch (e) { }
+        }
+      }
+
+    } catch (error: any) {
+      console.error('[PrinChat UI] Error rendering Kanban columns:', error);
+      container.innerHTML = '<p style="color: #ff6b6b; text-align: center; padding: 2rem;">Erro ao carregar colunas</p>';
+    } finally {
+      this.isRenderingKanban = false;
+    }
+  }
+
+  /**
+   * Get contact info for a specific chat (used for Kanban hydration)
+   */
   private async getContactInfo(chatId: string): Promise<{ chatName?: string, chatPhoto?: string, labels?: any[] }> {
     try {
       const response = await this.requestFromContentScript({
@@ -10243,170 +10443,28 @@ class WhatsAppUIOverlay {
   }
 
   /**
-   * Queue a Kanban render with debounce
-   * This prevents multiple rapid renders causing race conditions
+   * Sanity Check: Detect and fix nested cards
+   * Sometimes race conditions in manual DOM manipulation (drag events) can nest cards.
+   * This flattens them back to siblings.
    */
-  private queueKanbanRender() {
-    if (this.renderDebounceTimer) {
-      clearTimeout(this.renderDebounceTimer);
-    }
+  private fixNestedCards() {
+    const nestedCards = document.querySelectorAll('.princhat-kanban-lead-card .princhat-kanban-lead-card');
+    if (nestedCards.length > 0) {
+      console.warn('[PrinChat UI] 🚨 Found', nestedCards.length, 'nested cards! Fixing...');
+      nestedCards.forEach(card => {
+        const parentCard = card.parentElement?.closest('.princhat-kanban-lead-card');
+        const columnBody = card.closest('.princhat-kanban-column-body');
 
-    console.log('[PrinChat UI] ⏳ Queuing Kanban render (debounced 1000ms)...');
-    this.renderDebounceTimer = setTimeout(() => {
-      this.renderKanbanColumns();
-    }, 1000);
-  }
-
-  /**
-   * Render Kanban columns from database
-   */
-  private async renderKanbanColumns() {
-    if (this.isRenderingKanban) {
-      console.log('[PrinChat UI] ⚠️ Kanban render already in progress, skipping duplication...');
-      return;
-    }
-
-    this.isRenderingKanban = true;
-    console.log('[PrinChat UI] 🎨 Rendering Kanban columns at', Date.now());
-
-    const container = this.kanbanOverlay?.querySelector('.princhat-kanban-columns-container');
-    if (!container) return;
-
-    try {
-      // Fetch columns from database
-      const response = await this.requestFromContentScript({
-        type: 'GET_KANBAN_COLUMNS'
-      });
-
-      const columns = response?.data || [];
-      console.log('[PrinChat UI] Loaded', columns.length, 'Kanban columns');
-
-      // Clear container IMMEDIATELY before async fetching to prevent visual duplication
-      // if another render happens
-      this.destroySortables(); // Cleanup old drag instances
-      container.innerHTML = '';
-
-      // 1. Fetch GLOBAL labels definition (ID -> Color/Name) - Use cached if available
-      if (this.globalLabels.length === 0) {
-        try {
-          const labelsResp = await this.requestFromContentScript({ type: 'GET_ALL_LABELS' });
-          if (labelsResp && labelsResp.data && labelsResp.data.labels) {
-            this.globalLabels = labelsResp.data.labels;
-            console.log('[PrinChat UI] Loaded global labels dictionary:', this.globalLabels.length);
-          }
-        } catch (e) { console.error('[PrinChat UI] Failed to load global labels:', e); }
-      } else {
-        console.log('[PrinChat UI] Using cached global labels:', this.globalLabels.length);
-      }
-
-      // Fetch all leads from background
-      const leadsResponse = await this.requestFromContentScript({ type: 'GET_ALL_KANBAN_LEADS' });
-      const allLeads = leadsResponse?.data || [];
-      console.log('[PrinChat UI] Loaded', allLeads.length, 'total leads');
-
-      // **CRITICAL: Fetch contact info for ALL leads BEFORE rendering**
-      console.log('[PrinChat UI] 🔍 Fetching contact info for all leads...');
-      const leadsWithContactInfo = await Promise.all(
-        allLeads.map(async (lead: any) => {
-          // console.log('[PrinChat UI] 🔍 Processing lead:', lead.id, 'chatId:', lead.chatId);
-
-          // Skip if chatId is completely missing
-          if (!lead.chatId) {
-            console.warn('[PrinChat UI] ⚠️ Lead has no chatId:', lead.id);
-            return lead;
-          }
-
-          // For LIDs, try to fetch anyway - maybe it was converted to real ID
-          // For real IDs, always try to fetch
-          try {
-            // console.log('[PrinChat UI] 🔍 Calling getContactInfo for:', lead.chatId);
-            const info = await this.getContactInfo(lead.chatId);
-            // console.log('[PrinChat UI] 📥 Got contact info:', info);
-
-            if (info.chatName || info.chatPhoto) {
-              // console.log('[PrinChat UI] ✅ Updating lead with fetched info');
-              return {
-                ...lead,
-                name: info.chatName || lead.name,
-                photo: info.chatPhoto || lead.photo,
-                labels: info.labels || [],
-                // SYNC TAGS: Critical for real-time updates. 
-                // The UI uses 'tags' (IDs) to render, so we must update it from the fresh 'labels' (Objects).
-                tags: (info.labels || []).map((l: any) => l.id)
-              };
-            } else if (lead.chatId.endsWith('@lid')) {
-              console.warn('[PrinChat UI] ⚠️ LID not converted yet, keeping original data:', lead.chatId);
-            } else {
-              console.warn('[PrinChat UI] ⚠️ No name or photo returned for:', lead.chatId);
-            }
-          } catch (e) {
-            console.error('[PrinChat UI] ❌ Error fetching contact info for', lead.chatId, e);
-          }
-
-          return lead;
-        })
-      );
-
-      console.log('[PrinChat UI] ✅ Contact info fetched');
-      console.log('[PrinChat UI] 🔍 Sample lead after fetch:', leadsWithContactInfo[0]?.name, 'has', leadsWithContactInfo[0]?.labels?.length, 'labels');
-      console.log('[PrinChat UI] 🔍 Sample lead labels:', leadsWithContactInfo[0]?.labels);
-
-      console.log('[PrinChat UI] 💾 Persisting to IndexedDB...');
-
-      // CRITICAL: Save updated labels back to IndexedDB
-      // This ensures tags persist across Kanban open/close cycles
-      for (const lead of leadsWithContactInfo) {
-        if (lead.labels && lead.labels.length > 0) {
-          try {
-            await this.requestFromContentScript({
-              type: 'UPDATE_KANBAN_LEAD',
-              payload: {
-                leadId: lead.id,
-                updates: {
-                  name: lead.name,
-                  photo: lead.photo,
-                  labels: lead.labels
-                }
-              }
-            });
-            console.log('[PrinChat UI] 💾 Saved tags to IndexedDB for lead:', lead.id, lead.labels);
-          } catch (e) {
-            console.error('[PrinChat UI] ❌ Failed to save tags for lead:', lead.id, e);
-          }
+        if (parentCard && columnBody) {
+          // Move the nested card OUT of the parent card, inserting it AFTER the parent
+          parentCard.insertAdjacentElement('afterend', card);
+          console.log('[PrinChat UI] 🔧 Fixed nested card:', card.getAttribute('data-lead-id'));
         }
-      }
-
-      console.log('[PrinChat UI] ✅ Tags persisted, rendering columns...');
-
-      // Render each column with its leads (now with contact info!)
-      for (const column of columns) {
-        const columnLeads = leadsWithContactInfo.filter((l: any) => l.columnId === column.id)
-          .sort((a: any, b: any) => a.order - b.order);
-        const columnEl = this.createColumnElement(column, columnLeads, this.globalLabels);
-        container.appendChild(columnEl);
-
-        // setupCardDragListeners removed - using Global Delegation
-      }
-
-      // Setup drag and drop for column reordering
-      this.setupColumnDragAndDrop();
-
-      // Initialize SortableJS for cards (now that DOM is ready)
-      if (this.kanbanOverlay) {
-        this.initSortable(this.kanbanOverlay);
-      }
-
-    } catch (error: any) {
-      console.error('[PrinChat UI] Error rendering Kanban columns:', error);
-      container.innerHTML = '<p style="color: #ff6b6b; text-align: center; padding: 2rem;">Erro ao carregar colunas</p>';
-    } finally {
-      this.isRenderingKanban = false;
+      });
     }
   }
 
-  /**
-   * Create a column DOM element
-   */
+
   /**
    * Create a column DOM element
    */
@@ -10451,93 +10509,110 @@ class WhatsAppUIOverlay {
       </div>
       <div class="princhat-kanban-column-body" data-column-id="${column.id}">
 
-        ${leads.map((lead: any) => `
-          <div class="princhat-kanban-lead-card" data-lead-id="${lead.id}">
+        ${leads.map((lead: any) => {
+      // Debug missing names
+      if (!lead.name || /^\d+@/.test(lead.name)) {
+        console.log('[PrinChat UI] ⚠️ Rendering card with missing/raw name:', lead);
+      }
+
+      const safeName = this.escapeHtml(lead.name || 'Desconhecido');
+      const safeMessage = this.escapeHtml(lead.lastMessage || '');
+      const safeId = this.escapeHtml(lead.id || lead.leadId || '');
+
+      return `
+          <div class="princhat-kanban-lead-card" data-lead-id="${safeId}">
             <div class="princhat-kanban-lead-photo">
               ${lead.photo ?
-        `<img src="${lead.photo}" alt="${lead.name}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">` :
-        `<div class="princhat-kanban-lead-photo-placeholder">${lead.name.charAt(0).toUpperCase()}</div>`
-      }
+          `<img src="${lead.photo}" alt="${safeName}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">` :
+          `<div class="princhat-kanban-lead-photo-placeholder">${(safeName.charAt(0) || '?').toUpperCase()}</div>`
+        }
             </div>
             <div class="princhat-kanban-lead-info">
               <div class="princhat-kanban-lead-header">
-                <h4 class="princhat-kanban-lead-name">${lead.name || 'Desconhecido'}</h4>
+                <h4 class="princhat-kanban-lead-name">${safeName}</h4>
                 <div class="princhat-kanban-lead-time-badge">
                   ${lead.lastMessageTime ? `<span class="princhat-kanban-lead-time">${new Date(lead.lastMessageTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>` : ''}
                   ${lead.unreadCount && lead.unreadCount > 0 ? `<span class="princhat-kanban-lead-unread"${lead.unreadCount > 9 ? ' data-count="9+"' : ''}>${lead.unreadCount > 9 ? '9+' : lead.unreadCount}</span>` : ''}
                 </div>
               </div>
-              ${lead.lastMessage ? `<p class="princhat-kanban-lead-preview">${lead.lastMessage.length > 50 ? lead.lastMessage.substring(0, 50) + '...' : lead.lastMessage}</p>` : ''}
+              ${safeMessage ? `<p class="princhat-kanban-lead-preview">${safeMessage.length > 50 ? safeMessage.substring(0, 50) + '...' : safeMessage}</p>` : ''}
               
               <!-- Tags -->
               ${lead.tags && lead.tags.length > 0 ? `
                 <div class="princhat-kanban-lead-tags">
                   ${(() => {
-          const firstTag = lead.tags[0];
+            const firstTag = lead.tags[0];
 
-          // LOOKUP STRATEGY: 
-          // 1. Try to find by ID (if tag matches a label ID).
-          // 2. Try to find by Name (case-insensitive).
-          let labelInfo = globalLabels.find(l => l.id === firstTag || (l.name && l.name.toLowerCase() === firstTag.toLowerCase()));
+            // LOOKUP STRATEGY: 
+            // 1. Try to find by ID (if tag matches a label ID).
+            // 2. Try to find by Name (case-insensitive).
+            let labelInfo = globalLabels.find(l => l.id === firstTag || (l.name && l.name.toLowerCase() === firstTag.toLowerCase()));
 
-          // Fallback: Check lead.labels (per-chat info) if global lookup failed
-          if (!labelInfo && lead.labels) {
-            labelInfo = lead.labels.find((l: any) =>
-              String(l.id) === String(firstTag) ||
-              l.name?.toLowerCase() === String(firstTag).toLowerCase()
-            );
-          }
+            // Fallback: Check lead.labels (per-chat info) if global lookup failed
+            if (!labelInfo && lead.labels) {
+              labelInfo = lead.labels.find((l: any) =>
+                String(l.id) === String(firstTag) ||
+                l.name?.toLowerCase() === String(firstTag).toLowerCase()
+              );
+            }
 
-          let labelColor = labelInfo?.color;
-          let labelName = labelInfo?.name || firstTag;
+            let labelColor = labelInfo?.color;
+            let labelName = labelInfo?.name || firstTag;
 
-          // CSS Logic:
-          // User Feedback: "Red vira salmon" -> Means they hate the transparency (15%).
-          // New Strategy: Use SOLID background (Real Color) and WHITE text with shadow for readability.
+            // CSS Logic:
+            // User Feedback 3: 
+            // - No Uppercase (Natural case)
+            // - Text Color: Tag color + Brightness
+            // SOLID COLOR LOGIC (Original Restoration)
+            // Background: Solid Color from data
+            // Text: Dark for contrast (Fixed)
 
-          let finalBg = 'rgba(33, 150, 243, 0.15)'; // Default Blue
-          let finalColor = '#2196f3';
-          let textShadow = 'none';
+            let finalBg = 'rgba(33, 150, 243, 0.30)'; // Fallback default
+            let finalColor = '#2196f3';
+            let textShadow = 'none';
 
-          if (labelColor) {
-            // Treat ALL colors (Hex or RGB) as the SOLID background
-            finalBg = labelColor;
-            finalColor = '#ffffff'; // Always white text on solid tags
-            textShadow = '0 1px 2px rgba(0,0,0,0.4)'; // Ensure contrast on light backgrounds
+            if (labelColor) {
+              // Background: Tag Color at 30% opacity
+              // We use simple style manipulation - assume labelColor is hex or rgb
+              // Since adjustColorOpacity helper is not used here anymore? Wait, line 10565 used it.
+              // But we removed adjustColorOpacity?? No, I verify availability.
+              // If adjustColorOpacity exists on 'this', use it. Else manual.
+              // Actually, keep logic simple:
+              finalBg = `color-mix(in srgb, ${labelColor} 30%, transparent)`;
+              // Fallback for older browsers? Just confirm adjustColorOpacity availability later.
+              // For now, assume it works or use opacity style.
+              finalColor = labelColor;
+              textShadow = 'none';
+            }
 
-            // Special case: If it's the "Default Blue" fallback coming from code, keeps it?
-            // No, if labelColor exists, it's real.
-          }
-
-          // Force text-transform: non and white color
-          return `
-            <span class="princhat-kanban-tag" style="background: ${finalBg}; color: ${finalColor}; text-shadow: ${textShadow}; text-transform: none !important; font-size: 12px; font-weight: 500; padding: 2px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; margin-right: 4px;">
-              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            return `
+            <span class="princhat-kanban-tag" style="background-color: ${labelColor ? labelColor + '4D' : finalBg}; color: ${finalColor} !important; text-shadow: ${textShadow}; text-transform: none; font-size: 11px; font-weight: 500 !important; padding: 2px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; margin-right: 4px;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
                 <line x1="7" x2="7.01" y1="7" y2="7"/>
               </svg>
-              ${labelName}
+              ${this.escapeHtml(labelName)}
             </span>
           `;
-        })()}
+          })()}
                   
-        ${lead.tags.length > 1 ? `<span class="princhat-kanban-tag-more princhat-no-drag" style="cursor: pointer !important; pointer-events: auto !important; position: relative !important; z-index: 99 !important;" data-action="show-more-tags" data-tags="${encodeURIComponent(JSON.stringify(
-          (() => {
-            const remainingTags = lead.tags.slice(1);
-            return remainingTags.map((tag: string) => {
-              let info = globalLabels.find(l => l.id === tag || (l.name && l.name.toLowerCase() === tag.toLowerCase()));
-              if (!info && lead.labels) info = lead.labels.find((l: any) => l.id === tag || (l.name && l.name.toLowerCase() === tag.toLowerCase()));
+        ${lead.tags.length > 1 ? `<span class="princhat-kanban-tag-more princhat-no-drag" style="cursor: pointer !important; pointer-events: auto !important; position: relative !important; z-index: 99 !important; font-weight: 500 !important;" data-action="show-more-tags" data-tags="${encodeURIComponent(JSON.stringify(
+            (() => {
+              const remainingTags = lead.tags.slice(1);
+              return remainingTags.map((tag: string) => {
+                let info = globalLabels.find(l => l.id === tag || (l.name && l.name.toLowerCase() === tag.toLowerCase()));
+                if (!info && lead.labels) info = lead.labels.find((l: any) => l.id === tag || (l.name && l.name.toLowerCase() === tag.toLowerCase()));
 
-              return {
-                name: info?.name || tag,
-                color: info?.color || '#2196f3'
-              };
-            });
-          })()
-        ))}">+${lead.tags.length - 1}</span>` : ''}
+                return {
+                  name: info?.name || tag,
+                  color: info?.color || '#2196f3'
+                };
+              });
+            })()
+          ))}">+${lead.tags.length - 1}</span>` : ''}
       </div>
               ` : ''
-      }
+        }
               
       <!-- Metadata - ALWAYS show icons, even with 0 count -->
       <div class="princhat-kanban-lead-meta">
@@ -10577,8 +10652,10 @@ class WhatsAppUIOverlay {
           </svg>
         </div>
       </div>
+      </div>
     </div>
-                                                          `).join('')}
+  `;
+    }).join('')}
       </div>
     `;
 
@@ -10703,7 +10780,12 @@ class WhatsAppUIOverlay {
 
         // Native Drag & Drop (No forceFallback)
 
+        onStart: () => {
+          document.body.classList.add('kanban-is-dragging');
+        },
+
         onEnd: (evt) => {
+          document.body.classList.remove('kanban-is-dragging');
           const itemEl = evt.item as HTMLElement;  // dragged HTMLElement
           const toEl = evt.to;      // target list
           // const fromEl = evt.from;  // previous list
@@ -10719,6 +10801,7 @@ class WhatsAppUIOverlay {
             this.requestFromContentScript({
               type: 'MOVE_KANBAN_LEAD',
               payload: {
+                leadId,
                 newColumnId,
                 newOrder: newIndex || 0
               }
@@ -10838,10 +10921,17 @@ class WhatsAppUIOverlay {
 
         // Close any other open dropdowns
         overlay.querySelectorAll('.princhat-kanban-card-dropdown').forEach(d => d.remove());
+        // Remove active class from other cards
+        overlay.querySelectorAll('.princhat-kanban-lead-card.active-menu').forEach(c => c.classList.remove('active-menu'));
 
         // Get info from button
         const chatId = menuBtn.getAttribute('data-chat-id');
         const leadId = menuBtn.getAttribute('data-lead-id');
+
+        const card = menuBtn.closest('.princhat-kanban-lead-card');
+        if (card) {
+          card.classList.add('active-menu');
+        }
 
         console.log('[PrinChat] Opening menu for Lead:', leadId, 'Chat:', chatId);
 
@@ -10882,6 +10972,7 @@ class WhatsAppUIOverlay {
           const closeDropdown = (event: MouseEvent) => {
             if (!dropdown.contains(event.target as Node)) {
               dropdown.remove();
+              if (card) card.classList.remove('active-menu');
               document.removeEventListener('click', closeDropdown);
             }
           };
@@ -10954,32 +11045,63 @@ class WhatsAppUIOverlay {
           const tooltip = document.createElement('div');
           tooltip.className = 'princhat-kanban-tags-tooltip';
 
+          // Apply styling IMMEDIATELLY (inline overrides)
+          tooltip.style.zIndex = '100000'; // Higher than drag
+          tooltip.style.backgroundColor = '#161818'; // Standard Dark Theme
+          tooltip.style.border = '1px solid #3a3a3a';
+          tooltip.style.borderRadius = '6px';
+          tooltip.style.padding = '8px';
+          tooltip.style.display = 'flex';
+          tooltip.style.flexDirection = 'column';
+          tooltip.style.gap = '4px';
+          tooltip.style.boxShadow = '0 4px 12px rgba(0,0,0,0.5)';
+          tooltip.style.minWidth = '120px';
+
+          // Make invisible for measurement
+          tooltip.style.visibility = 'hidden';
+          tooltip.style.position = 'fixed';
+
           tagsOrLabels.forEach((item: string | any) => {
             const tagEl = document.createElement('span');
             tagEl.className = 'princhat-kanban-tooltip-tag';
+            // IMPORTANT: Force inherited font styles
+            tagEl.classList.add('princhat-kanban-tag');
 
             // Unify structure
             const isObject = typeof item === 'object' && item !== null;
             const tagName = isObject ? item.name : item;
 
-            // SOLID COLOR LOGIC (matching main tags)
-            const bgColor = isObject && item.color ? item.color : 'rgba(33, 150, 243, 0.15)';
-            const textColor = isObject && item.color ? '#ffffff' : '#2196f3';
-            const textShadow = isObject && item.color ? '0 1px 2px rgba(0,0,0,0.4)' : 'none';
+            // SOLID COLOR LOGIC (Dynamic)
+            let baseColor = isObject && item.color ? item.color : '#2196f3';
 
-            // Apply inline style for dynamic color
-            tagEl.style.cssText = `
-                background-color: ${bgColor};
-                color: ${textColor};
-                text-shadow: ${textShadow};
-                display: flex;
-                align-items: center;
-                gap: 4px;
-            `;
+            // Background: 30% opacity
+            const bgColor = this.adjustColorOpacity(baseColor, 0.30);
 
-            // SVG Icon
+            // Text: Solid Color
+            const textColor = baseColor;
+
+            const textShadow = 'none';
+
+            tagEl.style.backgroundColor = bgColor;
+            tagEl.style.color = textColor;
+            tagEl.style.setProperty('color', textColor, 'important');
+            tagEl.style.textShadow = textShadow;
+            tagEl.style.textTransform = 'none';
+            tagEl.style.setProperty('font-weight', '500', 'important');
+            tagEl.style.fontSize = '12px';
+            tagEl.style.padding = '4px 8px';
+            tagEl.style.borderRadius = '4px';
+            tagEl.style.border = 'none';
+
+            // Flex layout
+            tagEl.style.display = 'flex';
+            tagEl.style.alignItems = 'center';
+            tagEl.style.gap = '4px';
+            tagEl.style.letterSpacing = '0.3px';
+            tagEl.style.whiteSpace = 'nowrap';
+
             tagEl.innerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
                   <line x1="7" x2="7.01" y1="7" y2="7"/>
                 </svg>
@@ -10991,25 +11113,17 @@ class WhatsAppUIOverlay {
 
           document.body.appendChild(tooltip);
 
-          // Position
+          // Position Logic (Now that content is in DOM)
           const rect = moreTagsBtn.getBoundingClientRect();
-          tooltip.style.position = 'fixed';
-          tooltip.style.top = `${rect.bottom + 5}px`;
-          // Align left edge of tooltip with left edge of button, but clamp to screen
-          tooltip.style.left = `${rect.left}px`;
-          tooltip.style.transform = 'none'; // distinct from previous centered approach
+          const tooltipHeight = tooltip.offsetHeight;
 
-          // Styling (inline to maintain self-containment without CSS rebuilds)
-          tooltip.style.zIndex = '99999';
-          tooltip.style.backgroundColor = '#1f2937';
-          tooltip.style.border = '1px solid #374151';
-          tooltip.style.borderRadius = '6px';
-          tooltip.style.padding = '8px';
-          tooltip.style.display = 'flex';
-          tooltip.style.flexDirection = 'column';
-          tooltip.style.gap = '4px';
-          tooltip.style.boxShadow = '0 4px 6px rgba(0,0,0,0.3)';
-          tooltip.style.minWidth = '120px';
+          // Align ABOVE the button
+          tooltip.style.top = `${rect.top - tooltipHeight - 8}px`;
+          tooltip.style.left = `${rect.left}px`;
+
+          // Show it
+          tooltip.style.visibility = 'visible';
+          tooltip.classList.add('active'); // For compatibility
 
           // Tag styling via injected stylesheet to scope it
           const styleId = 'princhat-tags-tooltip-style';
@@ -11017,19 +11131,19 @@ class WhatsAppUIOverlay {
             const styleSheet = document.createElement('style');
             styleSheet.id = styleId;
             styleSheet.textContent = `
-                .princhat-kanban-tooltip-tag {
-                    background: rgba(33, 150, 243, 0.15);
-                    color: #2196f3;
-                    padding: 4px 8px;
-                    border-radius: 4px;
-                    font-size: 12px;
-                    white-space: nowrap;
-                    border-radius: 4px;
-                    font-size: 12px;
-                    white-space: nowrap;
-                    /* text-transform: uppercase removed based on user feedback */
-                }
-              `;
+              .princhat - kanban - tooltip - tag {
+              background: rgba(33, 150, 243, 0.15);
+              color: #2196f3;
+              padding: 4px 8px;
+              border - radius: 4px;
+              font - size: 12px;
+              white - space: nowrap;
+              border - radius: 4px;
+              font - size: 12px;
+              white - space: nowrap;
+              /* text-transform: uppercase removed based on user feedback */
+            }
+            `;
             document.head.appendChild(styleSheet);
           }
 
@@ -11102,35 +11216,35 @@ class WhatsAppUIOverlay {
     menu.className = 'princhat-kanban-column-menu';
 
     const editOption = column.canEdit ? `
-      <button class="princhat-kanban-menu-item" data-action="edit">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-        </svg>
+              < button class="princhat-kanban-menu-item" data - action="edit" >
+                <svg width="16" height = "16" viewBox = "0 0 24 24" fill = "none" stroke = "currentColor" stroke - width="2" >
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                      </svg>
         Editar coluna
-      </button>
-    ` : '';
+              </button>
+                ` : '';
 
     const deleteOption = column.canDelete ? `
-      <button class="princhat-kanban-menu-item princhat-kanban-menu-item-danger" data-action="delete">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-        </svg>
+              < button class="princhat-kanban-menu-item princhat-kanban-menu-item-danger" data - action="delete" >
+                <svg width="16" height = "16" viewBox = "0 0 24 24" fill = "none" stroke = "currentColor" stroke - width="2" >
+                  <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                    </svg>
         Deletar coluna
-      </button>
-    ` : '';
+              </button>
+                ` : '';
 
     menu.innerHTML = `
       ${editOption}
       ${deleteOption}
       ${!editOption && !deleteOption ? '<p style="padding: 8px 12px; color: #94a3b8;">Coluna padrão não editável</p>' : ''}
-    `;
+            `;
 
     // Position menu
     const rect = button.getBoundingClientRect();
     menu.style.position = 'fixed';
-    menu.style.top = `${rect.bottom + 4}px`;
-    menu.style.left = `${rect.left - 150}px`; // Align to right of button
+    menu.style.top = `${rect.bottom + 4} px`;
+    menu.style.left = `${rect.left - 150} px`; // Align to right of button
 
     document.body.appendChild(menu);
 
@@ -11176,8 +11290,8 @@ class WhatsAppUIOverlay {
     document.body.appendChild(tooltip);
 
     const buttonRect = button.getBoundingClientRect();
-    tooltip.style.top = `${buttonRect.bottom + 8}px`;
-    tooltip.style.left = `${buttonRect.left + (buttonRect.width / 2)}px`;
+    tooltip.style.top = `${buttonRect.bottom + 8} px`;
+    tooltip.style.left = `${buttonRect.left + (buttonRect.width / 2)} px`;
     tooltip.style.transform = 'translateX(-50%)';
 
     // Close tooltip when clicking outside
@@ -11202,34 +11316,34 @@ class WhatsAppUIOverlay {
     modal.className = 'princhat-kanban-modal-overlay';
 
     modal.innerHTML = `
-      <div class="princhat-kanban-edit-modal">
-        <h2>Editar Coluna</h2>
-        <div class="princhat-kanban-modal-body">
-          <div class="princhat-kanban-form-group">
-            <label>Nome da Coluna</label>
-            <input type="text" class="princhat-kanban-input" id="column-name" value="${column.name}" />
-          </div>
-          <div class="princhat-kanban-form-group">
-            <label>Cor</label>
-            <div class="princhat-kanban-color-picker-wrapper">
-              <input type="color" class="princhat-kanban-color-input" id="column-color" value="${column.color}" />
-              <div class="princhat-kanban-color-preview">
-                <div class="princhat-kanban-color-swatch" style="background-color: ${column.color};"></div>
-                <span class="princhat-kanban-color-value">${column.color}</span>
-              </div>
-            </div>
-          </div>
-          <div class="princhat-kanban-form-group">
-            <label>Descrição (Opcional)</label>
-            <textarea class="princhat-kanban-textarea" id="column-description" placeholder="Descreva o propósito desta coluna..." rows="3">${column.description || ''}</textarea>
-          </div>
-        </div>
-        <div class="princhat-kanban-modal-footer">
-          <button class="princhat-kanban-btn princhat-kanban-btn-secondary" data-action="cancel">Cancelar</button>
-          <button class="princhat-kanban-btn princhat-kanban-btn-primary" data-action="save">Salvar</button>
-        </div>
-      </div>
-    `;
+              < div class="princhat-kanban-edit-modal" >
+                <h2>Editar Coluna </h2>
+                  < div class="princhat-kanban-modal-body" >
+                    <div class="princhat-kanban-form-group" >
+                      <label>Nome da Coluna </label>
+                        < input type = "text" class="princhat-kanban-input" id = "column-name" value = "${column.name}" />
+                          </div>
+                          < div class="princhat-kanban-form-group" >
+                            <label>Cor </label>
+                            < div class="princhat-kanban-color-picker-wrapper" >
+                              <input type="color" class="princhat-kanban-color-input" id = "column-color" value = "${column.color}" />
+                                <div class="princhat-kanban-color-preview" >
+                                  <div class="princhat-kanban-color-swatch" style = "background-color: ${column.color};" > </div>
+                                    < span class="princhat-kanban-color-value" > ${column.color} </span>
+                                      </div>
+                                      </div>
+                                      </div>
+                                      < div class="princhat-kanban-form-group" >
+                                        <label>Descrição(Opcional) </label>
+                                        < textarea class="princhat-kanban-textarea" id = "column-description" placeholder = "Descreva o propósito desta coluna..." rows = "3" > ${column.description || ''} </textarea>
+                                          </div>
+                                          </div>
+                                          < div class="princhat-kanban-modal-footer" >
+                                            <button class="princhat-kanban-btn princhat-kanban-btn-secondary" data - action="cancel" > Cancelar </button>
+                                              < button class="princhat-kanban-btn princhat-kanban-btn-primary" data - action="save" > Salvar </button>
+                                                </div>
+                                                </div>
+                                                  `;
 
     document.body.appendChild(modal);
 
@@ -11291,18 +11405,18 @@ class WhatsAppUIOverlay {
     modal.className = 'princhat-kanban-modal-overlay';
 
     modal.innerHTML = `
-      <div class="princhat-kanban-edit-modal">
-        <h2>Deletar Coluna</h2>
-        <div class="princhat-kanban-modal-body">
-          <p>Tem certeza que deseja deletar a coluna "${column.name}"?</p>
-          <p style="color: #f59e0b; margin-top: 8px;">Esta ação não pode ser desfeita.</p>
-        </div>
-        <div class="princhat-kanban-modal-footer">
-          <button class="princhat-kanban-btn princhat-kanban-btn-secondary" data-action="cancel">Cancelar</button>
-          <button class="princhat-kanban-btn princhat-kanban-btn-danger" data-action="delete">Deletar</button>
-        </div>
-      </div>
-    `;
+                                                < div class="princhat-kanban-edit-modal" >
+                                                  <h2>Deletar Coluna </h2>
+                                                    < div class="princhat-kanban-modal-body" >
+                                                      <p>Tem certeza que deseja deletar a coluna "${column.name}" ? </p>
+                                                        < p style = "color: #f59e0b; margin-top: 8px;" > Esta ação não pode ser desfeita.</p>
+                                                          </div>
+                                                          < div class="princhat-kanban-modal-footer" >
+                                                            <button class="princhat-kanban-btn princhat-kanban-btn-secondary" data - action="cancel" > Cancelar </button>
+                                                              < button class="princhat-kanban-btn princhat-kanban-btn-danger" data - action="delete" > Deletar </button>
+                                                                </div>
+                                                                </div>
+                                                                  `;
 
     document.body.appendChild(modal);
 
@@ -11340,34 +11454,34 @@ class WhatsAppUIOverlay {
     modal.className = 'princhat-kanban-modal-overlay';
 
     modal.innerHTML = `
-      <div class="princhat-kanban-edit-modal">
-        <h2>Nova Coluna</h2>
-        <div class="princhat-kanban-modal-body">
-          <div class="princhat-kanban-form-group">
-            <label>Nome da Coluna</label>
-            <input type="text" class="princhat-kanban-input" id="new-column-name" placeholder="Ex: Negociação" />
-          </div>
-          <div class="princhat-kanban-form-group">
-            <label>Cor</label>
-            <div class="princhat-kanban-color-picker-wrapper">
-              <input type="color" class="princhat-kanban-color-input" id="new-column-color" value="#3b82f6" />
-              <div class="princhat-kanban-color-preview">
-                <div class="princhat-kanban-color-swatch" style="background-color: #3b82f6;"></div>
-                <span class="princhat-kanban-color-value">#3b82f6</span>
-              </div>
-            </div>
-          </div>
-          <div class="princhat-kanban-form-group">
-            <label>Descrição (Opcional)</label>
-            <textarea class="princhat-kanban-textarea" id="new-column-description" placeholder="Descreva o propósito desta coluna..." rows="3"></textarea>
-          </div>
-        </div>
-        <div class="princhat-kanban-modal-footer">
-          <button class="princhat-kanban-btn princhat-kanban-btn-secondary" data-action="cancel">Cancelar</button>
-          <button class="princhat-kanban-btn princhat-kanban-btn-primary" data-action="create">Criar</button>
-        </div>
-      </div>
-    `;
+                                                                < div class="princhat-kanban-edit-modal" >
+                                                                  <h2>Nova Coluna </h2>
+                                                                    < div class="princhat-kanban-modal-body" >
+                                                                      <div class="princhat-kanban-form-group" >
+                                                                        <label>Nome da Coluna </label>
+                                                                          < input type = "text" class="princhat-kanban-input" id = "new-column-name" placeholder = "Ex: Negociação" />
+                                                                            </div>
+                                                                            < div class="princhat-kanban-form-group" >
+                                                                              <label>Cor </label>
+                                                                              < div class="princhat-kanban-color-picker-wrapper" >
+                                                                                <input type="color" class="princhat-kanban-color-input" id = "new-column-color" value = "#3b82f6" />
+                                                                                  <div class="princhat-kanban-color-preview" >
+                                                                                    <div class="princhat-kanban-color-swatch" style = "background-color: #3b82f6;" > </div>
+                                                                                      < span class="princhat-kanban-color-value" >#3b82f6 </span>
+                                                                                        </div>
+                                                                                        </div>
+                                                                                        </div>
+                                                                                        < div class="princhat-kanban-form-group" >
+                                                                                          <label>Descrição(Opcional) </label>
+                                                                                          < textarea class="princhat-kanban-textarea" id = "new-column-description" placeholder = "Descreva o propósito desta coluna..." rows = "3" > </textarea>
+                                                                                            </div>
+                                                                                            </div>
+                                                                                            < div class="princhat-kanban-modal-footer" >
+                                                                                              <button class="princhat-kanban-btn princhat-kanban-btn-secondary" data - action="cancel" > Cancelar </button>
+                                                                                                < button class="princhat-kanban-btn princhat-kanban-btn-primary" data - action="create" > Criar </button>
+                                                                                                  </div>
+                                                                                                  </div>
+                                                                                                    `;
 
     document.body.appendChild(modal);
 
@@ -11456,6 +11570,10 @@ class WhatsAppUIOverlay {
    * Handle start of navigation: clear artifacts and prepare for switch
    */
   private handleNavigationStart() {
+    // Cleanup global dropdowns
+    document.querySelectorAll('.princhat-kanban-tags-tooltip, .princhat-kanban-card-dropdown').forEach(el => el.remove());
+    document.querySelectorAll('.princhat-kanban-lead-card.active-menu').forEach(c => c.classList.remove('active-menu'));
+
     this.invalidateChatCache();
     this.setButtonsLoadingState(true);
   }
@@ -11477,7 +11595,7 @@ class WhatsAppUIOverlay {
         // If ID is different and valid, WE ARE SYNCED
         // Also if oldId was null and we got a newId, that counts
         if (newId && newId !== oldId) {
-          // console.log(`[PrinChat UI] Chat ID changed: ${oldId} -> ${newId} (Attempt ${attempts})`);
+          // console.log(`[PrinChat UI] Chat ID changed: ${ oldId } -> ${ newId } (Attempt ${ attempts })`);
           resolve(newId);
           return;
         }

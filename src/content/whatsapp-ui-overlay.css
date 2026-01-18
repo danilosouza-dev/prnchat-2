@@ -6246,11 +6246,17 @@ body.princhat-kanban-active div.x1n2onr6>span {
 }
 
 .princhat-kanban-tag {
-  font-size: 10px;
-  font-weight: 600;
-  padding: 3px 8px;
+  color: #161818 !important;
+  /* Dark text to contrast with colored tag */
+  font-size: 12px !important;
+  /* MATCH INLINE STYLE: 12px */
+  font-weight: 700 !important;
+  /* Make it bolder */
+  padding: 2px 8px !important;
+  /* MATCH INLINE STYLE: 2px 8px */
   border-radius: 4px;
-  text-transform: uppercase;
+  text-transform: none !important;
+  /* USER REQ: As written */
   letter-spacing: 0.3px;
   display: inline-flex;
   align-items: center;
@@ -6363,6 +6369,12 @@ body.princhat-kanban-active div.x1n2onr6>span {
   border-radius: 4px;
 }
 
+/* Parent card of an active dropdown - Needs High Z-Index to avoid clipping */
+.princhat-kanban-lead-card.active-menu {
+  z-index: 1000 !important;
+  position: relative !important;
+}
+
 /* Tag overflow counter */
 .princhat-kanban-tag-more {
   font-size: 10px;
@@ -6385,11 +6397,11 @@ body.princhat-kanban-active div.x1n2onr6>span {
 .princhat-kanban-tags-tooltip {
   position: fixed;
   /* Fixed to escape column stacking context */
-  background: #2a2a2a;
+  background: #161818;
   border: 1px solid #3a3a3a;
   border-radius: 6px;
   padding: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
   z-index: 100000;
   /* Very high to appear above everything */
   display: none;
@@ -6419,7 +6431,7 @@ body.princhat-kanban-active div.x1n2onr6>span {
   visibility: visible !important;
 }
 
-/* Dragging element (the item being moved) - Applies to NATIVE drag image in some browsers or falls back to Sortable logic */
+/* Dragging element */
 .princhat-kanban-drag {
   opacity: 1 !important;
   background: #2a2a2a !important;
@@ -6436,10 +6448,10 @@ body.princhat-kanban-active div.x1n2onr6>span {
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
-  background: #1a1a1a !important;
+  background: #161818 !important;
   border: 1px solid #2a2a2a;
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
   z-index: 10000;
   min-width: 200px;
   overflow: hidden;
