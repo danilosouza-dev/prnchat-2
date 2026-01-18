@@ -581,6 +581,19 @@
         }
       });
 
+      // Listen for bulk chat info results
+      document.addEventListener('PrinChatBulkInfoResult', (event: any) => {
+        const { success, data, error, requestId } = event.detail;
+
+        const request = this.pendingRequests.get(requestId);
+        if (request) {
+          const { resolve, reject } = request;
+          this.pendingRequests.delete(requestId);
+          if (success) resolve({ success: true, data });
+          else reject(new Error(error || 'Bulk fetch failed'));
+        }
+      });
+
       // Listen for incoming messages from page script (for triggers)
       document.addEventListener('PrinChatIncomingMessage', async (event: any) => {
         const { messageText, chatId, timestamp } = event.detail;
@@ -1438,6 +1451,9 @@
         case 'GET_ALL_LABELS':
           return await this.getAllLabels();
 
+        case 'GET_BULK_CHAT_INFO':
+          return await this.getBulkChatInfo(action.payload?.chatIds);
+
         case 'SAVE_SCHEDULE':
         case 'GET_SCHEDULES_BY_CHAT':
         case 'DELETE_SCHEDULE':
@@ -2048,6 +2064,33 @@
           detail: { requestId }
         }));
       });
+    }
+
+    async getBulkChatInfo(chatIds: string[]): Promise<any> {
+      try {
+        if (!chatIds || chatIds.length === 0) return { success: true, data: {} };
+        const isPageScriptLoaded = document.getElementById('princhat-marker');
+        if (!isPageScriptLoaded) await this.injectScripts();
+
+        const requestId = `req_bulk_${Date.now()}_${Math.random()}`;
+        const promise = new Promise<any>((resolve, reject) => {
+          this.pendingRequests.set(requestId, { resolve, reject });
+          setTimeout(() => {
+            if (this.pendingRequests.has(requestId)) {
+              this.pendingRequests.delete(requestId);
+              reject(new Error('Timeout: Bulk chat info fetch'));
+            }
+          }, 60000); // 60s timeout for bulk
+        });
+
+        document.dispatchEvent(new CustomEvent('PrinChatGetBulkChatInfo', {
+          detail: { chatIds, requestId }
+        }));
+
+        return await promise;
+      } catch (error: any) {
+        return { success: false, error: error.message };
+      }
     }
 
     async getChatInfo(chatId: string): Promise<any> {
