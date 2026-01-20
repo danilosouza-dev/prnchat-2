@@ -10089,7 +10089,69 @@ class WhatsAppUIOverlay {
     if (this.areKanbanListenersSetup) return;
     this.areKanbanListenersSetup = true;
 
-    // Listen for lead updates
+    // Listen for incoming messages directly (Optimistic UI Update)
+    document.addEventListener('PrinChatIncomingMessage', (event: any) => {
+      if (!this.isKanbanOpen) return;
+
+      const { messageText, chatId, timestamp } = event.detail;
+      console.log('[PrinChat UI] 📨 Incoming message (Optimistic):', chatId);
+
+      // 1. Find card (Try multiple ID formats for Standard/Business compatibility)
+      let card = this.kanbanOverlay?.querySelector(`.princhat-kanban-lead-card[data-lead-id="${chatId}"]`);
+
+      if (!card) {
+        // Try alternate formats
+        const rawId = chatId.replace(/@c\.us|@lid|@g\.us/g, '');
+        card = this.kanbanOverlay?.querySelector(`.princhat-kanban-lead-card[data-lead-id="${rawId}@c.us"]`) ||
+          this.kanbanOverlay?.querySelector(`.princhat-kanban-lead-card[data-lead-id="${rawId}"]`) ||
+          this.kanbanOverlay?.querySelector(`.princhat-kanban-lead-card[data-lead-id^="${rawId}"]`);
+      }
+
+      if (card) {
+        // 2. Move to top of its column (Recentes logic usually, or just visual bump)
+        // Ideally should check if column is sorted by time, but for now just bump visually
+        const columnBody = card.closest('.princhat-kanban-column-body');
+        if (columnBody) {
+          columnBody.prepend(card);
+        }
+
+        // 3. Update preview text
+        const previewEl = card.querySelector('.princhat-kanban-lead-preview');
+        if (previewEl) {
+          previewEl.textContent = messageText.length > 50 ? messageText.substring(0, 50) + '...' : messageText;
+        }
+
+        // 4. Update time
+        const timeEl = card.querySelector('.princhat-kanban-lead-time');
+        if (timeEl) {
+          timeEl.textContent = new Date(timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        // 5. Increment unread count
+        const timeBadgeEl = card.querySelector('.princhat-kanban-lead-time-badge');
+        if (timeBadgeEl) {
+          let badge = timeBadgeEl.querySelector('.princhat-kanban-lead-unread');
+          let count = 0;
+          if (badge) {
+            const current = parseInt(badge.textContent || '0');
+            count = isNaN(current) ? 9 : current; // 9+ case simplified
+          } else {
+            badge = document.createElement('span');
+            badge.className = 'princhat-kanban-lead-unread';
+            timeBadgeEl.appendChild(badge);
+          }
+          count++;
+          badge.textContent = count > 9 ? '9+' : String(count);
+          if (count > 9) badge.setAttribute('data-count', '9+');
+        }
+
+        // 6. Highlight animation
+        card.classList.add('princhat-kanban-card-updated');
+        setTimeout(() => card.classList.remove('princhat-kanban-card-updated'), 300);
+      }
+    });
+
+    // Listen for lead updates (Database confirmed updates)
     document.addEventListener('PrinChatKanbanLeadUpdated', (event: any) => {
       if (!this.isKanbanOpen) return;
 
@@ -10198,7 +10260,7 @@ class WhatsAppUIOverlay {
    */
   private closeKanbanOverlay() {
     // Cleanup global dropdowns/tooltips immediately
-    document.querySelectorAll('.princhat-kanban-tags-tooltip, .princhat-kanban-card-dropdown').forEach(el => el.remove());
+    document.querySelectorAll('.princhat-kanban-tags-tooltip, .princhat-kanban-card-dropdown, .princhat-kanban-description-tooltip, .princhat-kanban-modal-overlay, .princhat-kanban-column-menu').forEach(el => el.remove());
     document.querySelectorAll('.princhat-kanban-lead-card.active-menu').forEach(c => c.classList.remove('active-menu'));
 
     if (this.kanbanOverlay) {
@@ -11216,35 +11278,35 @@ class WhatsAppUIOverlay {
     menu.className = 'princhat-kanban-column-menu';
 
     const editOption = column.canEdit ? `
-              < button class="princhat-kanban-menu-item" data - action="edit" >
-                <svg width="16" height = "16" viewBox = "0 0 24 24" fill = "none" stroke = "currentColor" stroke - width="2" >
-                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                      </svg>
+      <button class="princhat-kanban-menu-item" data-action="edit">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+        </svg>
         Editar coluna
-              </button>
-                ` : '';
+      </button>
+    ` : '';
 
     const deleteOption = column.canDelete ? `
-              < button class="princhat-kanban-menu-item princhat-kanban-menu-item-danger" data - action="delete" >
-                <svg width="16" height = "16" viewBox = "0 0 24 24" fill = "none" stroke = "currentColor" stroke - width="2" >
-                  <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                    </svg>
+      <button class="princhat-kanban-menu-item princhat-kanban-menu-item-danger" data-action="delete">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+        </svg>
         Deletar coluna
-              </button>
-                ` : '';
+      </button>
+    ` : '';
 
     menu.innerHTML = `
       ${editOption}
       ${deleteOption}
       ${!editOption && !deleteOption ? '<p style="padding: 8px 12px; color: #94a3b8;">Coluna padrão não editável</p>' : ''}
-            `;
+    `;
 
     // Position menu
     const rect = button.getBoundingClientRect();
     menu.style.position = 'fixed';
-    menu.style.top = `${rect.bottom + 4} px`;
-    menu.style.left = `${rect.left - 150} px`; // Align to right of button
+    menu.style.top = `${rect.bottom + 4}px`;
+    menu.style.left = `${rect.left - 150}px`; // Align to right of button
 
     document.body.appendChild(menu);
 
@@ -11290,8 +11352,8 @@ class WhatsAppUIOverlay {
     document.body.appendChild(tooltip);
 
     const buttonRect = button.getBoundingClientRect();
-    tooltip.style.top = `${buttonRect.bottom + 8} px`;
-    tooltip.style.left = `${buttonRect.left + (buttonRect.width / 2)} px`;
+    tooltip.style.top = `${buttonRect.bottom + 8}px`;
+    tooltip.style.left = `${buttonRect.left + (buttonRect.width / 2)}px`;
     tooltip.style.transform = 'translateX(-50%)';
 
     // Close tooltip when clicking outside
@@ -11316,34 +11378,34 @@ class WhatsAppUIOverlay {
     modal.className = 'princhat-kanban-modal-overlay';
 
     modal.innerHTML = `
-              < div class="princhat-kanban-edit-modal" >
-                <h2>Editar Coluna </h2>
-                  < div class="princhat-kanban-modal-body" >
-                    <div class="princhat-kanban-form-group" >
-                      <label>Nome da Coluna </label>
-                        < input type = "text" class="princhat-kanban-input" id = "column-name" value = "${column.name}" />
-                          </div>
-                          < div class="princhat-kanban-form-group" >
-                            <label>Cor </label>
-                            < div class="princhat-kanban-color-picker-wrapper" >
-                              <input type="color" class="princhat-kanban-color-input" id = "column-color" value = "${column.color}" />
-                                <div class="princhat-kanban-color-preview" >
-                                  <div class="princhat-kanban-color-swatch" style = "background-color: ${column.color};" > </div>
-                                    < span class="princhat-kanban-color-value" > ${column.color} </span>
-                                      </div>
-                                      </div>
-                                      </div>
-                                      < div class="princhat-kanban-form-group" >
-                                        <label>Descrição(Opcional) </label>
-                                        < textarea class="princhat-kanban-textarea" id = "column-description" placeholder = "Descreva o propósito desta coluna..." rows = "3" > ${column.description || ''} </textarea>
-                                          </div>
-                                          </div>
-                                          < div class="princhat-kanban-modal-footer" >
-                                            <button class="princhat-kanban-btn princhat-kanban-btn-secondary" data - action="cancel" > Cancelar </button>
-                                              < button class="princhat-kanban-btn princhat-kanban-btn-primary" data - action="save" > Salvar </button>
-                                                </div>
-                                                </div>
-                                                  `;
+      <div class="princhat-kanban-edit-modal">
+        <h2>Editar Coluna</h2>
+        <div class="princhat-kanban-modal-body">
+          <div class="princhat-kanban-form-group">
+            <label>Nome da Coluna</label>
+            <input type="text" class="princhat-kanban-input" id="column-name" value="${column.name}" />
+          </div>
+          <div class="princhat-kanban-form-group">
+            <label>Cor</label>
+            <div class="princhat-kanban-color-picker-wrapper">
+              <input type="color" class="princhat-kanban-color-input" id="column-color" value="${column.color}" />
+              <div class="princhat-kanban-color-preview">
+                <div class="princhat-kanban-color-swatch" style="background-color: ${column.color};"></div>
+                <span class="princhat-kanban-color-value">${column.color}</span>
+              </div>
+            </div>
+          </div>
+          <div class="princhat-kanban-form-group">
+            <label>Descrição (Opcional)</label>
+            <textarea class="princhat-kanban-textarea" id="column-description" placeholder="Descreva o propósito desta coluna..." rows="3">${column.description || ''}</textarea>
+          </div>
+        </div>
+        <div class="princhat-kanban-modal-footer">
+          <button class="princhat-kanban-btn princhat-kanban-btn-secondary" data-action="cancel">Cancelar</button>
+          <button class="princhat-kanban-btn princhat-kanban-btn-primary" data-action="save">Salvar</button>
+        </div>
+      </div>
+    `;
 
     document.body.appendChild(modal);
 
@@ -11405,18 +11467,18 @@ class WhatsAppUIOverlay {
     modal.className = 'princhat-kanban-modal-overlay';
 
     modal.innerHTML = `
-                                                < div class="princhat-kanban-edit-modal" >
-                                                  <h2>Deletar Coluna </h2>
-                                                    < div class="princhat-kanban-modal-body" >
-                                                      <p>Tem certeza que deseja deletar a coluna "${column.name}" ? </p>
-                                                        < p style = "color: #f59e0b; margin-top: 8px;" > Esta ação não pode ser desfeita.</p>
-                                                          </div>
-                                                          < div class="princhat-kanban-modal-footer" >
-                                                            <button class="princhat-kanban-btn princhat-kanban-btn-secondary" data - action="cancel" > Cancelar </button>
-                                                              < button class="princhat-kanban-btn princhat-kanban-btn-danger" data - action="delete" > Deletar </button>
-                                                                </div>
-                                                                </div>
-                                                                  `;
+      <div class="princhat-kanban-edit-modal">
+        <h2>Deletar Coluna</h2>
+        <div class="princhat-kanban-modal-body">
+          <p>Tem certeza que deseja deletar a coluna "${column.name}"?</p>
+          <p style="color: #f59e0b; margin-top: 8px;">Esta ação não pode ser desfeita.</p>
+        </div>
+        <div class="princhat-kanban-modal-footer">
+          <button class="princhat-kanban-btn princhat-kanban-btn-secondary" data-action="cancel">Cancelar</button>
+          <button class="princhat-kanban-btn princhat-kanban-btn-danger" data-action="delete">Deletar</button>
+        </div>
+      </div>
+    `;
 
     document.body.appendChild(modal);
 
@@ -11454,34 +11516,34 @@ class WhatsAppUIOverlay {
     modal.className = 'princhat-kanban-modal-overlay';
 
     modal.innerHTML = `
-                                                                < div class="princhat-kanban-edit-modal" >
-                                                                  <h2>Nova Coluna </h2>
-                                                                    < div class="princhat-kanban-modal-body" >
-                                                                      <div class="princhat-kanban-form-group" >
-                                                                        <label>Nome da Coluna </label>
-                                                                          < input type = "text" class="princhat-kanban-input" id = "new-column-name" placeholder = "Ex: Negociação" />
-                                                                            </div>
-                                                                            < div class="princhat-kanban-form-group" >
-                                                                              <label>Cor </label>
-                                                                              < div class="princhat-kanban-color-picker-wrapper" >
-                                                                                <input type="color" class="princhat-kanban-color-input" id = "new-column-color" value = "#3b82f6" />
-                                                                                  <div class="princhat-kanban-color-preview" >
-                                                                                    <div class="princhat-kanban-color-swatch" style = "background-color: #3b82f6;" > </div>
-                                                                                      < span class="princhat-kanban-color-value" >#3b82f6 </span>
-                                                                                        </div>
-                                                                                        </div>
-                                                                                        </div>
-                                                                                        < div class="princhat-kanban-form-group" >
-                                                                                          <label>Descrição(Opcional) </label>
-                                                                                          < textarea class="princhat-kanban-textarea" id = "new-column-description" placeholder = "Descreva o propósito desta coluna..." rows = "3" > </textarea>
-                                                                                            </div>
-                                                                                            </div>
-                                                                                            < div class="princhat-kanban-modal-footer" >
-                                                                                              <button class="princhat-kanban-btn princhat-kanban-btn-secondary" data - action="cancel" > Cancelar </button>
-                                                                                                < button class="princhat-kanban-btn princhat-kanban-btn-primary" data - action="create" > Criar </button>
-                                                                                                  </div>
-                                                                                                  </div>
-                                                                                                    `;
+      <div class="princhat-kanban-edit-modal">
+        <h2>Nova Coluna</h2>
+        <div class="princhat-kanban-modal-body">
+          <div class="princhat-kanban-form-group">
+            <label>Nome da Coluna</label>
+            <input type="text" class="princhat-kanban-input" id="new-column-name" placeholder="Ex: Negociação" />
+          </div>
+          <div class="princhat-kanban-form-group">
+            <label>Cor</label>
+            <div class="princhat-kanban-color-picker-wrapper">
+              <input type="color" class="princhat-kanban-color-input" id="new-column-color" value="#3b82f6" />
+              <div class="princhat-kanban-color-preview">
+                <div class="princhat-kanban-color-swatch" style="background-color: #3b82f6;"></div>
+                <span class="princhat-kanban-color-value">#3b82f6</span>
+              </div>
+            </div>
+          </div>
+          <div class="princhat-kanban-form-group">
+            <label>Descrição (Opcional)</label>
+            <textarea class="princhat-kanban-textarea" id="new-column-description" placeholder="Descreva o propósito desta coluna..." rows="3"></textarea>
+          </div>
+        </div>
+        <div class="princhat-kanban-modal-footer">
+          <button class="princhat-kanban-btn princhat-kanban-btn-secondary" data-action="cancel">Cancelar</button>
+          <button class="princhat-kanban-btn princhat-kanban-btn-primary" data-action="create">Criar</button>
+        </div>
+      </div>
+    `;
 
     document.body.appendChild(modal);
 

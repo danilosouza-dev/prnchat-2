@@ -642,7 +642,8 @@
               const updates: any = {
                 lastMessage: messageText,
                 lastMessageTime: timestamp || Date.now(),
-                unreadCount: (existingLead.unreadCount || 0) + 1
+                unreadCount: (existingLead.unreadCount || 0) + 1,
+                order: -Date.now() // TRICK: Use negative timestamp to always force to top (smallest number)
               };
 
               if (chatInfo.success && chatInfo.data) {
@@ -655,7 +656,7 @@
               await chrome.runtime.sendMessage({
                 type: 'UPDATE_KANBAN_LEAD',
                 payload: {
-                  id: existingLead.id,
+                  leadId: existingLead.id,
                   updates: updates
                 }
               });

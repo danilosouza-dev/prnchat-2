@@ -476,7 +476,12 @@ class BackgroundService {
             console.log('[Background] Lead updated:', leadId);
             sendResponse({ success: true });
           } catch (error: any) {
-            console.error('[Background] Error updating Kanban lead:', error);
+            console.error('[Background] Error updating Kanban lead:',
+              error?.name,
+              error?.message,
+              error?.code,
+              'Payload:', JSON.stringify(message.payload)
+            );
             sendResponse({ success: false, error: error.message });
           }
         })();
