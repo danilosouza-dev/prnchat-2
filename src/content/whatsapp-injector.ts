@@ -33,7 +33,8 @@
 
   // Selectors for WhatsApp Web
   const SELECTORS = {
-    chatContainer: '#main'
+    chatContainer: '#main',
+    side: '#side'
   };
 
   // Script Executor class
@@ -1215,8 +1216,10 @@
       return new Promise((resolve) => {
         const check = () => {
           const chatContainer = document.querySelector(SELECTORS.chatContainer);
-          if (chatContainer) {
-            console.log('[PrinChat] WhatsApp container found');
+          const side = document.querySelector(SELECTORS.side);
+
+          if (chatContainer || side) {
+            console.log('[PrinChat] WhatsApp container found:', chatContainer ? '#main' : '#side');
             resolve();
           } else {
             setTimeout(check, 500);
