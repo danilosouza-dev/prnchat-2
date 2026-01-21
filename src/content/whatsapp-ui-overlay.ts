@@ -214,6 +214,15 @@ class WhatsAppUIOverlay {
       // User is authenticated - continue with full initialization
       console.log('[PrinChat UI] ✅ Authenticated - initializing full features');
 
+      // FINAL BACKUP: If header is missing after 2 seconds, force inject it again
+      // This catches cases where createCustomHeader logic failed but didn't crash
+      setTimeout(() => {
+        if (!document.querySelector('.princhat-custom-header')) {
+          console.warn('[PrinChat UI] ⚠️ Header missing in backup check - FORCE INJECTING');
+          this.createCustomHeader();
+        }
+      }, 2000);
+
       // Load data
       console.log('[PrinChat UI] Step 4: Loading scripts and messages...');
       await this.loadData();
@@ -8588,16 +8597,32 @@ class WhatsAppUIOverlay {
   private async checkAuthViaContentScript(): Promise<boolean> {
     return new Promise((resolve) => {
       const requestId = `auth-check-${Date.now()}`;
+      let timeoutId: any;
 
       const responseHandler = (event: Event) => {
         const customEvent = event as CustomEvent;
         if (customEvent.detail?.requestId === requestId) {
+          clearTimeout(timeoutId);
           document.removeEventListener('PrinChatAuthCheckResponse', responseHandler);
           resolve(customEvent.detail?.isAuthenticated === true);
         }
       };
 
       document.addEventListener('PrinChatAuthCheckResponse', responseHandler);
+
+      // Timeout safety - resolve false if no response after 3s
+      timeoutId = setTimeout(() => {
+        console.warn('[PrinChat UI] Auth check timed out - assuming not authenticated');
+        document.removeEventListener('PrinChatAuthCheckResponse', responseHandler);
+        // Default to TRUE if timeout occurs but we are stuck, 
+        // to verify if this unblocks the UI. 
+        // If it was false, the login header would show anyway. 
+        // But let's stick to 'false' to be safe, or 'true' to force UI?
+        // Let's go with FALSE as safer default, BUT if user is actually logged in
+        // and just the check failed, they see login button.
+        // Better than nothing showing up.
+        resolve(false);
+      }, 3000);
 
       const evt = new CustomEvent('PrinChatAuthCheckRequest', {
         bubbles: true,
@@ -8665,15 +8690,19 @@ class WhatsAppUIOverlay {
   }
 
   private async createCustomHeader() {
+    console.log('[PrinChat UI] 🟢 createCustomHeader called');
     console.log('[PrinChat UI] Creating custom header...');
 
     // 1. Create and inject header skeleton immediately
     if (!this.customHeader) {
+      console.log('[PrinChat UI] 🟢 Creating header skeleton');
       this.customHeader = document.createElement('div');
       this.customHeader.className = 'princhat-custom-header';
       // Simple skeleton loader
       this.customHeader.innerHTML = '<div style="display:flex;align-items:center;height:100%;padding:0 20px;"><div style="width:120px;height:30px;background:rgba(255,255,255,0.1);border-radius:4px;"></div></div>';
       this.ensureHeaderInjected();
+    } else {
+      console.log('[PrinChat UI] 🟢 Header skeleton already exists');
     }
 
     // Check authentication via content script
