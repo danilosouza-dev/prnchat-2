@@ -116,7 +116,7 @@ class WhatsAppFAB {
     this.fab.style.position = 'fixed';
     this.fab.style.left = savedPosition.left;
     this.fab.style.top = savedPosition.top;
-    this.fab.style.zIndex = '999999';
+    this.fab.style.zIndex = '2147483646';
 
     // Set initial visibility based on settings (read from marker data attributes)
     // marker is already defined above
@@ -217,7 +217,7 @@ class WhatsAppFAB {
     this.popup.style.position = 'fixed';
     this.popup.style.left = `${left}px`;
     this.popup.style.top = `${top}px`;
-    this.popup.style.zIndex = '999998';
+    this.popup.style.zIndex = '2147483645';
   }
 
   private handleClick(e: MouseEvent) {
