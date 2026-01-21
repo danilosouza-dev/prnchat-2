@@ -1883,8 +1883,84 @@
 
 
 
+
+
   }).catch(() => {
     // Initialization failed silently
+  });
+
+  // Listen for UI requests from Overlay (GET_ACTIVE_CHAT, etc)
+  // MOVED OUTSIDE waitForStore to ensure it's always listening
+  document.addEventListener('PrinChatUIRequest', async (event: any) => {
+    const { requestId, message } = event.detail;
+
+    // Only handle requests that require Store access (Page Context)
+    if (message.type === 'GET_ACTIVE_CHAT' || message.type === 'GET_CHAT_INFO' || message.type === 'GET_CHAT_PHOTO') {
+      let response: any = { success: false, error: 'Unknown request type' };
+
+      try {
+        const Store = (window as any).Store;
+
+        // Check if Store is available
+        if (!Store || !Store.Chat) {
+          // Provide a more specific error so UI knows it's a readiness issue
+          throw new Error('Store not ready');
+        }
+
+        if (message.type === 'GET_ACTIVE_CHAT') {
+          const chat = Store.Chat.getActive();
+          if (chat) {
+            response = {
+              success: true,
+              data: {
+                chatId: chat.id._serialized || chat.id,
+                name: chat.name || chat.formattedTitle,
+                isGroup: chat.isGroup,
+                chatPhoto: chat.contact?.profilePicThumbObj?.eurl
+              }
+            };
+          } else {
+            response = { success: false, error: 'No active chat' };
+          }
+        } else if (message.type === 'GET_CHAT_PHOTO') {
+          const chatId = message.payload.chatId;
+          const chat = await Store.Chat.find(chatId);
+          if (chat) {
+            response = {
+              success: true,
+              data: {
+                chatPhoto: chat.contact?.profilePicThumbObj?.eurl
+              }
+            };
+          } else {
+            response = { success: false, error: 'Chat not found' };
+          }
+        } else if (message.type === 'GET_CHAT_INFO') {
+          const chatId = message.payload.chatId;
+          const chat = await Store.Chat.find(chatId);
+          if (chat) {
+            response = {
+              success: true,
+              data: {
+                chatName: chat.name || chat.formattedTitle,
+                chatPhoto: chat.contact?.profilePicThumbObj?.eurl,
+                isGroup: chat.isGroup,
+                tags: chat.labels || []
+              }
+            };
+          } else {
+            response = { success: false, error: 'Chat not found' };
+          }
+        }
+
+      } catch (e: any) {
+        response = { success: false, error: e.message };
+      }
+
+      document.dispatchEvent(new CustomEvent('PrinChatUIResponse', {
+        detail: { requestId, response }
+      }));
+    }
   });
 
 })();
