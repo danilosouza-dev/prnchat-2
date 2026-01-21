@@ -8,7 +8,7 @@ export default function LoginScreen() {
 
         // Obter URL da página de callback da extensão
         const callbackUrl = chrome.runtime.getURL('callback.html');
-        const loginUrl = `http://localhost:3001/auth/login?callbackUrl=${encodeURIComponent(callbackUrl)}`;
+        const loginUrl = `http://localhost:3000/auth/login?callbackUrl=${encodeURIComponent(callbackUrl)}`;
 
         // Abrir página de login e monitorar a aba
         chrome.tabs.create({ url: loginUrl }, (tab) => {

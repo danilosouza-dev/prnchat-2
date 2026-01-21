@@ -3,6 +3,18 @@
 
 /* Custom Header - Integrated above WhatsApp interface */
 /* Robust Header Positioning */
+@keyframes princhatHeaderSlideDown {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
 .princhat-custom-header {
   position: fixed !important;
   top: 0;
@@ -17,10 +29,11 @@
   padding: 0 20px;
   /* FIX: Box-sizing ensures padding is included in width */
   box-sizing: border-box !important;
-  /* FIX: Max Z-Index to ensure it's ALWAYS on top of everything (splash screen, alerts) */
-  z-index: 2147483647 !important;
+  /* FIX: High Z-Index but allow popups above it */
+  z-index: 2147483640 !important;
   flex-shrink: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, sans-serif;
+  animation: princhatHeaderSlideDown 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 /* Make #app adjust to header height safely */
@@ -330,7 +343,8 @@ body.princhat-header-active #app {
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   overflow: visible;
-  z-index: 10001;
+  /* Ensure it's above the header (2147483640) */
+  z-index: 2147483645 !important;
 }
 
 .princhat-direct-chat-header {
@@ -2408,7 +2422,8 @@ button.princhat-script-btn-icon[data-action="delete"] {
   border: 1px solid #3a3a3a;
   border-radius: 12px;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
-  z-index: 10001;
+  /* Ensure it's above the header (2147483640) */
+  z-index: 2147483645 !important;
   /* Above almost everything */
   display: flex;
   flex-direction: column;
