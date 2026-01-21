@@ -1,13 +1,25 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 export default function LoginScreen() {
     const [loading, setLoading] = useState(false);
+    const navigate = useNavigate();
+
+    // Check if already authenticated (redirect if user manually lands here)
+    useEffect(() => {
+        chrome.storage.sync.get(['auth_session'], (result) => {
+            if (result.auth_session?.isAuthenticated) {
+                navigate('/dashboard');
+            }
+        });
+    }, [navigate]);
 
     const handleLogin = () => {
         setLoading(true);
 
         // Obter URL da página de callback da extensão
         const callbackUrl = chrome.runtime.getURL('callback.html');
+        // TODO: Change to production URL when deploying
         const loginUrl = `http://localhost:3000/auth/login?callbackUrl=${encodeURIComponent(callbackUrl)}`;
 
         // Abrir página de login e monitorar a aba
@@ -37,6 +49,9 @@ export default function LoginScreen() {
                             // Remover listener
                             chrome.tabs.onUpdated.removeListener(listener);
                             setLoading(false);
+
+                            // Navigate to dashboard
+                            navigate('/dashboard');
 
                             // Abrir ou focar WhatsApp Web
                             chrome.tabs.query({ url: 'https://web.whatsapp.com/*' }, (tabs) => {
