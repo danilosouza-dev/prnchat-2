@@ -178,6 +178,7 @@ class WhatsAppUIOverlay {
 
 
   constructor() {
+    console.log(`[PrinChat UI] 🏁 VERSION CHECK: ${new Date().toISOString()}`);
     console.log(`[PrinChat UI] 🏁 Constructor called. Instance ID: ${this.instanceId}`);
     console.log(`[PrinChat UI] 📍 Location: ${window.location.href}`);
     console.log(`[PrinChat UI] 🖼️ Window Top? ${window.self === window.top}`);
@@ -193,30 +194,45 @@ class WhatsAppUIOverlay {
       await this.waitForWhatsApp();
       console.log('[PrinChat UI] ✓ WhatsApp loaded');
 
+      // Check authentication FIRST - block everything if not authenticated
+      console.log('[PrinChat UI] Step 2: Checking authentication...');
+      const isAuthenticated = await this.checkAuthViaContentScript();
+      console.log('[PrinChat UI] Auth status:', isAuthenticated);
+
+      // Create header (shows login button if not authenticated)
+      console.log('[PrinChat UI] Step 3: Creating custom header...');
+      await this.createCustomHeader();
+      console.log('[PrinChat UI] ✓ Custom header created');
+
+      // If not authenticated, stop here - don't initialize any features
+      if (!isAuthenticated) {
+        console.log('[PrinChat UI] ⚠️ Not authenticated - blocking all features');
+        console.log('[PrinChat UI] ✓ Login-only mode initialized');
+        return; // EXIT - no other features should load
+      }
+
+      // User is authenticated - continue with full initialization
+      console.log('[PrinChat UI] ✅ Authenticated - initializing full features');
+
       // Load data
-      console.log('[PrinChat UI] Step 2: Loading scripts and messages...');
+      console.log('[PrinChat UI] Step 4: Loading scripts and messages...');
       await this.loadData();
       console.log('[PrinChat UI] ✓ Data loaded');
-
-      // Create UI components
-      console.log('[PrinChat UI] Step 3: Creating custom header...');
-      this.createCustomHeader();
-      console.log('[PrinChat UI] ✓ Custom header created');
 
       // Update badge counts on load
       this.updateGlobalNotesBadge();
       this.updateGlobalSchedulesBadge();
 
-      console.log('[PrinChat UI] Step 4: Creating shortcut bar...');
+      console.log('[PrinChat UI] Step 5: Creating shortcut bar...');
       this.createShortcutBar();
       console.log('[PrinChat UI] ✓ Shortcut bar created');
 
-      console.log('[PrinChat UI] Step 5: Creating tooltip...');
+      console.log('[PrinChat UI] Step 6: Creating tooltip...');
       this.createTooltip();
       console.log('[PrinChat UI] ✓ Tooltip created');
 
       // Monitor chat changes
-      console.log('[PrinChat UI] Step 6: Setting up chat monitor...');
+      console.log('[PrinChat UI] Step 7: Setting up chat monitor...');
       this.monitorChatChanges();
 
       // Setup navigation detection
@@ -295,26 +311,26 @@ class WhatsAppUIOverlay {
   }
 
   private async waitForWhatsApp(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      let attempts = 0;
-      const maxAttempts = 60; // 30 seconds (60 * 500ms)
+    console.log('[PrinChat UI] waitForWhatsApp - readyState:', document.readyState);
+    // WhatsApp Web is a SPA - body is always available when we inject
+    // No need to wait for specific elements
+    if (document.body) {
+      console.log('[PrinChat UI] Body exists, resolving immediately');
+      return Promise.resolve();
+    }
 
-      const checkInterval = setInterval(() => {
-        attempts++;
-        const main = document.querySelector('#main');
-
-        console.log(`[PrinChat UI] Checking for WhatsApp #main (attempt ${attempts}/${maxAttempts})...`);
-
-        if (main) {
-          console.log('[PrinChat UI] Found #main element');
-          clearInterval(checkInterval);
+    // Fallback: wait for body (should never happen)
+    console.log('[PrinChat UI] Waiting for body...');
+    return new Promise((resolve) => {
+      const check = () => {
+        if (document.body) {
+          console.log('[PrinChat UI] Body found, resolving');
           resolve();
-        } else if (attempts >= maxAttempts) {
-          console.error('[PrinChat UI] Timeout: #main element not found after 30 seconds');
-          clearInterval(checkInterval);
-          reject(new Error('WhatsApp #main element not found'));
+        } else {
+          setTimeout(check, 50);
         }
-      }, 500);
+      };
+      check();
     });
   }
 
@@ -2959,8 +2975,17 @@ class WhatsAppUIOverlay {
         label: 'Sair',
         icon: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>`,
         action: () => {
-          console.log('[PrinChat UI] Sair clicked');
-          // TODO: Implement logout action
+          console.log('[PrinChat UI] Sair clicked - logging out');
+          dropdown.remove();
+          button.classList.remove('active');
+          this.profileDropdown = null;
+          // Dispatch logout event to content script
+          const event = new CustomEvent('PRINCHAT_LOGOUT', { bubbles: true });
+          document.dispatchEvent(event);
+          // Reload after a short delay to allow storage clear
+          setTimeout(() => {
+            location.reload();
+          }, 500);
         }
       }
     ];
@@ -8535,19 +8560,141 @@ class WhatsAppUIOverlay {
     }
   }
 
-  private createCustomHeader() {
-    console.log('[PrinChat UI] Creating custom header...');
+  /**
+   * Helper to ensure header is injected into DOM immediately
+   */
+  private ensureHeaderInjected() {
+    if (!this.customHeader) return;
 
-    // Remove existing header if any
-    const existing = document.querySelector('.princhat-custom-header');
-    if (existing) {
-      console.log('[PrinChat UI] Removing existing custom header');
-      existing.remove();
+    // Inject if missing
+    if (!document.body.contains(this.customHeader)) {
+      console.log('[PrinChat UI] Injecting header securely into body');
+      document.body.insertBefore(this.customHeader, document.body.firstChild);
+      document.body.classList.add('princhat-header-active');
     }
 
-    // Create header container
-    this.customHeader = document.createElement('div');
+    // Force CSS styles inline to prevent override
+    this.customHeader.style.position = 'fixed';
+    this.customHeader.style.top = '0';
+    this.customHeader.style.left = '0';
+    this.customHeader.style.width = '100%';
+    this.customHeader.style.zIndex = '2147483647';
+    this.customHeader.style.boxSizing = 'border-box';
+  }
+
+  /**
+   * Check authentication via content script
+   */
+  private async checkAuthViaContentScript(): Promise<boolean> {
+    return new Promise((resolve) => {
+      const requestId = `auth-check-${Date.now()}`;
+
+      const responseHandler = (event: Event) => {
+        const customEvent = event as CustomEvent;
+        if (customEvent.detail?.requestId === requestId) {
+          document.removeEventListener('PrinChatAuthCheckResponse', responseHandler);
+          resolve(customEvent.detail?.isAuthenticated === true);
+        }
+      };
+
+      document.addEventListener('PrinChatAuthCheckResponse', responseHandler);
+
+      const evt = new CustomEvent('PrinChatAuthCheckRequest', {
+        bubbles: true,
+        detail: { requestId }
+      });
+      document.dispatchEvent(evt);
+
+      setTimeout(() => {
+        document.removeEventListener('PrinChatAuthCheckResponse', responseHandler);
+        resolve(false);
+      }, 2000);
+    });
+  }
+
+  /**
+   * Create login-only header
+   */
+  private createLoginHeader() {
+    console.log('[PrinChat UI] Creating login-only header...');
+
+    if (!this.customHeader) {
+      this.customHeader = document.createElement('div');
+    } else {
+      this.customHeader.innerHTML = '';
+    }
+    this.customHeader.className = 'princhat-custom-header princhat-login-header';
+
+    const leftSection = document.createElement('div');
+    leftSection.className = 'princhat-header-left';
+
+    const marker = document.getElementById('PrinChatInjected');
+    const logoUrl = marker?.getAttribute('data-logo-url');
+
+    if (logoUrl) {
+      const logo = document.createElement('img');
+      logo.className = 'princhat-header-logo';
+      logo.src = logoUrl;
+      logo.alt = 'PrinChat';
+      leftSection.appendChild(logo);
+    }
+
+    const rightSection = document.createElement('div');
+    rightSection.className = 'princhat-header-right';
+
+    const loginBtn = document.createElement('button');
+    loginBtn.className = 'princhat-header-login-btn';
+    loginBtn.innerHTML = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+        <polyline points="10 17 15 12 10 7"/>
+        <line x1="15" x2="3" y1="12" y2="12"/>
+      </svg>
+      <span>Entrar</span>
+    `;
+    loginBtn.addEventListener('click', () => {
+      const event = new CustomEvent('PRINCHAT_OPEN_OPTIONS', { bubbles: true });
+      document.dispatchEvent(event);
+    });
+
+    rightSection.appendChild(loginBtn);
+    this.customHeader.appendChild(leftSection);
+    this.customHeader.appendChild(rightSection);
+
+    this.ensureHeaderInjected();
+  }
+
+  private async createCustomHeader() {
+    console.log('[PrinChat UI] Creating custom header...');
+
+    // 1. Create and inject header skeleton immediately
+    if (!this.customHeader) {
+      this.customHeader = document.createElement('div');
+      this.customHeader.className = 'princhat-custom-header';
+      // Simple skeleton loader
+      this.customHeader.innerHTML = '<div style="display:flex;align-items:center;height:100%;padding:0 20px;"><div style="width:120px;height:30px;background:rgba(255,255,255,0.1);border-radius:4px;"></div></div>';
+      this.ensureHeaderInjected();
+    }
+
+    // Check authentication via content script
+    const isAuthenticated = await this.checkAuthViaContentScript();
+    console.log('[PrinChat UI] Auth status:', isAuthenticated);
+
+    // Prepare container for content
+    if (this.customHeader) {
+      this.customHeader.innerHTML = '';
+    } else {
+      this.customHeader = document.createElement('div');
+    }
     this.customHeader.className = 'princhat-custom-header';
+
+    // If not authenticated, show login-only header
+    if (!isAuthenticated) {
+      this.createLoginHeader();
+      return;
+    }
+
+    // Otherwise, create full header
 
     // Left section with logo
     const leftSection = document.createElement('div');
@@ -8830,19 +8977,35 @@ class WhatsAppUIOverlay {
     this.customHeader.appendChild(leftSection);
     this.customHeader.appendChild(rightSection);
 
-    // Find WhatsApp #app container and inject header as first child
-    const appContainer = document.querySelector('#app');
-    if (appContainer && appContainer.firstChild) {
-      console.log('[PrinChat UI] Found #app container, injecting header as first child');
-      appContainer.insertBefore(this.customHeader, appContainer.firstChild);
-      document.body.classList.add('princhat-header-active');
-      console.log('[PrinChat UI] Custom header injected inside #app');
-    } else {
-      console.warn('[PrinChat UI] #app container not found, injecting at body start');
-      document.body.insertBefore(this.customHeader, document.body.firstChild);
-      document.body.classList.add('princhat-header-active');
-      console.log('[PrinChat UI] Custom header injected at body start (fallback)');
-    }
+    // Final injection enforcement
+    this.ensureHeaderInjected();
+
+    // Observe body for changes to ensure header stays (WhatsApp might clear body)
+    const observer = new MutationObserver(() => {
+      if (!document.querySelector('.princhat-custom-header') && this.customHeader) {
+        // console.log('[PrinChat UI] Header removed by external script, reinjecting...');
+        this.ensureHeaderInjected();
+      }
+    });
+
+    observer.observe(document.body, { childList: true });
+
+    // Backup: Periodic check ensures header persists even if MutationObserver misses something
+    setInterval(() => {
+      this.ensureHeaderInjected();
+    }, 500);
+
+    // Also try to inject into #app if available for better layout integration, 
+    // but keep the body observer as backup
+    const tryAppInject = () => {
+      const app = document.querySelector('#app');
+      if (app && app.firstChild && this.customHeader) {
+        // app.insertBefore(this.customHeader, app.firstChild);
+        // actually body injection seems more stable for global header
+      }
+    };
+
+    setTimeout(tryAppInject, 1000);
   }
 
   private createTooltip() {

@@ -2228,5 +2228,32 @@
     });
   });
 
+  // Listen for PRINCHAT_LOGOUT event from UI overlay (profile dropdown)
+  document.addEventListener('PRINCHAT_LOGOUT', () => {
+    console.log('[PrinChat Content] PRINCHAT_LOGOUT event received');
+    // Clear auth session
+    chrome.storage.sync.remove(['auth_session'], () => {
+      console.log('[PrinChat Content] Session cleared');
+    });
+  });
+
+  // Listen for auth check requests from UI overlay
+  document.addEventListener('PrinChatAuthCheckRequest', (event: Event) => {
+    const customEvent = event as CustomEvent;
+    const requestId = customEvent.detail?.requestId;
+
+    if (requestId) {
+      chrome.storage.sync.get(['auth_session'], (result) => {
+        const isAuthenticated = result.auth_session?.isAuthenticated === true;
+
+        const responseEvent = new CustomEvent('PrinChatAuthCheckResponse', {
+          bubbles: true,
+          detail: { requestId, isAuthenticated }
+        });
+        document.dispatchEvent(responseEvent);
+      });
+    }
+  });
+
   console.log('[PrinChat] Content script initialization complete');
 })();

@@ -35,7 +35,7 @@
       "js": [
         "content/whatsapp-injector.js"
       ],
-      "run_at": "document_end",
+      "run_at": "document_start",
       "all_frames": false
     }
   ],
@@ -68,10 +68,13 @@
         "popup.js",
         "chunks/*",
         "wppconnect-wa.js",
-        "fab-icon.png"
+        "fab-icon.png",
+        "callback.html",
+        "callback.js"
       ],
       "matches": [
-        "https://web.whatsapp.com/*"
+        "https://web.whatsapp.com/*",
+        "https://*.chromiumapp.org/*"
       ]
     }
   ]
