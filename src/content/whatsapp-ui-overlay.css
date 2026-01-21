@@ -2,8 +2,12 @@
 /* Injected into WhatsApp Web to add custom UI components */
 
 /* Custom Header - Integrated above WhatsApp interface */
+/* Robust Header Positioning */
 .princhat-custom-header {
-  position: relative;
+  position: fixed !important;
+  top: 0;
+  left: 0;
+  width: 100% !important;
   height: 70px;
   background: #1a1a1a;
   border-bottom: 1px solid #3a3a3a;
@@ -11,10 +15,21 @@
   align-items: center;
   justify-content: space-between;
   padding: 0 20px;
-  padding-right: 24px;
-  z-index: 9999;
+  /* FIX: Box-sizing ensures padding is included in width */
+  box-sizing: border-box !important;
+  /* FIX: Max Z-Index to ensure it's ALWAYS on top of everything (splash screen, alerts) */
+  z-index: 2147483647 !important;
   flex-shrink: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, sans-serif;
+}
+
+/* Make #app adjust to header height safely */
+body.princhat-header-active #app {
+  /* Using top instead of margin is safer for absolute-positioned WhatsApp containers */
+  top: 70px !important;
+  height: calc(100% - 70px) !important;
+  width: 100% !important;
+  position: absolute !important;
 }
 
 .princhat-header-left {
@@ -88,6 +103,42 @@
   pointer-events: none;
   box-sizing: border-box;
   /* Allow clicks to pass through to button */
+}
+
+/* Login button in header (when not authenticated) */
+.princhat-header-login-btn {
+  height: 36px;
+  padding: 0 16px;
+  background: transparent;
+  border: 1px solid #3a3a3a;
+  color: #e0e0e0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 18px;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  font-size: 14px;
+  font-weight: 500;
+  font-family: inherit;
+}
+
+.princhat-header-login-btn:hover {
+  background: #2a2a2a;
+  border-color: #e91e63;
+  color: #e91e63;
+}
+
+.princhat-header-login-btn svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.princhat-header-login-btn span {
+  line-height: 1;
 }
 
 /* Notifications dropdown */
@@ -1408,17 +1459,22 @@
 }
 
 /* Make #app flex column to stack header above WhatsApp */
+/* Make #app adjust to header height when header is in body */
 body.princhat-header-active #app {
-  display: flex !important;
-  flex-direction: column !important;
-  height: 100vh !important;
+  height: calc(100vh - 70px) !important;
+  margin-top: 70px !important;
+  width: 100% !important;
+  position: absolute !important;
+  top: 0 !important;
 }
 
-/* Ensure WhatsApp's main container takes remaining space */
-body.princhat-header-active #app>div:not(.princhat-custom-header) {
-  flex: 1 !important;
-  min-height: 0 !important;
-  overflow: hidden !important;
+/* Ensure header stays fixed at top */
+body.princhat-header-active>.princhat-custom-header {
+  position: fixed !important;
+  top: 0;
+  left: 0;
+  width: 100%;
+  z-index: 99999;
 }
 
 /* Bottom Shortcut Bar - Inside WhatsApp Footer */

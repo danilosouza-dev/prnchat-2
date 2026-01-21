@@ -523,6 +523,32 @@ class BackgroundService {
         sendResponse({ success: true });
         break;
 
+      case 'AUTH_SUCCESS':
+        // Handle authentication success from callback
+        (async () => {
+          try {
+            console.log('[PrinChat SW] AUTH_SUCCESS received');
+            const { accessToken, refreshToken } = message.data;
+
+            // Save to storage
+            await chrome.storage.sync.set({
+              auth_session: {
+                isAuthenticated: true,
+                accessToken,
+                refreshToken,
+                timestamp: Date.now()
+              }
+            });
+
+            console.log('[PrinChat SW] Session saved successfully');
+            sendResponse({ success: true });
+          } catch (error: any) {
+            console.error('[PrinChat SW] Error saving session:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
       default:
         sendResponse({ success: false, error: 'Unknown message type' });
     }

@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MessageSquare, Zap, Target, Settings } from 'lucide-react';
 import MessagesTab from './tabs/MessagesTab';
 import ScriptsTab from './tabs/ScriptsTab';
 import TriggersTab from './tabs/TriggersTab';
 import SettingsTab from './tabs/SettingsTab';
+import LoginScreen from './LoginScreen';
 import {
   Sidebar,
   SidebarContent,
@@ -26,6 +27,53 @@ type Tab = 'messages' | 'scripts' | 'triggers' | 'settings';
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('messages');
   const [headerActions, setHeaderActions] = useState<React.ReactNode>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [loading, setLoading] = useState(true);
+
+  // Check authentication on mount
+  useEffect(() => {
+    checkAuth();
+
+    // Listen for auth changes
+    const handleStorageChange = (changes: { [key: string]: chrome.storage.StorageChange }) => {
+      if (changes.auth_session) {
+        const session = changes.auth_session.newValue;
+        setIsAuthenticated(session?.isAuthenticated === true);
+      }
+    };
+
+    chrome.storage.onChanged.addListener(handleStorageChange);
+    return () => chrome.storage.onChanged.removeListener(handleStorageChange);
+  }, []);
+
+  const checkAuth = async () => {
+    try {
+      const result = await chrome.storage.sync.get(['auth_session']);
+      setIsAuthenticated(result.auth_session?.isAuthenticated === true);
+    } catch (error) {
+      console.error('[Options] Error checking auth:', error);
+      setIsAuthenticated(false);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Show loading while checking auth
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-[#E74C7A]"></div>
+          <p className="mt-4 text-gray-600">Carregando...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show login screen if not authenticated
+  if (!isAuthenticated) {
+    return <LoginScreen />;
+  }
 
   return (
     <>
