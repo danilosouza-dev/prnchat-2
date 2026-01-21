@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { MessageSquare, Zap, Target, Settings } from 'lucide-react';
 import MessagesTab from './tabs/MessagesTab';
 import ScriptsTab from './tabs/ScriptsTab';
@@ -24,13 +25,10 @@ import logo from '../assets/logo.png';
 
 type Tab = 'messages' | 'scripts' | 'triggers' | 'settings';
 
-const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<Tab>('messages');
-  const [headerActions, setHeaderActions] = useState<React.ReactNode>(null);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [loading, setLoading] = useState(true);
+// Auth Guard Component
+const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
 
-  // Check authentication on mount
   useEffect(() => {
     checkAuth();
 
@@ -53,13 +51,10 @@ const App: React.FC = () => {
     } catch (error) {
       console.error('[Options] Error checking auth:', error);
       setIsAuthenticated(false);
-    } finally {
-      setLoading(false);
     }
   };
 
-  // Show loading while checking auth
-  if (loading) {
+  if (isAuthenticated === null) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
@@ -70,96 +65,124 @@ const App: React.FC = () => {
     );
   }
 
-  // Show login screen if not authenticated
   if (!isAuthenticated) {
-    return <LoginScreen />;
+    return <Navigate to="/login" replace />;
   }
 
+  return <>{children}</>;
+};
+
+// Dashboard Component (Main Layout)
+const Dashboard = () => {
+  const [activeTab, setActiveTab] = useState<Tab>('messages');
+  const [headerActions, setHeaderActions] = useState<React.ReactNode>(null);
+
+  // Update active tab based on internal state (we could also use URL params for tabs if desired)
+
+  return (
+    <SidebarProvider defaultOpen={true}>
+      <Sidebar>
+        <SidebarHeader className="border-b border-[var(--border-color)] px-6 pt-[15px] pb-[12px]">
+          <img src={logo} alt="PrinChat" className="w-[140px] h-auto" />
+        </SidebarHeader>
+
+        <SidebarContent className="px-3 pt-[2rem] pb-4">
+          <SidebarGroup>
+            <SidebarMenu className="gap-2">
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={activeTab === 'messages'}
+                  onClick={() => setActiveTab('messages')}
+                  className="gap-3 px-4 py-3 h-auto"
+                >
+                  <MessageSquare className="h-5 w-5" />
+                  <span className="text-sm font-medium">Mensagens</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={activeTab === 'scripts'}
+                  onClick={() => setActiveTab('scripts')}
+                  className="gap-3 px-4 py-3 h-auto"
+                >
+                  <Zap className="h-5 w-5" />
+                  <span className="text-sm font-medium">Scripts</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={activeTab === 'triggers'}
+                  onClick={() => setActiveTab('triggers')}
+                  className="gap-3 px-4 py-3 h-auto"
+                >
+                  <Target className="h-5 w-5" />
+                  <span className="text-sm font-medium">Gatilhos</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={activeTab === 'settings'}
+                  onClick={() => setActiveTab('settings')}
+                  className="gap-3 px-4 py-3 h-auto"
+                >
+                  <Settings className="h-5 w-5" />
+                  <span className="text-sm font-medium">Configurações</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroup>
+        </SidebarContent>
+
+        <SidebarFooter className="border-t border-[var(--border-color)] p-4 mt-auto">
+          <p className="text-xs text-[var(--text-tertiary)]">v1.0.0</p>
+        </SidebarFooter>
+      </Sidebar>
+
+      <SidebarInset>
+        <header className="flex h-16 items-center gap-4 border-b border-[var(--border-color)] px-6 bg-[var(--card-bg)]">
+          <SidebarTrigger />
+          <h2 className="text-lg font-semibold text-[var(--text-primary)]">
+            {activeTab === 'messages' && 'Mensagens'}
+            {activeTab === 'scripts' && 'Scripts'}
+            {activeTab === 'triggers' && 'Gatilhos'}
+            {activeTab === 'settings' && 'Configurações'}
+          </h2>
+          <div className="ml-auto flex gap-2">
+            {headerActions}
+          </div>
+        </header>
+        <main className="options-content">
+          {activeTab === 'messages' && <MessagesTab setHeaderActions={setHeaderActions} />}
+          {activeTab === 'scripts' && <ScriptsTab setHeaderActions={setHeaderActions} />}
+          {activeTab === 'triggers' && <TriggersTab setHeaderActions={setHeaderActions} />}
+          {activeTab === 'settings' && <SettingsTab setHeaderActions={setHeaderActions} />}
+        </main>
+      </SidebarInset>
+    </SidebarProvider>
+  );
+};
+
+const App: React.FC = () => {
   return (
     <>
       <Toaster />
-      <SidebarProvider defaultOpen={true}>
-        <Sidebar>
-          <SidebarHeader className="border-b border-[var(--border-color)] px-6 pt-[15px] pb-[12px]">
-            <img src={logo} alt="PrinChat" className="w-[140px] h-auto" />
-          </SidebarHeader>
-
-          <SidebarContent className="px-3 pt-[2rem] pb-4">
-            <SidebarGroup>
-              <SidebarMenu className="gap-2">
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    isActive={activeTab === 'messages'}
-                    onClick={() => setActiveTab('messages')}
-                    className="gap-3 px-4 py-3 h-auto"
-                  >
-                    <MessageSquare className="h-5 w-5" />
-                    <span className="text-sm font-medium">Mensagens</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    isActive={activeTab === 'scripts'}
-                    onClick={() => setActiveTab('scripts')}
-                    className="gap-3 px-4 py-3 h-auto"
-                  >
-                    <Zap className="h-5 w-5" />
-                    <span className="text-sm font-medium">Scripts</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    isActive={activeTab === 'triggers'}
-                    onClick={() => setActiveTab('triggers')}
-                    className="gap-3 px-4 py-3 h-auto"
-                  >
-                    <Target className="h-5 w-5" />
-                    <span className="text-sm font-medium">Gatilhos</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    isActive={activeTab === 'settings'}
-                    onClick={() => setActiveTab('settings')}
-                    className="gap-3 px-4 py-3 h-auto"
-                  >
-                    <Settings className="h-5 w-5" />
-                    <span className="text-sm font-medium">Configurações</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
-            </SidebarGroup>
-          </SidebarContent>
-
-          <SidebarFooter className="border-t border-[var(--border-color)] p-4 mt-auto">
-            <p className="text-xs text-[var(--text-tertiary)]">v1.0.0</p>
-          </SidebarFooter>
-        </Sidebar>
-
-        <SidebarInset>
-          <header className="flex h-16 items-center gap-4 border-b border-[var(--border-color)] px-6 bg-[var(--card-bg)]">
-            <SidebarTrigger />
-            <h2 className="text-lg font-semibold text-[var(--text-primary)]">
-              {activeTab === 'messages' && 'Mensagens'}
-              {activeTab === 'scripts' && 'Scripts'}
-              {activeTab === 'triggers' && 'Gatilhos'}
-              {activeTab === 'settings' && 'Configurações'}
-            </h2>
-            <div className="ml-auto flex gap-2">
-              {headerActions}
-            </div>
-          </header>
-          <main className="options-content">
-            {activeTab === 'messages' && <MessagesTab setHeaderActions={setHeaderActions} />}
-            {activeTab === 'scripts' && <ScriptsTab setHeaderActions={setHeaderActions} />}
-            {activeTab === 'triggers' && <TriggersTab setHeaderActions={setHeaderActions} />}
-            {activeTab === 'settings' && <SettingsTab setHeaderActions={setHeaderActions} />}
-          </main>
-        </SidebarInset>
-      </SidebarProvider>
+      <HashRouter>
+        <Routes>
+          <Route path="/login" element={<LoginScreen />} />
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute>
+                <Dashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Routes>
+      </HashRouter>
     </>
   );
 };
