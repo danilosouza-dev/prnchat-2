@@ -1,10 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
+// import { useSearchParams } from 'next/navigation'
 
 export default function SuccessPage() {
-    const searchParams = useSearchParams()
+    // const searchParams = useSearchParams()
     const [countdown, setCountdown] = useState(3)
 
     useEffect(() => {

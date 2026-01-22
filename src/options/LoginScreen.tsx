@@ -19,8 +19,8 @@ export default function LoginScreen() {
 
         // Obter URL da página de callback da extensão
         const callbackUrl = chrome.runtime.getURL('callback.html');
-        // TODO: Change to production URL when deploying
-        const loginUrl = `http://localhost:3000/auth/login?callbackUrl=${encodeURIComponent(callbackUrl)}`;
+        // Production URL
+        const loginUrl = `https://app.princhat.com.br/auth/login?callbackUrl=${encodeURIComponent(callbackUrl)}`;
 
         // Abrir página de login e monitorar a aba
         chrome.tabs.create({ url: loginUrl }, (tab) => {
