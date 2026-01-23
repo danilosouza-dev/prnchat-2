@@ -9,6 +9,7 @@
  */
 
 import { db } from '../storage/db';
+import { syncService } from '../services/sync-service';
 
 class BackgroundService {
   private injectedTabs = new Set<number>();
@@ -46,6 +47,9 @@ class BackgroundService {
 
     // Initialize database
     await db.init();
+
+    // Trigger initial sync (non-blocking)
+    syncService.fetchAndSyncInitialData().catch(console.error);
 
     // Set up schedule checker alarm (every minute)
     await this.setupScheduleChecker();
@@ -99,6 +103,22 @@ class BackgroundService {
           return true; // Keep channel open for async response
         } else {
           sendResponse({ success: false, error: 'No tab ID available' });
+        }
+        break;
+
+      case 'FETCH_MEDIA_BLOB':
+        // Bypass CSP by fetching from background context
+        if (message.payload && message.payload.url) {
+          console.log('[PrinChat] Fetching media blob for CSP bypass:', message.payload.url);
+          this.fetchMediaBlob(message.payload.url)
+            .then((base64) => sendResponse({ success: true, base64 }))
+            .catch((err) => {
+              console.error('[PrinChat] Failed to fetch media blob:', err);
+              sendResponse({ success: false, error: err.toString() });
+            });
+          return true; // Valid async response
+        } else {
+          sendResponse({ success: false, error: 'No URL provided' });
         }
         break;
 
@@ -541,6 +561,10 @@ class BackgroundService {
             });
 
             console.log('[PrinChat SW] Session saved successfully');
+
+            // Trigger initial sync
+            syncService.fetchAndSyncInitialData().catch(console.error);
+
             sendResponse({ success: true });
           } catch (error: any) {
             console.error('[PrinChat SW] Error saving session:', error);
@@ -1087,6 +1111,46 @@ class BackgroundService {
   //   // 4. User notification system
   //   console.log('[PrinChat] Triggers monitoring setup (feature in development)');
   // }
+  /**
+   * Fetch a URL and convert to Base64 Data URL
+   * Used to bypass CSP in content scripts
+   */
+  private async fetchMediaBlob(url: string): Promise<string> {
+    const WORKER_PROXY_URL = 'https://princhat-api.princhat.workers.dev/fetch-media';
+
+    // Commercial Grade Solution: Use backend proxy to bypass CDN origin restrictions
+    if (url.includes('.b-cdn.net')) {
+      console.log('[PrinChat SW] Using Worker Proxy for:', url);
+      const proxyUrl = `${WORKER_PROXY_URL}?url=${encodeURIComponent(url)}`;
+
+      const response = await fetch(proxyUrl);
+      if (!response.ok) {
+        console.error('[PrinChat SW] Proxy fetch failed:', response.status);
+        throw new Error(`Proxy fetch failed: ${response.status} ${response.statusText}`);
+      }
+
+      const blob = await response.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    // Direct fetch for other URLs (with no-referrer just in case)
+    const response = await fetch(url, { referrerPolicy: 'no-referrer' });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
+    }
+    const blob = await response.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader(); // FileReader works in SW in Chrome
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
 }
 
 // Initialize the background service

@@ -16,11 +16,16 @@ interface Message {
   content: string;
   type: string;
   caption?: string;
-  audioData?: string | Blob;
+  audioData?: string | Blob | null;
+  audioUrl?: string; // Cloud URL
   duration?: number;
-  imageData?: string | Blob;
-  videoData?: string | Blob;
-  fileData?: string | Blob;
+  // Extra fields for other types
+  imageData?: string | Blob | null;
+  imageUrl?: string;
+  videoData?: string | Blob | null;
+  videoUrl?: string;
+  fileData?: string | Blob | null;
+  fileUrl?: string;
   fileName?: string;
   showTyping?: boolean;
   showRecording?: boolean;
@@ -405,35 +410,108 @@ class WhatsAppUIOverlay {
     }
   }
 
+  /**
+ * Show a persistent banner forcing page reload when extension context is invalidated
+ */
+  private showReloadBanner() {
+    if (document.getElementById('princhat-reload-banner')) return;
+
+    const banner = document.createElement('div');
+    banner.id = 'princhat-reload-banner';
+    banner.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100vh;
+      background: rgba(0, 0, 0, 0.8);
+      z-index: 999999;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", RobotoCount, Helvetica, Arial, sans-serif;
+      text-align: center;
+    `;
+
+    banner.innerHTML = `
+      <div style="background: #1f2c34; padding: 40px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); max-width: 500px;">
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#ef5350" stroke-width="2" style="margin-bottom: 20px;">
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+          <line x1="12" y1="9" x2="12" y2="13"></line>
+          <line x1="12" y1="17" x2="12.01" y2="17"></line>
+        </svg>
+        <h2 style="margin: 0 0 16px 0; font-size: 24px; color: #e9edef;">Atualização Necessária</h2>
+        <p style="margin: 0 0 24px 0; font-size: 16px; color: #8696a0; line-height: 1.5;">
+          A extensão PrinChat foi atualizada ou reiniciada. Para continuar usando, você precisa recarregar esta página.
+        </p>
+        <button id="princhat-reload-btn" style="
+          background: #00a884;
+          color: white;
+          border: none;
+          padding: 12px 24px;
+          border-radius: 24px;
+          font-size: 16px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: background 0.2s;
+        ">Recarregar WhatsApp Web</button>
+      </div>
+    `;
+
+    document.body.appendChild(banner);
+
+    const btn = banner.querySelector('#princhat-reload-btn');
+    btn?.addEventListener('click', () => {
+      window.location.reload();
+    });
+  }
+
   private async requestFromContentScript(message: any, timeoutMs: number = 5000): Promise<any> {
     return new Promise((resolve) => {
       const requestId = `ui-${Date.now()}-${Math.random()}`;
       console.log('[PrinChat UI] Sending request:', message.type, 'with ID:', requestId);
 
+      let timeoutId: ReturnType<typeof setTimeout>; // Declare timeoutId here
+
       const handler = (event: any) => {
-        console.log('[PrinChat UI] Response event received:', event.detail);
+        // console.log('[PrinChat UI] Response event received:', event.detail);
         if (event.detail?.requestId === requestId) {
-          console.log('[PrinChat UI] Response matches request ID:', requestId);
+          // console.log('[PrinChat UI] Response matches request ID:', requestId);
           document.removeEventListener('PrinChatUIResponse', handler);
-          resolve(event.detail.response);
+
+          const response = event.detail.response;
+
+          // Check for context invalidation
+          if (response && !response.success && response.error &&
+            (typeof response.error === 'string' &&
+              (response.error.includes('Extension context invalidated') || response.error.includes('A extensão foi atualizada')))) {
+            console.error('[PrinChat UI] Extension context invalidated detected!');
+            this.showReloadBanner();
+          }
+
+          resolve(response);
+          // Stop timeout
+          if (timeoutId) clearTimeout(timeoutId);
         }
       };
 
       document.addEventListener('PrinChatUIResponse', handler);
-      console.log('[PrinChat UI] Added response listener for:', requestId);
+      // console.log('[PrinChat UI] Added response listener for:', requestId);
 
       // Configurable timeout
-      setTimeout(() => {
+      timeoutId = setTimeout(() => { // Assign to the declared timeoutId
         console.log('[PrinChat UI] Request timed out:', requestId);
         document.removeEventListener('PrinChatUIResponse', handler);
         resolve({ success: false, error: `Request timeout after ${timeoutMs}ms`, isTimeout: true });
       }, timeoutMs);
 
-      console.log('[PrinChat UI] Dispatching PrinChatUIRequest event...');
+      // console.log('[PrinChat UI] Dispatching PrinChatUIRequest event...');
       document.dispatchEvent(new CustomEvent('PrinChatUIRequest', {
         detail: { requestId, message }
       }));
-      console.log('[PrinChat UI] Event dispatched successfully');
+      // console.log('[PrinChat UI] Event dispatched successfully');
     });
   }
 
@@ -1048,16 +1126,31 @@ class WhatsAppUIOverlay {
           break;
 
         case 'image':
-          // Data comes as base64 string from service worker
-          // (Blobs are converted before sending via chrome.runtime.sendMessage)
           let imageData = message.imageData;
 
-          // Just in case we still get a Blob somehow, convert it
+          // If no local data, try to fetch from cloud URL
+          if (!imageData && message.imageUrl) {
+            try {
+              // console.log('[PrinChat UI] Requesting image fetch via background:', message.imageUrl);
+              const response = await this.requestFromContentScript({
+                type: 'FETCH_MEDIA_BLOB',
+                payload: { url: message.imageUrl }
+              });
+
+              if (response && response.success && response.base64) {
+                imageData = response.base64;
+              } else {
+                throw new Error(response?.error || 'Unknown background fetch error');
+              }
+            } catch (e) {
+              console.error('[PrinChat UI] Failed to fetch image via background:', e);
+            }
+          }
+
           if (imageData instanceof Blob) {
             imageData = await this.blobToBase64(imageData);
           }
 
-          // Dynamic timeout: sendDelay + 90s buffer (higher than injector to avoid race)
           const imageTimeout = (message.sendDelay || 0) + 90000;
           response = await this.requestFromContentScript({
             type: 'SEND_IMAGE',
@@ -1071,12 +1164,30 @@ class WhatsAppUIOverlay {
           break;
 
         case 'video':
-          // Data comes as base64 string from service worker
           let videoData = message.videoData;
+
+          // If no local data, try to fetch from cloud URL
+          if (!videoData && message.videoUrl) {
+            try {
+              // console.log('[PrinChat UI] Requesting video fetch via background:', message.videoUrl);
+              const response = await this.requestFromContentScript({
+                type: 'FETCH_MEDIA_BLOB',
+                payload: { url: message.videoUrl }
+              });
+
+              if (response && response.success && response.base64) {
+                videoData = response.base64;
+              } else {
+                throw new Error(response?.error || 'Unknown background fetch error');
+              }
+            } catch (e) {
+              console.error('[PrinChat UI] Failed to fetch video via background:', e);
+            }
+          }
+
           if (videoData instanceof Blob) {
             videoData = await this.blobToBase64(videoData);
           }
-          // Dynamic timeout: sendDelay + 150s buffer (higher than injector to avoid race)
           const videoTimeout = (message.sendDelay || 0) + 150000;
           response = await this.requestFromContentScript({
             type: 'SEND_VIDEO',
@@ -1090,12 +1201,36 @@ class WhatsAppUIOverlay {
           break;
 
         case 'audio':
-          // Data comes as base64 string from service worker
           let audioData = message.audioData;
+
+          // If no local data, try to fetch from cloud URL
+          // If no local data, try to fetch from cloud URL via Background Worker (Bypass CSP)
+          if (!audioData && message.audioUrl) {
+            try {
+              console.log('[PrinChat UI] Requesting audio fetch via background:', message.audioUrl);
+              const response = await this.requestFromContentScript({
+                type: 'FETCH_MEDIA_BLOB',
+                payload: { url: message.audioUrl }
+              });
+
+              if (response && response.success && response.base64) {
+                audioData = response.base64;
+              } else {
+                throw new Error(response?.error || 'Unknown background fetch error');
+              }
+            } catch (e) {
+              console.error('[PrinChat UI] Failed to fetch audio via background:', e);
+            }
+          }
+
           if (audioData instanceof Blob) {
             audioData = await this.blobToBase64(audioData);
           }
-          // Dynamic timeout: sendDelay + 120s buffer for upload/processing
+
+          if (!audioData) {
+            throw new Error('Audio data not found (local or cloud)');
+          }
+
           const audioTimeout = (message.sendDelay || 0) + 120000;
           response = await this.requestFromContentScript({
             type: 'SEND_AUDIO',
@@ -1110,40 +1245,38 @@ class WhatsAppUIOverlay {
           break;
 
         case 'file':
-          console.log('[PrinChat UI] 🔍 DEBUG FILE - message object:', message);
-          console.log('[PrinChat UI] 🔍 DEBUG FILE - message.fileData type:', typeof message.fileData);
-          console.log('[PrinChat UI] 🔍 DEBUG FILE - message.fileData value:', message.fileData);
-          console.log('[PrinChat UI] 🔍 DEBUG FILE - message.fileName:', message.fileName);
-
-          // Data comes as base64 string from service worker
           let fileData = message.fileData;
 
-          console.log('[PrinChat UI] 🔍 DEBUG FILE - fileData before Blob check:', fileData);
-          console.log('[PrinChat UI] 🔍 DEBUG FILE - fileData instanceof Blob?', fileData instanceof Blob);
+          // If no local data, try to fetch from cloud URL via Background Worker (Bypass CSP)
+          if (!fileData && message.fileUrl) {
+            try {
+              // console.log('[PrinChat UI] Requesting file fetch via background:', message.fileUrl);
+              const response = await this.requestFromContentScript({
+                type: 'FETCH_MEDIA_BLOB',
+                payload: { url: message.fileUrl }
+              });
 
-          if (fileData instanceof Blob) {
-            console.log('[PrinChat UI] 🔍 DEBUG FILE - Converting Blob to base64...');
-            fileData = await this.blobToBase64(fileData);
-            console.log('[PrinChat UI] 🔍 DEBUG FILE - After conversion:', typeof fileData, fileData?.substring?.(0, 100));
+              if (response && response.success && response.base64) {
+                fileData = response.base64;
+              } else {
+                throw new Error(response?.error || 'Unknown background fetch error');
+              }
+            } catch (e) {
+              console.error('[PrinChat UI] Failed to fetch file via background:', e);
+            }
           }
 
-          // Validate fileData is a string (base64 or blob URL)
-          console.log('[PrinChat UI] 🔍 DEBUG FILE - Final fileData type:', typeof fileData);
-          console.log('[PrinChat UI] 🔍 DEBUG FILE - Final fileData valid?', !!fileData && typeof fileData === 'string');
+          if (fileData instanceof Blob) {
+            fileData = await this.blobToBase64(fileData);
+          }
 
           if (!fileData || typeof fileData !== 'string') {
-            console.error('[PrinChat UI] ❌ DEBUG FILE - Validation failed!');
-            console.error('[PrinChat UI] ❌ DEBUG FILE - fileData:', fileData);
-            console.error('[PrinChat UI] ❌ DEBUG FILE - Complete message:', JSON.stringify(message, null, 2));
-
-            // Provide helpful error message
+            // ... (keep error handling)
             let errorMsg = 'Arquivo não encontrado ou inválido.';
             if (fileData === null || fileData === undefined) {
-              errorMsg = 'O arquivo desta mensagem não foi encontrado. Por favor, edite a mensagem e selecione o arquivo novamente.';
-            } else if (typeof fileData === 'object') {
-              errorMsg = 'Erro ao carregar o arquivo. Por favor, edite a mensagem e selecione o arquivo novamente.';
+              errorMsg = 'O arquivo desta mensagem não foi encontrado.';
             }
-
+            console.error('[PrinChat UI] Valid fileData required. Got:', typeof fileData);
             throw new Error(errorMsg);
           }
 
@@ -1321,6 +1454,59 @@ class WhatsAppUIOverlay {
   }
 
   /**
+ * Helper to scrape header info directly from DOM (Bypassing page script)
+ */
+  private scrapeHeaderInfo() {
+    let name = '';
+    let photo = '';
+
+    try {
+      const header = document.querySelector('#main > header');
+      if (header) {
+        // SCAPE PHOTO
+        // 1. Try finding an image that looks like a profile pic
+        const images = Array.from(header.querySelectorAll('img'));
+        for (const img of images) {
+          const src = (img as HTMLImageElement).src;
+          if (src && !src.includes('data:image/svg') && !src.includes('data:image/gif') && (src.startsWith('blob:') || src.startsWith('http'))) {
+            photo = src;
+            break;
+          }
+        }
+        // 2. Try background image
+        if (!photo) {
+          const divs = Array.from(header.querySelectorAll('div'));
+          for (const div of divs) {
+            const style = window.getComputedStyle(div);
+            const bgImage = style.backgroundImage;
+            if (bgImage && bgImage !== 'none' && bgImage.includes('url("')) {
+              const url = bgImage.slice(5, -2);
+              if (url.startsWith('blob:') || url.startsWith('http')) {
+                photo = url;
+                break;
+              }
+            }
+          }
+        }
+
+        // SCRAPE NAME
+        // 1. Try the main title span
+        const titleSpan = header.querySelector('div[role="button"] > span[dir="auto"]') ||
+          header.querySelector('span[title][dir="auto"]') ||
+          header.querySelector('.emoji-itext');
+
+        if (titleSpan && titleSpan.textContent) {
+          name = titleSpan.textContent;
+        }
+      }
+    } catch (e) {
+      console.error('[PrinChat UI] Error scraping header info:', e);
+    }
+
+    return { name, photo };
+  }
+
+  /**
    * Create message card for popup (SIMILAR to script card but adapted for messages)
    */
   private createMessageCard(msgExec: MessageExecution, isCompleted: boolean): HTMLElement {
@@ -1388,18 +1574,6 @@ class WhatsAppUIOverlay {
           </button>
           <button class="princhat-script-btn-discrete" data-action="cancel-message" data-id="${msgExec.id}">Cancelar</button>
         `;
-
-        const pausePlayBtn = card.querySelector('[data-action="pause-play-message"]');
-        pausePlayBtn?.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.togglePauseMessage(msgExec.id);
-        });
-
-        const cancelBtn = card.querySelector('[data-action="cancel-message"]');
-        cancelBtn?.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.cancelMessage(msgExec.id);
-        });
       } else {
         // Sem delay - layout simples
         card.innerHTML = `
@@ -1411,14 +1585,89 @@ class WhatsAppUIOverlay {
           <div class="princhat-script-card-progress">Enviando...</div>
           <button class="princhat-script-btn-discrete" data-action="cancel-message" data-id="${msgExec.id}">Cancelar</button>
         `;
-
-        const cancelBtn = card.querySelector('[data-action="cancel-message"]');
-        cancelBtn?.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.cancelMessage(msgExec.id);
-        });
       }
     }
+
+    // Async update of chat info for ALL cards (Running or Completed)
+    // We do this AFTER creating the card to not block the UI
+    // Ensure we check even if completed to catch up missing info
+    if (msgExec.chatName === 'Chat' || !msgExec.chatPhoto) {
+      // DIRECT DOM SCRAPE FIRST (Most reliable given WPP errors)
+      const scraped = this.scrapeHeaderInfo();
+
+      if (scraped.name || scraped.photo) {
+        // Update local object immediately for persistence
+        if (scraped.name) msgExec.chatName = scraped.name;
+        if (scraped.photo) msgExec.chatPhoto = scraped.photo;
+
+        // Apply immediately to DOM
+        if (scraped.name && card.isConnected) {
+          const nameEl = card.querySelector('.princhat-script-card-contact');
+          if (nameEl && ((nameEl.textContent === 'Chat' || nameEl.textContent === 'Unknown'))) {
+            nameEl.textContent = scraped.name;
+          }
+        }
+        if (scraped.photo && card.isConnected) {
+          const photoPlaceholder = card.querySelector('.princhat-script-card-photo-placeholder');
+          if (photoPlaceholder) {
+            const img = document.createElement('img');
+            img.src = scraped.photo;
+            img.alt = scraped.name || 'Contact';
+            img.className = 'princhat-script-card-photo';
+            photoPlaceholder.replaceWith(img);
+          }
+        }
+      }
+
+      this.requestFromContentScript({ type: 'GET_ACTIVE_CHAT' }).then(response => {
+        if (response?.success && response.data) {
+          const realName = response.data.chatName || response.data.name || scraped.name;
+          const realPhoto = response.data.chatPhoto || scraped.photo;
+
+          // Update local object for persistence
+          if (realName) msgExec.chatName = realName;
+          if (realPhoto) msgExec.chatPhoto = realPhoto;
+
+          // Update DOM if card still exists
+          if (card.isConnected) {
+            // Update Name
+            if (realName && realName !== 'Chat' && realName !== 'Unknown') {
+              const nameEl = card.querySelector('.princhat-script-card-contact');
+              if (nameEl) nameEl.textContent = realName;
+            }
+            // Update Photo
+            if (realPhoto) {
+              const photoPlaceholder = card.querySelector('.princhat-script-card-photo-placeholder');
+              // Re-query in case it was already replaced by scrape
+              const existingImg = card.querySelector('img.princhat-script-card-photo');
+
+              if (photoPlaceholder) {
+                const img = document.createElement('img');
+                img.src = realPhoto;
+                img.alt = realName || 'Contact';
+                img.className = 'princhat-script-card-photo';
+                photoPlaceholder.replaceWith(img);
+              } else if (existingImg && (existingImg as HTMLImageElement).src !== realPhoto) {
+                // Update existing image if new one is different
+                (existingImg as HTMLImageElement).src = realPhoto;
+              }
+            }
+          }
+        }
+      });
+    }
+
+    const pausePlayBtn = card.querySelector('[data-action="pause-play-message"]');
+    pausePlayBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.togglePauseMessage(msgExec.id);
+    });
+
+    const cancelBtn = card.querySelector('[data-action="cancel-message"]');
+    cancelBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.cancelMessage(msgExec.id);
+    });
 
     return card;
   }
@@ -1453,22 +1702,55 @@ class WhatsAppUIOverlay {
   /**
    * Update pause/play icon in all popups for a message
    */
+  /**
+   * Update pause/play icon in all popups for a message
+   */
   private updateMessagePausePlayIcon(id: string, isPaused: boolean) {
-    console.log(`[PrinChat UI] 🔄 updateMessagePausePlayIcon called: ${id}, isPaused=${isPaused}`);
+    console.log(`[PrinChat UI] 🔄 updateMessagePausePlayIcon called: ${id}, isPaused = ${isPaused}`);
     const pauseIcon = `<path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>`;
     const playIcon = `<path d="M8 5v14l11-7z"/>`;
-    const icon = isPaused ? playIcon : pauseIcon;
+    const iconContent = isPaused ? playIcon : pauseIcon; // Use icon content directly inside svg
 
     // Update in floating popup
+    // Note: The card selector might need to match how createMessageCard sets it. 
+    // In createMessageCard: card.dataset.messageId = msgExec.id; -> [data-message-id="..."]
     const card = this.messageStatusPopup?.querySelector(`[data-message-id="${id}"]`);
-    const btn = card?.querySelector('[data-action="pause-play"] svg path');
-    if (btn) btn.setAttribute('d', icon);
+    if (card) {
+      const btnSvg = card.querySelector('[data-action="pause-play-message"] svg');
+      if (btnSvg) btnSvg.innerHTML = iconContent;
 
-    // Update in executions popup
+      // Also update title
+      const btn = card.querySelector('[data-action="pause-play-message"]');
+      if (btn) btn.setAttribute('title', isPaused ? 'Continuar' : 'Pausar');
+
+      // Update class
+      if (btn) {
+        btn.classList.toggle('paused', isPaused);
+        btn.classList.toggle('running', !isPaused);
+      }
+    }
+
+    // Update in executions popup (if using same structure)
+    // The createMessageCard is likely reused or similar.
+    // Let's assume createMessageCard structure is consistent.
     if (this.executionsPopup) {
+      // The executions popup might render differently or use same card logic.
+      // Based on previous reads, createMessageExecutions also calls createMessageCard.
       const execCard = this.executionsPopup.querySelector(`[data-message-id="${id}"]`);
-      const execBtn = execCard?.querySelector('[data-action="pause-play"] svg path');
-      if (execBtn) execBtn.setAttribute('d', icon);
+      if (execCard) {
+        const execBtnSvg = execCard.querySelector('[data-action="pause-play-message"] svg');
+        if (execBtnSvg) execBtnSvg.innerHTML = iconContent;
+
+        // Also update title
+        const execBtn = execCard.querySelector('[data-action="pause-play-message"]');
+        if (execBtn) execBtn.setAttribute('title', isPaused ? 'Continuar' : 'Pausar');
+
+        // Update class
+        if (execBtn) {
+          execBtn.classList.toggle('paused', isPaused);
+          execBtn.classList.toggle('running', !isPaused);
+        }
+      }
     }
   }
 
@@ -1489,7 +1771,7 @@ class WhatsAppUIOverlay {
     // It will be cleaned up in the execution loop after checking isCancelled
 
     // Remove from UI with animation
-    const card = this.messageStatusPopup?.querySelector(`[data-message-id="${messageId}"]`) as HTMLElement;
+    const card = this.messageStatusPopup?.querySelector(`[data - message - id= "${messageId}"]`) as HTMLElement;
     if (card) {
       card.classList.add('removing');
       setTimeout(() => {
@@ -1520,7 +1802,7 @@ class WhatsAppUIOverlay {
     // Remove from array IMMEDIATELY to prevent recreation during animation
     this.completedMessages = this.completedMessages.filter(m => m.id !== messageId);
 
-    const card = this.messageStatusPopup?.querySelector(`[data-message-id="${messageId}"]`) as HTMLElement;
+    const card = this.messageStatusPopup?.querySelector(`[data - message - id= "${messageId}"]`) as HTMLElement;
     if (card) {
       card.classList.add('removing');
       setTimeout(() => {
@@ -1589,15 +1871,15 @@ class WhatsAppUIOverlay {
       });
 
       this.messageStatusPopup.style.position = 'fixed';
-      this.messageStatusPopup.style.top = `${top}px`;
-      this.messageStatusPopup.style.left = `${left}px`;
+      this.messageStatusPopup.style.top = `${top} px`;
+      this.messageStatusPopup.style.left = `${left} px`;
       this.messageStatusPopup.style.width = '420px';
-      this.messageStatusPopup.style.maxHeight = `${maxHeight}px`;
+      this.messageStatusPopup.style.maxHeight = `${maxHeight} px`;
       this.messageStatusPopup.style.zIndex = '1003'; // Above script popup (1002)
 
       // Set CSS custom properties for close button positioning
-      this.messageStatusPopup.style.setProperty('--popup-top', `${top}px`);
-      this.messageStatusPopup.style.setProperty('--popup-right', `${right}px`);
+      this.messageStatusPopup.style.setProperty('--popup-top', `${top} px`);
+      this.messageStatusPopup.style.setProperty('--popup-right', `${right} px`);
     } else if (chatHeader) {
       // Script popup is NOT open: allow popup to grow more
       const rect = chatHeader.getBoundingClientRect();
@@ -1611,15 +1893,15 @@ class WhatsAppUIOverlay {
       console.log('[PrinChat UI] Positioning message popup (script not open):', { top, left, maxHeight, availableSpace });
 
       this.messageStatusPopup.style.position = 'fixed';
-      this.messageStatusPopup.style.top = `${top}px`;
-      this.messageStatusPopup.style.left = `${left}px`;
+      this.messageStatusPopup.style.top = `${top} px`;
+      this.messageStatusPopup.style.left = `${left} px`;
       this.messageStatusPopup.style.width = '420px';
-      this.messageStatusPopup.style.maxHeight = `${maxHeight}px`;
+      this.messageStatusPopup.style.maxHeight = `${maxHeight} px`;
       this.messageStatusPopup.style.zIndex = '1003'; // Above script popup (1002)
 
       // Set CSS custom properties for close button positioning
-      this.messageStatusPopup.style.setProperty('--popup-top', `${top}px`);
-      this.messageStatusPopup.style.setProperty('--popup-right', `${right}px`);
+      this.messageStatusPopup.style.setProperty('--popup-top', `${top} px`);
+      this.messageStatusPopup.style.setProperty('--popup-right', `${right} px`);
     } else {
       // Fallback position
       this.messageStatusPopup.style.position = 'fixed';
@@ -1646,7 +1928,7 @@ class WhatsAppUIOverlay {
   }
 
   private async executeScript(script: Script) {
-    const scriptId = `script-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const scriptId = `script - ${Date.now()} -${Math.random().toString(36).substr(2, 9)} `;
 
     try {
       // NOTE: Do NOT dispatch PrinChatScriptStart here!
@@ -1684,7 +1966,7 @@ class WhatsAppUIOverlay {
           console.error('[PrinChat UI] ❌ Message not found!');
           console.error('[PrinChat UI] Looking for message ID:', messageId);
           console.error('[PrinChat UI] Available message IDs:', this.messages.map(m => m.id));
-          throw new Error(`Message ${messageId} not found. Recarregue a página do WhatsApp Web.`);
+          throw new Error(`Message ${messageId} not found.Recarregue a página do WhatsApp Web.`);
         }
 
         // Convert Blobs to base64
@@ -3352,16 +3634,52 @@ class WhatsAppUIOverlay {
     const chatId = await this.getActiveChatId() || '';
 
     // Get chat photo using GET_ACTIVE_CHAT (same as message popups)
-    let chatPhoto = '';
+    // Get chat photo using DOM scrape first (faster/reliable), then fallback/enrich with script
     let chatName = 'Chat';
-    try {
-      const chatResponse = await this.requestFromContentScript({ type: 'GET_ACTIVE_CHAT' });
-      chatPhoto = chatResponse?.data?.chatPhoto || '';
-      chatName = chatResponse?.data?.chatName || chatResponse?.data?.name || 'Chat';
-      console.log('[PrinChat UI] Chat info:', { chatPhoto: !!chatPhoto, chatName });
-    } catch (e) {
-      console.log('[PrinChat UI] Could not get chat info:', e);
-    }
+    let chatPhoto = '';
+
+    // 1. Try DOM Scrape
+    const scraped = this.scrapeHeaderInfo();
+    chatName = scraped.name || 'Chat';
+    chatPhoto = scraped.photo || '';
+
+    // 2. Try Background Script (Enrichment)
+    this.requestFromContentScript({ type: 'GET_ACTIVE_CHAT' }).then(response => {
+      if (response?.success && response.data) {
+        const realName = response.data.chatName || response.data.name || scraped.name;
+        const realPhoto = response.data.chatPhoto || scraped.photo;
+
+        // Update header if info changed and is better
+        if (popup.isConnected) {
+          // Update Title
+          if (realName && realName !== 'Chat' && realName !== 'Unknown') {
+            const titleEl = popup.querySelector('.princhat-popup-title');
+            if (titleEl) titleEl.textContent = `Agendamentos - ${realName}`;
+          }
+
+          // Update Photo
+          if (realPhoto) {
+            const photoPlaceholder = popup.querySelector('.princhat-popup-chat-photo-placeholder');
+            const existingImg = popup.querySelector('img.princhat-popup-chat-photo');
+
+            if (photoPlaceholder) {
+              const img = document.createElement('img');
+              img.src = realPhoto;
+              img.alt = '';
+              img.className = 'princhat-popup-chat-photo';
+              photoPlaceholder.replaceWith(img);
+            } else if (existingImg && (existingImg as HTMLImageElement).src !== realPhoto) {
+              (existingImg as HTMLImageElement).src = realPhoto;
+            }
+          }
+        }
+      }
+    }).catch(e => console.log('[PrinChat UI] Could not get chat info:', e));
+
+    // Fallback for async fetch if requestFromContentScript was awaited (it wasn't fully above for perf, but let's keep it simple)
+    // Actually, to update the UI *after* the popup opens with better data, we'd need to update the DOM elements.
+    // For now, let's just use the scraped data which is synchronous and mostly correct.
+
 
     // Load schedules for this chat
     console.log('[PrinChat UI] Loading schedules for chat:', chatId);
@@ -3775,12 +4093,21 @@ class WhatsAppUIOverlay {
     // Get active chat ID and info
     const chatId = await this.getActiveChatId() || '';
 
-    let chatPhoto = '';
     let chatName = 'Chat';
+    let chatPhoto = '';
+
+    // 1. Try DOM Scrape
+    const scraped = this.scrapeHeaderInfo();
+    chatName = scraped.name || 'Chat';
+    chatPhoto = scraped.photo || '';
+
+    // 2. Try Background Script (Enrichment) for async update potentially
     try {
       const chatResponse = await this.requestFromContentScript({ type: 'GET_ACTIVE_CHAT' });
-      chatPhoto = chatResponse?.data?.chatPhoto || '';
-      chatName = chatResponse?.data?.chatName || chatResponse?.data?.name || 'Chat';
+      if (chatResponse?.data) {
+        chatPhoto = chatResponse.data.chatPhoto || chatPhoto;
+        chatName = chatResponse.data.chatName || chatResponse.data.name || chatName;
+      }
     } catch (e) {
       console.log('[PrinChat UI] Could not get chat info:', e);
     }

@@ -8,10 +8,22 @@
     "unlimitedStorage",
     "tabs",
     "scripting",
-    "alarms"
+    "alarms",
+    "declarativeNetRequest"
   ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "ruleset_1",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
   "host_permissions": [
-    "https://web.whatsapp.com/*"
+    "https://web.whatsapp.com/*",
+    "https://princhat-files.b-cdn.net/*",
+    "*://*.b-cdn.net/*"
   ],
   "background": {
     "service_worker": "background/service-worker.js",

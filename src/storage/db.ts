@@ -7,6 +7,7 @@ import { openDB, DBSchema, IDBPDatabase } from 'idb';
 import type { Message, Script, Trigger, Tag, Folder, Settings, Signature, Schedule, Note } from '@/types';
 import type { KanbanColumn, LeadContact } from '../types/kanban';
 import { DEFAULT_KANBAN_COLUMNS } from '../types/kanban';
+import { syncService } from '../services/sync-service';
 
 interface PrinChatDB extends DBSchema {
   messages: {
@@ -256,44 +257,89 @@ class DatabaseService {
   }
 
   // ==================== MESSAGES ====================
+
   async saveMessage(message: Message): Promise<void> {
     const db = await this.init();
 
-    // If message has audio data (Blob), save it separately
+    // Helper to handle media upload logic
+    const handleMediaUpload = async (
+      blob: Blob,
+      type: 'audio' | 'image' | 'video' | 'file',
+      filename?: string
+    ): Promise<string | null> => {
+      try {
+        console.log(`[PrinChat DB] Uploading ${type} to cloud...`);
+        // Import dynamically to avoid circular dependencies just in case
+        const { mediaService } = await import('../services/media-service');
+        const url = await mediaService.uploadMedia(blob, filename);
+        console.log(`[PrinChat DB] Upload successful: ${url}`);
+        return url;
+      } catch (error) {
+        console.warn(`[PrinChat DB] Upload failed for ${type}, falling back to local storage:`, error);
+        return null;
+      }
+    };
+
+    // 1. AUDIO
     if (message.audioData && message.audioData instanceof Blob) {
-      await db.put('audioBlobs', {
-        messageId: message.id,
-        blob: message.audioData,
-        createdAt: Date.now(),
-      });
+      const url = await handleMediaUpload(message.audioData, 'audio', `audio-${message.id}.mp3`); // Extension estimation
+      if (url) {
+        message.audioUrl = url;
+        message.audioData = null; // Don't store local blob
+      } else {
+        // Fallback: Save to local IDB
+        await db.put('audioBlobs', {
+          messageId: message.id,
+          blob: message.audioData,
+          createdAt: Date.now(),
+        });
+      }
     }
 
-    // If message has image data (Blob), save it separately
+    // 2. IMAGE
     if (message.imageData && message.imageData instanceof Blob) {
-      await db.put('imageBlobs', {
-        messageId: message.id,
-        blob: message.imageData,
-        createdAt: Date.now(),
-      });
+      const url = await handleMediaUpload(message.imageData, 'image', `image-${message.id}`);
+      if (url) {
+        message.imageUrl = url;
+        message.imageData = null;
+      } else {
+        await db.put('imageBlobs', {
+          messageId: message.id,
+          blob: message.imageData,
+          createdAt: Date.now(),
+        });
+      }
     }
 
-    // If message has video data (Blob), save it separately
+    // 3. VIDEO
     if (message.videoData && message.videoData instanceof Blob) {
-      await db.put('videoBlobs', {
-        messageId: message.id,
-        blob: message.videoData,
-        createdAt: Date.now(),
-      });
+      const url = await handleMediaUpload(message.videoData, 'video', `video-${message.id}`);
+      if (url) {
+        message.videoUrl = url;
+        message.videoData = null;
+      } else {
+        await db.put('videoBlobs', {
+          messageId: message.id,
+          blob: message.videoData,
+          createdAt: Date.now(),
+        });
+      }
     }
 
-    // If message has file data (Blob), save it separately
+    // 4. FILE
     if (message.fileData && message.fileData instanceof Blob) {
-      await db.put('fileBlobs', {
-        messageId: message.id,
-        blob: message.fileData,
-        fileName: message.fileName || 'file',
-        createdAt: Date.now(),
-      });
+      const url = await handleMediaUpload(message.fileData, 'file', message.fileName || `file-${message.id}`);
+      if (url) {
+        message.fileUrl = url;
+        message.fileData = null;
+      } else {
+        await db.put('fileBlobs', {
+          messageId: message.id,
+          blob: message.fileData,
+          fileName: message.fileName || 'file',
+          createdAt: Date.now(),
+        });
+      }
     }
 
     // Don't store blobs in the message object (just references)
@@ -716,6 +762,9 @@ class DatabaseService {
         schedules: Date.now()
       });
     }
+
+    // Trigger sync
+    syncService.syncSchedule(schedule).catch(console.error);
   }
 
   async getSchedule(id: string): Promise<Schedule | undefined> {
@@ -786,6 +835,9 @@ class DatabaseService {
         schedules: Date.now()
       });
     }
+
+    // Trigger sync
+    syncService.deleteSchedule(id).catch(console.error);
   }
 
   // ==================== NOTES ====================
@@ -809,6 +861,9 @@ class DatabaseService {
         notes: Date.now()
       });
     }
+
+    // Trigger sync
+    syncService.syncNote(newNote).catch(console.error);
 
     return newNote;
   }
@@ -850,6 +905,9 @@ class DatabaseService {
         notes: Date.now()
       });
     }
+
+    // Trigger sync
+    syncService.syncNote(updatedNote).catch(console.error);
   }
 
   async deleteNote(id: string): Promise<void> {
@@ -863,6 +921,9 @@ class DatabaseService {
         notes: Date.now()
       });
     }
+
+    // Trigger sync
+    syncService.deleteNote(id).catch(console.error);
   }
 
   async getAllNotes(): Promise<Note[]> {
@@ -894,6 +955,8 @@ class DatabaseService {
         };
         await db.put('kanban_columns', kanbanColumn);
         console.log('[PrinChat DB] Created default column:', kanbanColumn.name);
+
+        // No need to sync defaults immediately as they are initializing
       }
 
       console.log('[PrinChat DB] ✅ Default Kanban columns initialized');
@@ -913,6 +976,9 @@ class DatabaseService {
         kanban_columns: Date.now()
       });
     }
+
+    // Trigger sync
+    syncService.syncKanbanColumn(column).catch(console.error);
   }
 
   /**
@@ -963,6 +1029,9 @@ class DatabaseService {
         kanban_columns: Date.now()
       });
     }
+
+    // Trigger sync
+    syncService.deleteKanbanColumn(id).catch(console.error);
   }
 
   /**
@@ -1014,6 +1083,12 @@ class DatabaseService {
         kanban_columns: Date.now()
       });
     }
+
+    // Sync all updated columns (for order update)
+    // Optimisation: Could receive array in syncService
+    for (const col of updatedColumns) {
+      syncService.syncKanbanColumn(col).catch(console.error);
+    }
   }
 
   /**
@@ -1054,6 +1129,9 @@ class DatabaseService {
         kanban_columns: Date.now()
       });
     }
+
+    // Trigger sync
+    syncService.syncKanbanColumn(newColumn).catch(console.error);
 
     return newColumn;
   }
@@ -1098,6 +1176,9 @@ class DatabaseService {
         kanban_columns: Date.now()
       });
     }
+
+    // Trigger sync
+    syncService.syncKanbanColumn(updatedColumn).catch(console.error);
   }
 
   // ==================== KANBAN LEADS ====================
@@ -1125,6 +1206,9 @@ class DatabaseService {
       });
     }
 
+    // Trigger sync
+    syncService.syncLead(newLead).catch(console.error);
+
     return newLead;
   }
 
@@ -1133,7 +1217,8 @@ class DatabaseService {
    */
   async saveLead(lead: LeadContact): Promise<void> {
     const db = await this.init();
-    await db.put('kanban_leads', { ...lead, updatedAt: Date.now() });
+    const updatedLead = { ...lead, updatedAt: Date.now() };
+    await db.put('kanban_leads', updatedLead);
 
     // Trigger chrome.storage change event
     if (typeof chrome !== 'undefined' && chrome.storage) {
@@ -1141,6 +1226,9 @@ class DatabaseService {
         kanban_leads: Date.now()
       });
     }
+
+    // Trigger sync
+    syncService.syncLead(updatedLead).catch(console.error);
   }
 
   /**
@@ -1168,6 +1256,9 @@ class DatabaseService {
         kanban_leads: Date.now()
       });
     }
+
+    // Trigger sync
+    syncService.syncLead(updatedLead).catch(console.error);
   }
 
   /**
@@ -1223,6 +1314,9 @@ class DatabaseService {
         kanban_leads: Date.now()
       });
     }
+
+    // Trigger sync
+    syncService.syncLead(updatedLead).catch(console.error);
   }
 
   /**
@@ -1238,6 +1332,9 @@ class DatabaseService {
         kanban_leads: Date.now()
       });
     }
+
+    // Trigger sync
+    syncService.deleteLead(id).catch(console.error);
   }
 
   // ==================== UTILITY ====================
@@ -1360,3 +1457,4 @@ class DatabaseService {
 
 // Export singleton instance
 export const db = new DatabaseService();
+

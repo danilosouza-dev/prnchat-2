@@ -1021,104 +1021,90 @@
         const { requestId } = event.detail;
         console.log('[PrinChat Page] 📥 Received PrinChatGetActiveChat request, requestId:', requestId);
 
-        const activeChat = Store.Chat.getActive();
-        console.log('[PrinChat Page] 🔍 Store.Chat.getActive() result:', activeChat ? 'Found' : 'NULL');
-
-        if (!activeChat) {
-          console.log('[PrinChat Page] ⚠️ No active chat from Store, trying DOM fallback...');
-
-          // Fallback: Try to get chat info from DOM
-          try {
-            // WhatsApp's chat header selector
-            const chatHeader = document.querySelector('header[data-testid="conversation-header"]');
-            if (chatHeader) {
-              console.log('[PrinChat Page] ✅ Found chat header in DOM');
-
-              // Try to get chat name from header
-              const chatNameElement = chatHeader.querySelector('span[dir="auto"][title]') as HTMLElement;
-              const chatName = chatNameElement?.getAttribute('title') || chatNameElement?.textContent || 'Unknown Chat';
-
-              console.log('[PrinChat Page] 📝 Chat name from DOM:', chatName);
-
-              // We don't have chatId from DOM, but we can at least show the name
-              document.dispatchEvent(new CustomEvent('PrinChatActiveChatResult', {
-                detail: {
-                  success: true,
-                  chatName,
-                  chatId: '', // Empty chatId from DOM fallback
-                  chatPhoto: undefined,
-                  requestId
-                }
-              }));
-              return;
-            } else {
-              console.log('[PrinChat Page] ❌ Chat header not found in DOM');
-            }
-          } catch (domError: any) {
-            console.error('[PrinChat Page] Error in DOM fallback:', domError);
-          }
-
-          // If DOM fallback also failed
-          document.dispatchEvent(new CustomEvent('PrinChatActiveChatResult', {
-            detail: { success: false, error: 'No active chat', requestId }
-          }));
-          return;
-        }
-
-        console.log('[PrinChat Page] Processing active chat from Store...');
-
-        // Get contact name from chat
-        const contact = activeChat.contact;
-        const chatName = contact?.pushname || contact?.name || contact?.formattedName ||
-          activeChat.formattedTitle || activeChat.name ||
-          activeChat.id?.user || 'Unknown';
-
-        console.log('[PrinChat Page] 📝 Chat name:', chatName);
-
-        // Get chatId for targeting
-        const chatId = activeChat.id?._serialized || activeChat.id?.toString() || '';
-        console.log('[PrinChat Page] 🆔 Chat ID:', chatId);
-
-        // Get profile picture URL
+        let chatId = '';
+        let chatName = 'Unknown Chat';
         let chatPhoto: string | undefined = undefined;
+
+        // Commercial Grade Strategy: Use WPPConnect (Maintained Library)
         try {
-          console.log('[PrinChat Page] 📸 Attempting to get chat photo...');
+          if ((window as any).WPP?.chat?.getActiveChat) {
+            const wppChat = await (window as any).WPP.chat.getActiveChat();
+            if (wppChat) {
+              console.log('[PrinChat Page] ✅ WPP.chat.getActiveChat() success');
 
-          // Try multiple sources for profile picture
-          if (contact?.profilePicThumb) {
-            chatPhoto = contact.profilePicThumb.eurl || contact.profilePicThumb.imgFull || contact.profilePicThumb.img;
-            if (chatPhoto) console.log('[PrinChat Page] ✅ Got photo from contact.profilePicThumb');
-          }
+              // 1. Get Chat ID
+              chatId = wppChat.id?._serialized || wppChat.id?.toString() || '';
 
-          if (!chatPhoto && activeChat?.profilePicThumb) {
-            chatPhoto = activeChat.profilePicThumb.eurl || activeChat.profilePicThumb.imgFull || activeChat.profilePicThumb.img;
-            if (chatPhoto) console.log('[PrinChat Page] ✅ Got photo from activeChat.profilePicThumb');
-          }
+              // 2. Get Name
+              const contact = wppChat.contact;
+              chatName = contact?.name || contact?.pushname || contact?.formattedName ||
+                wppChat.name || wppChat.formattedTitle || chatId;
 
-          // Try contact.img field directly
-          if (!chatPhoto && contact?.img) {
-            chatPhoto = contact.img;
-            if (chatPhoto) console.log('[PrinChat Page] ✅ Got photo from contact.img');
-          }
-
-          // Try getting from Store.ProfilePicThumb
-          if (!chatPhoto && (window as any).Store?.ProfilePicThumb) {
-            const profilePic = await (window as any).Store.ProfilePicThumb.find(activeChat.id);
-            if (profilePic) {
-              chatPhoto = profilePic.eurl || profilePic.imgFull || profilePic.img;
-              if (chatPhoto) console.log('[PrinChat Page] ✅ Got photo from Store.ProfilePicThumb');
+              // 3. Get Photo
+              if (contact?.profilePicThumb) {
+                chatPhoto = contact.profilePicThumb.eurl || contact.profilePicThumb.imgFull || contact.profilePicThumb.img;
+              }
+              // Try chat object itself if contact lacks photo
+              if (!chatPhoto && wppChat.profilePicThumb) {
+                chatPhoto = wppChat.profilePicThumb.eurl || wppChat.profilePicThumb.imgFull || wppChat.profilePicThumb.img;
+              }
             }
           }
-
-          if (!chatPhoto) {
-            console.log('[PrinChat Page] ⚠️ No chat photo found');
-          }
-        } catch (e: any) {
-          const errorMessage = e?.message || String(e);
-          console.error('[PrinChat Page] ❌ Error getting chat photo:', errorMessage);
+        } catch (wppError) {
+          console.warn('[PrinChat Page] ⚠️ WPP strategy failed, falling back to Store:', wppError);
         }
 
-        console.log('[PrinChat Page] 📤 Sending success result back to injector');
+        // Fallback Strategy: Store (Legacy)
+        if (!chatId) {
+          const activeChat = Store.Chat.getActive();
+          if (activeChat) {
+            console.log('[PrinChat Page] ⚠️ Using Store fallback');
+
+            chatId = activeChat.id?._serialized || activeChat.id?.toString() || '';
+            const contact = activeChat.contact;
+            chatName = contact?.pushname || contact?.name || activeChat.formattedTitle || activeChat.name || 'Unknown';
+
+            // Photo extraction (same logic as before)
+            if (contact?.profilePicThumb) {
+              chatPhoto = contact.profilePicThumb.eurl || contact.profilePicThumb.imgFull || contact.profilePicThumb.img;
+            }
+            if (!chatPhoto && activeChat.profilePicThumb) {
+              chatPhoto = activeChat.profilePicThumb.eurl || activeChat.profilePicThumb.imgFull || activeChat.profilePicThumb.img;
+            }
+          }
+        }
+
+        // 4. Try explicit fetch if still no photo (High Reliability) using WPP
+        if (!chatPhoto && (window as any).WPP?.contact?.getProfilePictureUrl && chatId) {
+          try {
+            // console.log('[PrinChat Page] 📸 Fetching profile picture URL explicitly...');
+            const explicitPhoto = await (window as any).WPP.contact.getProfilePictureUrl(chatId);
+            if (explicitPhoto) {
+              chatPhoto = explicitPhoto;
+              // console.log('[PrinChat Page] ✅ Got photo from explicit fetch');
+            }
+          } catch (e) {
+            // console.warn('[PrinChat Page] Failed explicit photo fetch');
+          }
+        }
+
+        // DOM Fallback (Last Resort)
+        if (!chatId) {
+          // ... existing DOM fallback logic logic is fine as ultimate fallback, 
+          // but usually implies we can't get ID, so we return empty ID.
+          // Keeping previous simplified DOM lookup if acceptable, or just rely on the above.
+          console.log('[PrinChat Page] ❌ Failed to get chat from WPP and Store');
+
+          // Try to at least get name from DOM for display
+          const chatHeader = document.querySelector('header[data-testid="conversation-header"]');
+          if (chatHeader) {
+            const chatNameElement = chatHeader.querySelector('span[dir="auto"][title]') as HTMLElement;
+            chatName = chatNameElement?.getAttribute('title') || chatNameElement?.textContent || chatName;
+          }
+        }
+
+        console.log('[PrinChat Page] Obtained Chat Info:', { chatId, chatName, hasPhoto: !!chatPhoto });
+
         document.dispatchEvent(new CustomEvent('PrinChatActiveChatResult', {
           detail: { success: true, chatName, chatId, chatPhoto, requestId }
         }));
@@ -1404,10 +1390,76 @@
             }
           }
 
+          // Strategy 7: DOM Scraping (Final Fallback - Visual)
+          if (!chatPhoto) {
+            console.log('[PrinChat Page] Strategies 1-6 failed. Trying DOM scraping from header...');
+            try {
+              // The main chat header
+              const header = document.querySelector('#main > header');
+              if (header) {
+                // Try finding any image that is NOT an SVG/Icon
+                // WhatsApp profile pictures are usually standard <img> tags with src="blob:..." or "https:..."
+                // Icons are usually SVGs or have specific classes
+                const images = Array.from(header.querySelectorAll('img'));
+
+                console.log(`[PrinChat Page] Found ${images.length} images in header`);
+
+                for (const img of images) {
+                  const src = (img as HTMLImageElement).src;
+                  // Filter out default placeholders and icons
+                  if (src &&
+                    !src.includes('data:image/svg') &&
+                    !src.includes('data:image/gif') &&
+                    (src.startsWith('blob:') || src.startsWith('http'))) {
+
+                    chatPhoto = src;
+                    console.log('[PrinChat Page] ✅ Got photo from DOM Scraping (Iterator):', chatPhoto);
+                    break;
+                  }
+                }
+
+                // Fallback: Check for background-image on div (sometimes used)
+                if (!chatPhoto) {
+                  const divs = Array.from(header.querySelectorAll('div'));
+                  for (const div of divs) {
+                    const style = window.getComputedStyle(div);
+                    const bgImage = style.backgroundImage;
+                    if (bgImage && bgImage !== 'none' && bgImage.includes('url("')) {
+                      const url = bgImage.slice(5, -2); // Remove url("...")
+                      if (url.startsWith('blob:') || url.startsWith('http')) {
+                        chatPhoto = url;
+                        console.log('[PrinChat Page] ✅ Got photo from DOM Scraping (Background):', chatPhoto);
+                        break;
+                      }
+                    }
+                  }
+                }
+              }
+            } catch (domError) {
+              console.error('[PrinChat Page] DOM scraping failed:', domError);
+            }
+          }
+
           console.log('[PrinChat Page] Final chatPhoto result:', chatPhoto ? 'Found' : 'Not found');
         } catch (e: any) {
           const errorMessage = e?.message || String(e);
           console.error('[PrinChat Page] Error getting chat photo:', errorMessage, e);
+        }
+
+        // Final Name Fallback: DOM Scraping
+        if ((!chatName || chatName === 'Chat' || chatName.includes('@')) && !contact && !chat) {
+          try {
+            const header = document.querySelector('#main > header');
+            if (header) {
+              const titleEl = header.querySelector('div[role="button"] > span[dir="auto"]') ||
+                header.querySelector('span[title]') ||
+                header.querySelector('.emoji-itext'); // Older generic
+              if (titleEl && titleEl.textContent) {
+                chatName = titleEl.textContent;
+                console.log('[PrinChat Page] ✅ Got name from DOM Scraping:', chatName);
+              }
+            }
+          } catch (e) { }
         }
 
         // --- FETCH LABELS/TAGS (WhatsApp Business) ---
