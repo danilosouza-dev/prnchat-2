@@ -795,8 +795,9 @@
             message.type === 'UPDATE_KANBAN_COLUMN' || message.type === 'DELETE_KANBAN_COLUMN' ||
             message.type === 'UPDATE_COLUMN_ORDER' || message.type === 'GET_ALL_KANBAN_LEADS' ||
             message.type === 'CREATE_KANBAN_LEAD' || message.type === 'MOVE_KANBAN_LEAD' ||
-            message.type === 'DELETE_KANBAN_LEAD') {
-            console.log('[PrinChat] Forwarding to background service worker...');
+            message.type === 'DELETE_KANBAN_LEAD' ||
+            message.type === 'FETCH_MEDIA_BLOB') {
+            console.log('[PrinChat] Forwarding to background service worker:', message.type);
 
             // Check if extension context is still valid
             if (!chrome.runtime?.id) {
@@ -2051,9 +2052,13 @@
             if (event.detail.success) {
               // Use fallback getChatPhoto() if API didn't return photo
               const chatPhoto = event.detail.chatPhoto || this.getChatPhoto();
+
+              const responseData = { active: true, chatName: event.detail.chatName, chatId: event.detail.chatId, chatPhoto };
+              console.log('[PrinChat Injector] 📤 RESOLVING getActiveChat with:', JSON.stringify(responseData));
+
               resolve({
                 success: true,
-                data: { active: true, chatName: event.detail.chatName, chatId: event.detail.chatId, chatPhoto }
+                data: responseData
               });
             } else {
               console.log('[PrinChat Injector] ❌ Active chat request failed:', event.detail.error);
