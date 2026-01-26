@@ -847,13 +847,16 @@
           }));
           console.log('[PrinChat] ✅ Response sent to UI overlay');
         } catch (error: any) {
+          // Suppress "Extension context invalidated" error logs as requested
+          if (error.message?.includes('Extension context invalidated')) {
+            // Silently fail/ignore as user requested no error logs/banner for this
+            return;
+          }
+
           console.error('[PrinChat] ❌ Error handling UI request:', error);
 
           // Provide better error message for context invalidation
           let errorMessage = error.message || 'Unknown error';
-          if (error.message?.includes('Extension context invalidated')) {
-            errorMessage = 'A extensão foi atualizada. Por favor, recarregue a página.';
-          }
 
           document.dispatchEvent(new CustomEvent('PrinChatUIResponse', {
             detail: {

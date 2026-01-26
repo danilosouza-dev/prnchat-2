@@ -33,6 +33,16 @@
     document.body.appendChild(debugPanel);
   }
 
+  // Console filter to suppress WPPConnect errors
+  const originalConsoleError = console.error;
+  console.error = function (...args) {
+    const errorString = args.map(arg => String(arg)).join(' ');
+    if (errorString.includes('getSearchVerifiedName') || errorString.includes('getHeader')) {
+      return; // Suppress known WPPConnect library errors
+    }
+    originalConsoleError.apply(console, args);
+  };
+
   const debugLog = (_msg: string, _color = '#00ff00') => {
     if (DEBUG_MODE) {
       const logsDiv = document.getElementById('princhat-debug-logs');
@@ -1293,19 +1303,44 @@
         }
 
         // 3. Extract Basic Info - EXHAUSTIVE SEARCH
-        let chatName =
-          contact?.name ||
-          contact?.pushname ||
-          contact?.shortName ||
-          contact?.displayName ||
-          contact?.verifiedName ||
-          contact?.formattedName ||
-          chat?.formattedTitle ||
-          chat?.name ||
-          chat?.contact?.name ||
-          chat?.contact?.pushname ||
-          chat?.contact?.shortName ||
-          chatId.replace('@c.us', '');
+        // 3. Extract Basic Info - SAFE FIELD ACCESS
+        // We prioritize raw properties to avoid triggering deprecated/broken getters in WPPConnect
+        let chatName: string | undefined;
+
+        const safeGet = (obj: any, prop: string): any => {
+          try { return obj?.[prop]; } catch (e) { return undefined; }
+        };
+
+        if (contact) {
+          const isBusiness = safeGet(contact, 'isBusiness');
+
+          if (isBusiness) {
+            // For Business: verifiedName is the gold standard
+            chatName = safeGet(contact, 'verifiedName') || safeGet(contact, 'pushname') || safeGet(contact, 'name');
+          } else {
+            // For Normal: pushname is usually what we want (user's self-set name) or name (address book name)
+            chatName = safeGet(contact, 'pushname') || safeGet(contact, 'name');
+          }
+
+          // Safe Fallbacks (computed getters that might crash, but we catch them now)
+          if (!chatName) chatName = safeGet(contact, 'formattedName');
+          if (!chatName) chatName = safeGet(contact, 'shortName');
+          if (!chatName) chatName = safeGet(contact, 'displayName');
+        }
+
+        // Chat object Fallbacks
+        // Chat object Fallbacks
+        if ((!chatName || chatName === 'chat' || chatName === 'unknown') && chat) {
+          chatName = safeGet(chat, 'formattedTitle') || safeGet(chat, 'name');
+          if ((!chatName || chatName === 'chat') && chat.contact) {
+            chatName = safeGet(chat.contact, 'pushname') || safeGet(chat.contact, 'name');
+          }
+        }
+
+        // Final fallback to ID
+        if (!chatName) {
+          chatName = chatId.replace('@c.us', '');
+        }
 
         // WPP Name Fallback (If Standard WA fails Store lookups)
         if ((!chatName || chatName.includes('@')) && (window as any).WPP?.chat?.get) {
@@ -1962,13 +1997,32 @@
         if (message.type === 'GET_ACTIVE_CHAT') {
           const chat = Store.Chat.getActive();
           if (chat) {
+            // CRITICAL: For unsaved contacts, prioritize pushname (the display name from their WhatsApp profile)
+            // This is what makes names appear even when contact isn't saved
+            const displayName = chat.contact?.pushname || chat.name || chat.formattedTitle;
+
+            // Try multiple sources for photo (Store might not have it cached)
+            let chatPhoto = chat.contact?.profilePicThumbObj?.eurl
+              || chat.contact?.profilePicThumb?.eurl
+              || chat.profilePicThumbObj?.eurl;
+
+            // If Store doesn't have photo, try WPP API (async load)
+            if (!chatPhoto && (window as any).WPP?.contact?.getProfilePictureUrl) {
+              try {
+                const contactId = chat.id._serialized || chat.id;
+                chatPhoto = await (window as any).WPP.contact.getProfilePictureUrl(contactId);
+              } catch (e) {
+                // Photo not available
+              }
+            }
+
             response = {
               success: true,
               data: {
                 chatId: chat.id._serialized || chat.id,
-                name: chat.name || chat.formattedTitle,
+                name: displayName,
                 isGroup: chat.isGroup,
-                chatPhoto: chat.contact?.profilePicThumbObj?.eurl
+                chatPhoto: chatPhoto
               }
             };
           } else {
@@ -1991,11 +2045,28 @@
           const chatId = message.payload.chatId;
           const chat = await Store.Chat.find(chatId);
           if (chat) {
+            // Use pushname for unsaved contacts (same as GET_ACTIVE_CHAT)
+            const displayName = chat.contact?.pushname || chat.name || chat.formattedTitle;
+
+            // Try multiple sources for photo
+            let chatPhoto = chat.contact?.profilePicThumbObj?.eurl
+              || chat.contact?.profilePicThumb?.eurl
+              || chat.profilePicThumbObj?.eurl;
+
+            // If Store doesn't have photo, try WPP API
+            if (!chatPhoto && (window as any).WPP?.contact?.getProfilePictureUrl) {
+              try {
+                chatPhoto = await (window as any).WPP.contact.getProfilePictureUrl(chatId);
+              } catch (e) {
+                // Photo not available
+              }
+            }
+
             response = {
               success: true,
               data: {
-                chatName: chat.name || chat.formattedTitle,
-                chatPhoto: chat.contact?.profilePicThumbObj?.eurl,
+                chatName: displayName,
+                chatPhoto: chatPhoto,
                 isGroup: chat.isGroup,
                 tags: chat.labels || []
               }

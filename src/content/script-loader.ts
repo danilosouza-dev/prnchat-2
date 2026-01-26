@@ -26,6 +26,21 @@
 
   console.log('[PrinChat Loader] ✅ Extension ID:', extensionId);
 
+  // 🤫 SILENCE WPPCONNECT ERRORS 🤫
+  // We patch console.error immediately to catch logs from WPPConnect initialization
+  const originalConsoleError = console.error;
+  console.error = function (...args) {
+    const errorString = args.map(arg => String(arg)).join(' ');
+    // Filter out specific WPPConnect "not found" errors
+    if (errorString.includes('getSearchVerifiedName') ||
+      errorString.includes('getHeader') ||
+      errorString.includes('WAWebContactGetters')) {
+      return;
+    }
+    originalConsoleError.apply(console, args);
+  };
+  console.log('[PrinChat Loader] 🛡️ Console filter applied for WPPConnect errors');
+
   // Helper to inject a script from URL into page context
   function injectScript(url: string): Promise<void> {
     return new Promise((resolve, reject) => {
