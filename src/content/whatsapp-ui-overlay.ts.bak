@@ -6207,6 +6207,44 @@ class WhatsAppUIOverlay {
       contentContainer.innerHTML = '';
       contentContainer.appendChild(grid);
 
+      // Wait for DOM to be fully inserted, THEN update with real contact data
+      setTimeout(() => {
+        // Re-fetch popup from DOM to ensure we have the latest reference
+
+        filteredNotes.forEach(note => {
+          this.requestFromContentScript({ type: 'GET_CHAT_INFO', payload: { chatId: note.chatId } })
+            .then((response) => {
+              if (response?.success && response.data) {
+                // Use document selector directly to avoid stale reference issues
+                // Note cards use data-note-id attribute
+                const cardSelector = `.princhat-note-card[data-note-id="${note.id}"]`;
+                const cardElement = document.querySelector(cardSelector);
+
+                if (cardElement) {
+                  // Update name
+                  const nameEl = cardElement.querySelector('.princhat-note-card-contact');
+                  if (nameEl && response.data.chatName) {
+                    nameEl.textContent = response.data.chatName;
+                  }
+
+                  // Update photo
+                  if (response.data.chatPhoto) {
+                    const photoPlaceholder = cardElement.querySelector('.princhat-note-card-photo-placeholder');
+                    if (photoPlaceholder) {
+                      const img = document.createElement('img');
+                      img.src = response.data.chatPhoto;
+                      img.alt = '';
+                      img.className = 'princhat-note-card-photo';
+                      // Add class to wrapper if needed for styling
+                      photoPlaceholder.replaceWith(img);
+                    }
+                  }
+                }
+              }
+            })
+            .catch(err => console.error('[PrinChat UI] Error updating note card:', err));
+        });
+      }, 300); // 300ms delay to ensure DOM is ready
 
 
 
@@ -6224,11 +6262,11 @@ class WhatsAppUIOverlay {
           let chatPhoto = '';
           try {
             const photoResponse = await this.requestFromContentScript({
-              type: 'GET_CHAT_INFO',
+              type: 'GET_CHAT_PHOTO',
               payload: { chatId: note.chatId }
             });
             if (photoResponse?.success && photoResponse.data) {
-              chatPhoto = photoResponse.data.chatPhoto || '';
+              chatPhoto = photoResponse.data;
             }
           } catch (error) {
             console.log('[PrinChat UI] Could not fetch chat photo for modal:', error);
@@ -6383,7 +6421,7 @@ class WhatsAppUIOverlay {
   private buildGlobalScheduleCardHTML(schedule: Schedule, chatName?: string, chatPhoto?: string): string {
     // Use provided values or defaults
     const displayName = chatName || schedule.chatName || schedule.chatId.split('@')[0];
-
+    const displayPhoto = chatPhoto || '';
 
 
 
@@ -6440,7 +6478,26 @@ class WhatsAppUIOverlay {
     // Photo HTML - use actual contact photo or placeholder
     let photoHtml = `<div class="princhat-script-card-photo-placeholder">${displayName ? displayName.charAt(0).toUpperCase() : 'A'}</div>`;
 
-    if (chatPhoto) {
+    // Asynchronously load chat photo if chatPhoto not already provided
+    if (!displayPhoto) {
+      console.log('[PrinChat UI] Loading photo for chatId:', schedule.chatId, 'scheduleId:', schedule.id);
+      this.requestFromContentScript({ type: 'GET_CHAT_PHOTO', payload: { chatId: schedule.chatId } })
+        .then((response) => {
+          console.log('[PrinChat UI] Photo response for', schedule.id, ':', response);
+          if (response?.success && response.data && this.globalSchedulesPopup) {
+            // Find this specific card and update its photo
+            const card = this.globalSchedulesPopup.querySelector(`[data-schedule-id="${schedule.id}"] .princhat-script-card-photo-placeholder`);
+            console.log('[PrinChat UI] Found card placeholder?', !!card, 'Photo URL:', response.data);
+            if (card && card.parentElement) {
+              card.parentElement.innerHTML = `<img src="${response.data}" alt="" class="princhat-script-card-photo">`;
+              console.log('[PrinChat UI] Photo loaded for', schedule.id);
+            }
+          }
+        })
+        .catch((err) => {
+          console.warn('[PrinChat UI] Error loading photo for', schedule.id, ':', err);
+        });
+    } else {
       photoHtml = `<img src="${chatPhoto}" alt="" class="princhat-script-card-photo">`;
     }
 
@@ -6473,7 +6530,14 @@ class WhatsAppUIOverlay {
       timerHTML = `<span class="${timerClass}">${relativeTime}</span>`;
     }
 
-
+    // DEBUG: Log all values before building HTML
+    console.log('[PrinChat UI] 📝 Building card HTML for', schedule.id);
+    console.log('  - chatName param:', chatName);
+    console.log('  - schedule.chatName:', schedule.chatName);
+    console.log('  - displayName:', displayName);
+    console.log('  - itemName:', itemName);
+    console.log('  - formattedDate:', formattedDate);
+    console.log('  - formattedTime:', formattedTime);
 
     // Build card with proper structure: content container + actions container
     // Using same structure as buildScheduleCardHTML
