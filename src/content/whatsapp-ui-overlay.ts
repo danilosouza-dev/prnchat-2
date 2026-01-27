@@ -2739,6 +2739,11 @@ class WhatsAppUIOverlay {
     // If show is false/undefined and popup doesn't exist, do nothing (nothing to close/toggle)
     const shouldShow = show !== undefined ? show : !this.isHeaderPopupOpen;
 
+    if (shouldShow) {
+      // Close other global popups first (but keep header popup open since we are opening it)
+      this.closeHeaderPopups(true);
+    }
+
     if (shouldShow && !this.headerPopup) {
       console.log('[PrinChat UI] First open: creating header popup (lazy load)...');
       this.createHeaderPopup();
@@ -3000,12 +3005,20 @@ class WhatsAppUIOverlay {
 
     // Close dropdown when clicking outside
     const closeDropdown = (e: MouseEvent) => {
-      // Check if ANY modal is currently open
-      const hasOpenModal = document.querySelector('.princhat-modal-overlay') !== null ||
-        document.querySelector('.princhat-note-editor-modal') !== null ||
-        document.querySelector('.princhat-calendar-modal-overlay') !== null;
+      let target = e.target as HTMLElement;
+      if (target.nodeType === Node.TEXT_NODE) {
+        target = target.parentElement as HTMLElement;
+      }
+      if (!target || !target.closest) return;
 
-      if (!dropdown.contains(e.target as Node) && !button.contains(e.target as Node) && !hasOpenModal) {
+      // Don't close if clicking inside popup, on button, or on any modal
+      const isModal = target.closest('.princhat-modal-overlay') ||
+        target.closest('.princhat-note-editor-modal') ||
+        target.closest('.princhat-calendar-modal-overlay') ||
+        target.closest('.princhat-schedule-modal') ||
+        target.closest('.princhat-confirmation-modal');
+
+      if (!dropdown.contains(target) && !button.contains(target) && !isModal) {
         dropdown.remove();
         button.classList.remove('active');
         document.removeEventListener('click', closeDropdown);
@@ -3342,12 +3355,20 @@ class WhatsAppUIOverlay {
 
     // Close dropdown when clicking outside
     const closeDropdown = (e: MouseEvent) => {
-      // Check if ANY modal is currently open
-      const hasOpenModal = document.querySelector('.princhat-modal-overlay') !== null ||
-        document.querySelector('.princhat-note-editor-modal') !== null ||
-        document.querySelector('.princhat-calendar-modal-overlay') !== null;
+      let target = e.target as HTMLElement;
+      if (target.nodeType === Node.TEXT_NODE) {
+        target = target.parentElement as HTMLElement;
+      }
+      if (!target || !target.closest) return;
 
-      if (!dropdown.contains(e.target as Node) && !button.contains(e.target as Node) && !hasOpenModal) {
+      // Don't close if clicking inside popup, on button, or on any modal
+      const isModal = target.closest('.princhat-modal-overlay') ||
+        target.closest('.princhat-note-editor-modal') ||
+        target.closest('.princhat-calendar-modal-overlay') ||
+        target.closest('.princhat-schedule-modal') ||
+        target.closest('.princhat-confirmation-modal');
+
+      if (!dropdown.contains(target) && !button.contains(target) && !isModal) {
         dropdown.remove();
         button.classList.remove('active');
         this.profileDropdown = null;
@@ -3471,12 +3492,23 @@ class WhatsAppUIOverlay {
 
     // Close popup when clicking outside
     const closePopup = (e: MouseEvent) => {
-      // Check if ANY modal is currently open
-      const hasOpenModal = document.querySelector('.princhat-modal-overlay') !== null ||
-        document.querySelector('.princhat-note-editor-modal') !== null ||
-        document.querySelector('.princhat-calendar-modal-overlay') !== null;
+      let target = e.target as HTMLElement;
+      // Handle text nodes (clicking on text)
+      if (target.nodeType === Node.TEXT_NODE) {
+        target = target.parentElement as HTMLElement;
+      }
 
-      if (!popup.contains(e.target as Node) && !button.contains(e.target as Node) && !hasOpenModal) {
+      // Safety check
+      if (!target || !target.closest) return;
+
+      // Don't close if clicking inside popup, on button, or on any modal
+      const isModal = target.closest('.princhat-modal-overlay') ||
+        target.closest('.princhat-note-editor-modal') ||
+        target.closest('.princhat-calendar-modal-overlay') ||
+        target.closest('.princhat-schedule-modal') ||
+        target.closest('.princhat-confirmation-modal');
+
+      if (!popup.contains(target) && !button.contains(target) && !isModal) {
         popup.remove();
         button.classList.remove('active');
         this.helpPopup = null;
@@ -3623,8 +3655,9 @@ class WhatsAppUIOverlay {
 
   /**
    * Close all header global popups (except messages)
+   * @param excludeHeaderPopup If true, does NOT close the main header popup (iframe). Default false.
    */
-  private closeHeaderPopups() {
+  private closeHeaderPopups(excludeHeaderPopup: boolean = false) {
     if (this.executionsPopup && document.body.contains(this.executionsPopup)) {
       // Check if pinned - look for active pin button
       const pinBtn = this.executionsPopup.querySelector('.princhat-executions-pin');
@@ -3660,13 +3693,16 @@ class WhatsAppUIOverlay {
       this.globalSchedulesPopup.remove();
       this.globalSchedulesPopup = null;
     }
+
+    // Aggressively close Global Notes (both reference and DOM query for zombies)
     if (this.globalNotesPopup) {
       this.globalNotesPopup.remove();
       this.globalNotesPopup = null;
     }
+    document.querySelectorAll('.princhat-global-notes-popup-unique').forEach(el => el.remove());
 
-    // Also close the main header popup (iframe)
-    if (this.headerPopup && this.isHeaderPopupOpen) {
+    // Also close the main header popup (iframe) unless excluded
+    if (!excludeHeaderPopup && this.headerPopup && this.isHeaderPopupOpen) {
       this.toggleHeaderPopup(false);
     }
   }
@@ -5959,7 +5995,15 @@ class WhatsAppUIOverlay {
 
     // Close on outside click
     const closeOnOutsideClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
+      let target = e.target as HTMLElement;
+      // Handle text nodes (clicking on text)
+      if (target.nodeType === Node.TEXT_NODE) {
+        target = target.parentElement as HTMLElement;
+      }
+
+      // Safety check
+      if (!target || !target.closest) return;
+
       // Don't close if clicking inside popup, on button, or on any modal
       const isModal = target.closest('.princhat-modal-overlay') ||
         target.closest('.princhat-schedule-modal') ||
@@ -6049,7 +6093,7 @@ class WhatsAppUIOverlay {
 
     // Create popup
     const popup = document.createElement('div');
-    popup.className = 'princhat-global-schedules-popup'; // Reuse schedules popup class for consistent styling
+    popup.className = 'princhat-global-schedules-popup princhat-global-notes-popup-unique'; // Reuse schedules popup class + unique ID
 
     // Create header with standard h3 (same as schedules)
     popup.innerHTML = `
@@ -6091,22 +6135,31 @@ class WhatsAppUIOverlay {
 
     // Close on outside click
     const closeOnOutsideClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
+      let target = e.target as HTMLElement;
+      // Handle text nodes (clicking on text)
+      if (target.nodeType === Node.TEXT_NODE) {
+        target = target.parentElement as HTMLElement;
+      }
 
-      // Check if ANY modal is currently open (not if clicked element is inside one)
-      const hasOpenModal = document.querySelector('.princhat-modal-overlay') !== null ||
-        document.querySelector('.princhat-note-editor-modal') !== null ||
-        document.querySelector('.princhat-calendar-modal-overlay') !== null;
+      // Safety check
+      if (!target || !target.closest) return;
 
-      if (!popup.contains(target) && !button.contains(target) && !hasOpenModal && this.globalNotesPopup) {
+      // Don't close if clicking inside popup, on button, or on any modal
+      const isModal = target.closest('.princhat-modal-overlay') ||
+        target.closest('.princhat-note-editor-modal') ||
+        target.closest('.princhat-calendar-modal-overlay') ||
+        target.closest('.princhat-schedule-modal') ||
+        target.closest('.princhat-confirmation-modal');
+
+      if (!popup.contains(target) && !button.contains(target) && !isModal) {
         popup.remove();
         this.globalNotesPopup = null;
-        document.removeEventListener('click', closeOnOutsideClick);
+        document.removeEventListener('click', closeOnOutsideClick, true);
       }
     };
 
     setTimeout(() => {
-      document.addEventListener('click', closeOnOutsideClick);
+      document.addEventListener('click', closeOnOutsideClick, true);
     }, 100);
 
     // Initial load
@@ -7930,12 +7983,23 @@ class WhatsAppUIOverlay {
 
     // Close popup when clicking outside
     const closePopup = (e: MouseEvent) => {
-      // Check if ANY modal is currently open
-      const hasOpenModal = document.querySelector('.princhat-modal-overlay') !== null ||
-        document.querySelector('.princhat-note-editor-modal') !== null ||
-        document.querySelector('.princhat-calendar-modal-overlay') !== null;
+      let target = e.target as HTMLElement;
+      // Handle text nodes (clicking on text)
+      if (target.nodeType === Node.TEXT_NODE) {
+        target = target.parentElement as HTMLElement;
+      }
 
-      if (!popup.contains(e.target as Node) && !button.contains(e.target as Node) && !hasOpenModal) {
+      // Safety check
+      if (!target || !target.closest) return;
+
+      // Don't close if clicking inside popup, on button, or on any modal
+      const isModal = target.closest('.princhat-modal-overlay') ||
+        target.closest('.princhat-note-editor-modal') ||
+        target.closest('.princhat-calendar-modal-overlay') ||
+        target.closest('.princhat-schedule-modal') ||
+        target.closest('.princhat-confirmation-modal');
+
+      if (!popup.contains(target) && !button.contains(target) && !isModal) {
         popup.remove();
         button.classList.remove('active');
         this.subscriptionPopup = null;
