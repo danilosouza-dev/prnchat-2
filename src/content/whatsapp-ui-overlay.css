@@ -29,8 +29,8 @@
   padding: 0 20px;
   /* FIX: Box-sizing ensures padding is included in width */
   box-sizing: border-box !important;
-  /* FIX: High Z-Index but allow popups above it */
-  z-index: 2147483640 !important;
+  /* FIX: High Z-Index but allow popups above it (2147483647 is max) */
+  z-index: 2147483600 !important;
   flex-shrink: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, sans-serif;
   animation: princhatHeaderSlideDown 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
@@ -166,7 +166,7 @@ body.princhat-header-active #app {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  z-index: 10001;
+  z-index: 2147483601;
 }
 
 .princhat-notifications-header {
@@ -343,8 +343,8 @@ body.princhat-header-active #app {
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   overflow: visible;
-  /* Ensure it's above the header (2147483640) */
-  z-index: 2147483645 !important;
+  /* Ensure it's above the header (2147483600) */
+  z-index: 2147483601 !important;
 }
 
 .princhat-direct-chat-header {
@@ -438,7 +438,7 @@ body.princhat-header-active #app {
   border-radius: 6px;
   max-height: 280px;
   overflow-y: auto;
-  z-index: 100000;
+  z-index: 2147483602;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
@@ -541,7 +541,7 @@ body.princhat-header-active #app {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  z-index: 10001;
+  z-index: 2147483601;
 }
 
 .princhat-executions-header {
@@ -782,7 +782,7 @@ body.princhat-header-active #app {
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   overflow: hidden;
-  z-index: 100000;
+  z-index: 2147483601;
   padding: 8px 0;
 }
 
@@ -2686,7 +2686,7 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
   border: 1px solid #333;
   border-radius: 12px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-  z-index: 10001;
+  z-index: 2147483601 !important;
   display: flex;
   flex-direction: column;
   max-height: 500px;
@@ -3733,7 +3733,7 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
   border: 1px solid #333;
   border-radius: 12px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-  z-index: 10001;
+  z-index: 2147483601 !important;
   display: flex;
   flex-direction: column;
   max-height: 600px;
@@ -4457,7 +4457,7 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
   background: #1f1f1f;
   border-radius: 12px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
-  z-index: 10001;
+  z-index: 2147483601 !important;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -6563,4 +6563,31 @@ body.princhat-kanban-active div.x1n2onr6>span {
   flex: 1;
   font-weight: 500;
   text-align: left;
+}
+
+/* ==================== REMAINING POPUP Z-INDEX FIXES ==================== */
+
+.princhat-subscription-popup {
+  position: fixed;
+  width: 480px;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  z-index: 2147483601 !important;
+}
+
+.princhat-help-popup {
+  position: fixed;
+  width: 320px;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  z-index: 2147483601 !important;
+  padding: 8px 0;
 }

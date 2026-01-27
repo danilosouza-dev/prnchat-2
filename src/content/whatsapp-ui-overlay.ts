@@ -2803,6 +2803,8 @@ class WhatsAppUIOverlay {
       return;
     }
 
+    this.closeAllGlobalPopups();
+
     // Create dropdown
     const dropdown = document.createElement('div');
     dropdown.className = 'princhat-notifications-dropdown';
@@ -2998,7 +3000,12 @@ class WhatsAppUIOverlay {
 
     // Close dropdown when clicking outside
     const closeDropdown = (e: MouseEvent) => {
-      if (!dropdown.contains(e.target as Node) && !button.contains(e.target as Node)) {
+      // Check if ANY modal is currently open
+      const hasOpenModal = document.querySelector('.princhat-modal-overlay') !== null ||
+        document.querySelector('.princhat-note-editor-modal') !== null ||
+        document.querySelector('.princhat-calendar-modal-overlay') !== null;
+
+      if (!dropdown.contains(e.target as Node) && !button.contains(e.target as Node) && !hasOpenModal) {
         dropdown.remove();
         button.classList.remove('active');
         document.removeEventListener('click', closeDropdown);
@@ -3023,6 +3030,8 @@ class WhatsAppUIOverlay {
       this.directChatPopup = null;
       return;
     }
+
+    this.closeAllGlobalPopups();
 
     // Country codes list (Brazil first)
     const countryCodes = [
@@ -3252,6 +3261,8 @@ class WhatsAppUIOverlay {
       return;
     }
 
+    this.closeAllGlobalPopups();
+
     // Create dropdown
     const dropdown = document.createElement('div');
     dropdown.className = 'princhat-profile-dropdown';
@@ -3331,7 +3342,12 @@ class WhatsAppUIOverlay {
 
     // Close dropdown when clicking outside
     const closeDropdown = (e: MouseEvent) => {
-      if (!dropdown.contains(e.target as Node) && !button.contains(e.target as Node)) {
+      // Check if ANY modal is currently open
+      const hasOpenModal = document.querySelector('.princhat-modal-overlay') !== null ||
+        document.querySelector('.princhat-note-editor-modal') !== null ||
+        document.querySelector('.princhat-calendar-modal-overlay') !== null;
+
+      if (!dropdown.contains(e.target as Node) && !button.contains(e.target as Node) && !hasOpenModal) {
         dropdown.remove();
         button.classList.remove('active');
         this.profileDropdown = null;
@@ -3356,6 +3372,8 @@ class WhatsAppUIOverlay {
       this.helpPopup = null;
       return;
     }
+
+    this.closeAllGlobalPopups();
 
     // Create popup
     const popup = document.createElement('div');
@@ -3453,7 +3471,12 @@ class WhatsAppUIOverlay {
 
     // Close popup when clicking outside
     const closePopup = (e: MouseEvent) => {
-      if (!popup.contains(e.target as Node) && !button.contains(e.target as Node)) {
+      // Check if ANY modal is currently open
+      const hasOpenModal = document.querySelector('.princhat-modal-overlay') !== null ||
+        document.querySelector('.princhat-note-editor-modal') !== null ||
+        document.querySelector('.princhat-calendar-modal-overlay') !== null;
+
+      if (!popup.contains(e.target as Node) && !button.contains(e.target as Node) && !hasOpenModal) {
         popup.remove();
         button.classList.remove('active');
         this.helpPopup = null;
@@ -3602,9 +3625,20 @@ class WhatsAppUIOverlay {
    * Close all header global popups (except messages)
    */
   private closeHeaderPopups() {
-    if (this.executionsPopup) {
-      this.executionsPopup.remove();
-      this.executionsPopup = null;
+    if (this.executionsPopup && document.body.contains(this.executionsPopup)) {
+      // Check if pinned - look for active pin button
+      const pinBtn = this.executionsPopup.querySelector('.princhat-executions-pin');
+      const isPinned = pinBtn?.classList.contains('active');
+
+      if (!isPinned) {
+        this.executionsPopup.remove();
+        this.executionsPopup = null;
+        // Also remove active class from toggle button
+        const toggleBtn = this.customHeader?.querySelector('.princhat-header-icon-btn[title="Execuções"]');
+        if (toggleBtn) {
+          toggleBtn.classList.remove('active');
+        }
+      }
     }
     if (this.directChatPopup) {
       this.directChatPopup.remove();
@@ -3629,6 +3663,11 @@ class WhatsAppUIOverlay {
     if (this.globalNotesPopup) {
       this.globalNotesPopup.remove();
       this.globalNotesPopup = null;
+    }
+
+    // Also close the main header popup (iframe)
+    if (this.headerPopup && this.isHeaderPopupOpen) {
+      this.toggleHeaderPopup(false);
     }
   }
 
@@ -4112,7 +4151,12 @@ class WhatsAppUIOverlay {
         return;
       }
 
-      if (!popup.contains(e.target as Node) && !button.contains(e.target as Node)) {
+      // Check if ANY modal is currently open (not if clicked element is inside one)
+      const hasOpenModal = document.querySelector('.princhat-modal-overlay') !== null ||
+        document.querySelector('.princhat-note-editor-modal') !== null ||
+        document.querySelector('.princhat-calendar-modal-overlay') !== null;
+
+      if (!popup.contains(e.target as Node) && !button.contains(e.target as Node) && !hasOpenModal) {
         popup.remove();
         this.scheduleListPopup = null;
         document.removeEventListener('click', closePopup);
@@ -4182,7 +4226,7 @@ class WhatsAppUIOverlay {
       this.scheduleListPopup = null;
     }
 
-    // Close header global popups
+    // Close header global popups (including executions unless pinned)
     this.closeHeaderPopups();
 
     const popup = document.createElement('div');
@@ -4269,6 +4313,11 @@ class WhatsAppUIOverlay {
     // Close popup when clicking outside
     handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Node;
+
+      // Ignore clicks on the toggle button itself (handled by button click listener)
+      if (button.contains(target)) {
+        return;
+      }
 
       // Check if ANY modal is currently open (not if clicked element is inside one)
       const hasOpenModal = document.querySelector('.princhat-modal-overlay') !== null ||
@@ -5793,6 +5842,9 @@ class WhatsAppUIOverlay {
       return;
     }
 
+    // Close other popups
+    this.closeAllGlobalPopups();
+
     console.log('[PrinChat UI] Opening global schedules popup...');
 
     // Load ALL schedules (from all chats)
@@ -5913,7 +5965,7 @@ class WhatsAppUIOverlay {
         target.closest('.princhat-schedule-modal') ||
         target.closest('.princhat-confirmation-modal');
 
-      if (!popup.contains(target) && target !== button && !isModal) {
+      if (!popup.contains(target) && !button.contains(target) && !isModal) {
         popup.remove();
         this.globalSchedulesPopup = null;
         // Clear timer interval when closing
@@ -5973,6 +6025,15 @@ class WhatsAppUIOverlay {
     }, 1000); // Update every second
   }
 
+
+  /**
+   * Close all global popups to ensure only one is open at a time
+   * @param except Optional popup to keep open (not used currently as we close before opening)
+   */
+  private closeAllGlobalPopups() {
+    this.closeHeaderPopups();
+  }
+
   private async toggleGlobalNotesPopup(button: HTMLElement) {
     // Close if already open
     if (this.globalNotesPopup) {
@@ -5980,6 +6041,9 @@ class WhatsAppUIOverlay {
       this.globalNotesPopup = null;
       return;
     }
+
+    // Close other popups
+    this.closeAllGlobalPopups();
 
     console.log('[PrinChat UI] Opening global notes popup...');
 
@@ -6031,7 +6095,8 @@ class WhatsAppUIOverlay {
 
       // Check if ANY modal is currently open (not if clicked element is inside one)
       const hasOpenModal = document.querySelector('.princhat-modal-overlay') !== null ||
-        document.querySelector('.princhat-note-editor-modal') !== null;
+        document.querySelector('.princhat-note-editor-modal') !== null ||
+        document.querySelector('.princhat-calendar-modal-overlay') !== null;
 
       if (!popup.contains(target) && !button.contains(target) && !hasOpenModal && this.globalNotesPopup) {
         popup.remove();
@@ -7684,6 +7749,8 @@ class WhatsAppUIOverlay {
       return;
     }
 
+    this.closeAllGlobalPopups();
+
     // Load signatures from database
     console.log('[PrinChat] toggleSubscriptionPopup: Loading signatures...');
     await this.loadSignatures();
@@ -7863,7 +7930,12 @@ class WhatsAppUIOverlay {
 
     // Close popup when clicking outside
     const closePopup = (e: MouseEvent) => {
-      if (!popup.contains(e.target as Node) && !button.contains(e.target as Node)) {
+      // Check if ANY modal is currently open
+      const hasOpenModal = document.querySelector('.princhat-modal-overlay') !== null ||
+        document.querySelector('.princhat-note-editor-modal') !== null ||
+        document.querySelector('.princhat-calendar-modal-overlay') !== null;
+
+      if (!popup.contains(e.target as Node) && !button.contains(e.target as Node) && !hasOpenModal) {
         popup.remove();
         button.classList.remove('active');
         this.subscriptionPopup = null;
@@ -8502,9 +8574,13 @@ class WhatsAppUIOverlay {
     if (existingPopup) {
       // Close popup
       existingPopup.remove();
-      button.classList.remove('active');
+      button.classList.remove('active'); // Ensure button state is reset
+      this.executionsPopup = null;
       return;
     }
+
+    this.closeAllGlobalPopups();
+
 
     // Create popup container
     const popup = document.createElement('div');
@@ -8616,7 +8692,12 @@ class WhatsAppUIOverlay {
         return;
       }
 
-      if (!popup.contains(e.target as Node) && !button.contains(e.target as Node)) {
+      // Check if ANY modal is currently open
+      const hasOpenModal = document.querySelector('.princhat-modal-overlay') !== null ||
+        document.querySelector('.princhat-note-editor-modal') !== null ||
+        document.querySelector('.princhat-calendar-modal-overlay') !== null;
+
+      if (!popup.contains(e.target as Node) && !button.contains(e.target as Node) && !hasOpenModal) {
         popup.remove();
         button.classList.remove('active');
         this.executionsPopup = null;
@@ -8993,7 +9074,8 @@ class WhatsAppUIOverlay {
     this.customHeader.style.top = '0';
     this.customHeader.style.left = '0';
     this.customHeader.style.width = '100%';
-    this.customHeader.style.zIndex = '2147483647';
+    // Set Z-index to be high but allow popups to be higher (2147483601+)
+    this.customHeader.style.zIndex = '2147483600';
     this.customHeader.style.boxSizing = 'border-box';
   }
 
