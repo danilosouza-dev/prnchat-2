@@ -2,6 +2,9 @@
  * PrinChat UI Overlay
  * Injects custom UI components into WhatsApp Web interface
  */
+// import { prinChatStore } from './whatsapp-store-accessor'; // Unused
+// import { syncService } from '../services/sync-service'; // Removed to prevent split-brain DB
+// import { db } from '../storage/db'; // Unused in UI (Delegated to Background)
 import Sortable from 'sortablejs';
 
 interface Script {
@@ -143,7 +146,9 @@ class WhatsAppUIOverlay {
   private renderedCardIds: Set<string> = new Set(); // Track which cards have been rendered to avoid re-animating them
   private renderDebounceTimer: any = null; // Timer for debouncing Kanban renders
   private areKanbanListenersSetup: boolean = false; // Flag to prevent duplicate listeners
-
+  private hasSyncedTags: boolean = false;
+  private isSortableInitialized: boolean = false; // Flag to prevent double-init
+  // Flag to ensure tags are synced once per session
   // Message Execution System (PARALLEL execution like scripts run independently)
   private runningMessages: Map<string, MessageExecution> = new Map();
   private completedMessages: MessageExecution[] = [];
@@ -231,6 +236,14 @@ class WhatsAppUIOverlay {
       // Load data
       console.log('[PrinChat UI] Step 4: Loading scripts and messages...');
       await this.loadData();
+
+      // TRIGGER CLOUD SYNC (Delegate to Background)
+      console.log('[PrinChat UI] Step 4b: Requesting Cloud Sync via Background...');
+      this.requestFromContentScript({ type: 'TRIGGER_MANUAL_SYNC' })
+        .then(res => console.log('[PrinChat UI] Sync Triggered:', res))
+        .catch(err => console.error('[PrinChat UI] Sync Trigger Failed:', err));
+
+
       console.log('[PrinChat UI] ✓ Data loaded');
 
       // Update badge counts on load
@@ -4177,6 +4190,9 @@ class WhatsAppUIOverlay {
     });
 
     const closePopup = (e: MouseEvent) => {
+      // Ignore clicks on elements that are no longer part of the DOM (e.g. just closed modals)
+      if (!(e.target as HTMLElement).isConnected) return;
+
       // Don't close if clicking inside modal
       if (this.scheduleCreationModal && this.scheduleCreationModal.contains(e.target as Node)) {
         return;
@@ -4393,6 +4409,8 @@ class WhatsAppUIOverlay {
 
     const modal = document.createElement('div');
     modal.className = 'princhat-note-editor-modal';
+    // Ensure modal is ALWAYS on top of everything (including global popups which might have high z-index)
+    modal.style.zIndex = '2147483647'; // Max safe integer for 32-bit systems
     this.noteEditorModal = modal;
 
     const isEditing = !!existingNote;
@@ -5410,7 +5428,7 @@ class WhatsAppUIOverlay {
       display: flex;
       align-items: center;
       justify-content: center;
-      z-index: 10002;
+      z-index: 2147483647;
     `;
 
     // Create modal
@@ -5565,7 +5583,7 @@ class WhatsAppUIOverlay {
       display: flex;
       align-items: center;
       justify-content: center;
-      z-index: 10002;
+      z-index: 2147483647; // Max safe integer
     `;
 
     // Create modal
@@ -5996,6 +6014,10 @@ class WhatsAppUIOverlay {
     // Close on outside click
     const closeOnOutsideClick = (e: MouseEvent) => {
       let target = e.target as HTMLElement;
+
+      // Ignore clicks on elements that are no longer part of the DOM (e.g. closed modals)
+      if (!target.isConnected) return;
+
       // Handle text nodes (clicking on text)
       if (target.nodeType === Node.TEXT_NODE) {
         target = target.parentElement as HTMLElement;
@@ -6136,6 +6158,10 @@ class WhatsAppUIOverlay {
     // Close on outside click
     const closeOnOutsideClick = (e: MouseEvent) => {
       let target = e.target as HTMLElement;
+
+      // Ignore clicks on elements that are no longer part of the DOM (e.g. closed modals)
+      if (!target.isConnected) return;
+
       // Handle text nodes (clicking on text)
       if (target.nodeType === Node.TEXT_NODE) {
         target = target.parentElement as HTMLElement;
@@ -6838,6 +6864,7 @@ class WhatsAppUIOverlay {
 
     const overlay = document.createElement('div');
     overlay.className = 'princhat-calendar-modal-overlay';
+    overlay.style.zIndex = '2147483647'; // Max safe integer
 
     const modal = document.createElement('div');
     modal.className = 'princhat-calendar-modal';
@@ -7260,6 +7287,8 @@ class WhatsAppUIOverlay {
 
     const overlay = document.createElement('div');
     overlay.className = 'princhat-modal-overlay';
+    // Ensure modal is ALWAYS on top of everything (including global popups which might have high z-index)
+    overlay.style.zIndex = '2147483647'; // Max safe integer for 32-bit systems
     this.scheduleCreationModal = overlay;
 
     const modal = document.createElement('div');
@@ -8048,6 +8077,8 @@ class WhatsAppUIOverlay {
     // Create overlay
     const overlay = document.createElement('div');
     overlay.className = 'princhat-modal-overlay';
+    // Ensure modal is ALWAYS on top of everything
+    overlay.style.zIndex = '2147483647';
     this.subscribeFormModal = overlay;
 
     // Store formState on modal for access during edit (AFTER modal is created)
@@ -8366,7 +8397,7 @@ class WhatsAppUIOverlay {
       display: flex;
       align-items: center;
       justify-content: center;
-      z-index: 10002;
+      z-index: 2147483647;
     `;
 
     // Create modal
@@ -10679,11 +10710,22 @@ class WhatsAppUIOverlay {
       buttonSpan.appendChild(button);
       buttonWrapper.appendChild(buttonSpan);
 
-      // Insert as the LAST element in the sidebar container
-      // ensuring consistent positioning in Business and Normal versions
-      if (metaAiWrapper.parentElement) {
+      // Insert after Communities/Channels (Index 4 - usually the megaphone or group icon)
+      // Robust Method: Find by aria-label "Canais" or "Channels" or "Status" (fallback)
+      const channelsBtn = sidebarContainer.querySelector('[aria-label="Canais"]') ||
+        sidebarContainer.querySelector('[aria-label="Channels"]') ||
+        sidebarContainer.querySelector('[data-navbar-item-index="4"]'); // Fallback to index 4
+
+      const targetElement = channelsBtn?.closest('.x1c4vz4f.xs83m0k.xdl72j9') || channelsBtn?.parentElement;
+
+      if (targetElement && targetElement.parentElement) {
+        // Insert AFTER the channels/megaphone
+        targetElement.insertAdjacentElement('afterend', buttonWrapper);
+        console.log('[PrinChat UI] ✅ Kanban button inserted after Channels/Megaphone');
+      } else if (metaAiWrapper.parentElement) {
+        // Fallback: Append to end
         metaAiWrapper.parentElement.appendChild(buttonWrapper);
-        console.log('[PrinChat UI] ✅ Kanban button appended to sidebar end');
+        console.log('[PrinChat UI] ✅ Kanban button appended to sidebar end (Fallback)');
       } else {
         console.error('[PrinChat UI] ❌ Could not find parent element to insert button');
         return;
@@ -10755,6 +10797,10 @@ class WhatsAppUIOverlay {
     }
 
     console.log('[PrinChat UI] Opening Kanban overlay...');
+
+    // Reset tag sync flag to ensure tags are synced on every Kanban open
+    this.hasSyncedTags = false;
+    console.log('[PrinChat UI] 🔄 Reset hasSyncedTags flag for new session');
 
     // Cleanup Profile Dropdown if open (USER REQ)
     if (this.profileDropdown) {
@@ -11124,17 +11170,32 @@ class WhatsAppUIOverlay {
     }
 
     this.isRenderingKanban = true;
+
     console.log('[PrinChat UI] 🎨 Rendering Kanban columns at', Date.now());
 
     const container = this.kanbanOverlay?.querySelector('.princhat-kanban-columns-container');
     if (!container) return;
 
     try {
+      console.log('[PrinChat UI] renderKanbanColumns called');
+
       // 1. Fetch EVERYTHING first (Atomic Update Preparation)
-      // Fetch Columns
       const columnsResponse = await this.requestFromContentScript({ type: 'GET_KANBAN_COLUMNS' });
-      const columns = columnsResponse?.data || [];
-      console.log('[PrinChat UI] Loaded', columns.length, 'columns');
+      let rawColumns = columnsResponse?.data || [];
+
+      // DEDUPLICATE COLUMNS (Fixing User Issue)
+      const uniqueColumnsMap = new Map();
+      rawColumns.forEach((col: any) => {
+        if (!uniqueColumnsMap.has(col.id)) {
+          uniqueColumnsMap.set(col.id, col);
+        }
+      });
+      let columns = Array.from(uniqueColumnsMap.values());
+
+      console.log(`[PrinChat UI] Loaded ${columns.length} unique columns (from ${rawColumns.length} raw)`);
+
+
+      console.log('[PrinChat UI] 🔍 DEBUG: About to fetch/check labels. this.globalLabels.length =', this.globalLabels.length);
 
       // Fetch Global Labels (if not cached)
       if (this.globalLabels.length === 0) {
@@ -11145,6 +11206,49 @@ class WhatsAppUIOverlay {
         }
       } else {
         console.log('[PrinChat UI] Using cached global labels:', this.globalLabels.length);
+      }
+
+      // Auto-save labels as Tags to DB for Sync (Run Once per session)
+      if (!this.hasSyncedTags && this.globalLabels.length > 0) {
+        console.log('[PrinChat UI] 🏷️ Syncing labels to DB (Once per session)...');
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (const [index, label] of this.globalLabels.entries()) {
+          // SAFETY: Determine correct ID (handle object vs string)
+          let rawId = label.id;
+          if (typeof rawId === 'object' && rawId !== null) {
+            rawId = rawId._serialized || rawId.user || rawId.toString();
+          }
+
+          // Fallback for objects
+          if (String(rawId) === '[object Object]') {
+            console.error(`[PrinChat UI] ❌ Label ID is [object Object] for "${label.name}". Randomizing.`);
+            rawId = `fallback-${index}-${Date.now()}`;
+          }
+
+          const tagId = `wa-label-${rawId}`;
+
+          try {
+            await this.requestFromContentScript({
+              type: 'SAVE_TAG',
+              payload: {
+                id: tagId,
+                name: label.name,
+                color: label.color || '#2196f3',
+                createdAt: Date.now(),
+                updatedAt: Date.now()
+              }
+            });
+            successCount++;
+          } catch (e) {
+            console.error(`[PrinChat UI] ❌ Error saving tag "${label.name}":`, e);
+            errorCount++;
+          }
+        }
+
+        console.log(`[PrinChat UI] 🏷️ Tag sync completed: ${successCount} success, ${errorCount} errors`);
+        this.hasSyncedTags = true;
       }
 
       // Fetch All Leads
@@ -11180,10 +11284,13 @@ class WhatsAppUIOverlay {
         }
         fetchCount++;
 
+        // If chatPhoto is explicitly null (no photo), use undefined to show placeholder
+        const finalPhoto = info.chatPhoto === null ? undefined : (info.chatPhoto || lead.photo);
+
         leadsWithContactInfo.push({
           ...lead,
           name: info.chatName || lead.name,
-          photo: info.chatPhoto || lead.photo,
+          photo: finalPhoto,
           labels: info.labels || [],
           tags: (info.labels || []).map((l: any) => l.id)
         });
@@ -11211,7 +11318,13 @@ class WhatsAppUIOverlay {
       this.setupColumnDragAndDrop();
 
       if (this.kanbanOverlay) {
-        this.initSortable(this.kanbanOverlay);
+        // Immediate init on next frame (No 500ms delay)
+        requestAnimationFrame(() => {
+          if (!this.kanbanOverlay || this.isSortableInitialized) return;
+
+          this.initSortable(this.kanbanOverlay);
+          this.isSortableInitialized = true;
+        });
       }
 
       // Sanity Check
@@ -11575,6 +11688,7 @@ class WhatsAppUIOverlay {
       });
       this.sortableInstances = [];
     }
+    this.isSortableInitialized = false;
   }
 
   /**
@@ -11591,19 +11705,19 @@ class WhatsAppUIOverlay {
         group: 'kanban', // Allow dragging between lists
         animation: 150,  // Smooth animation
         ghostClass: 'princhat-kanban-ghost', // Class for the placeholder
-        dragClass: 'princhat-kanban-drag',   // Class for the dragging item (restored for native drag if needed)
+        dragClass: 'princhat-kanban-drag',   // Class for the dragging item
         delay: 50, // Small delay to prevent accidental drags
         delayOnTouchOnly: true,
         filter: '.princhat-no-drag', // Disable dragging on specific elements
         preventOnFilter: false, // Allow clicks on filtered elements
 
-        // Native Drag & Drop (No forceFallback)
+        // Native Drag & Drop (Restored)
 
         onStart: () => {
           document.body.classList.add('kanban-is-dragging');
         },
 
-        onEnd: (evt) => {
+        onEnd: async (evt) => {
           document.body.classList.remove('kanban-is-dragging');
           const itemEl = evt.item as HTMLElement;  // dragged HTMLElement
           const toEl = evt.to;      // target list
@@ -11611,20 +11725,66 @@ class WhatsAppUIOverlay {
 
           const leadId = itemEl.getAttribute('data-lead-id');
           const newColumnId = toEl.getAttribute('data-column-id');
-          const newIndex = evt.newIndex;
+          // const newIndex = evt.newIndex; // We won't trust single index, we re-index ALL
 
-          console.log('[PrinChat] Sortable drop:', { leadId, to: newColumnId, index: newIndex });
+          console.log('[PrinChat] Sortable drop:', { leadId, to: newColumnId });
 
           if (leadId && newColumnId) {
-            // Sync with backend
-            this.requestFromContentScript({
-              type: 'MOVE_KANBAN_LEAD',
-              payload: {
-                leadId,
-                newColumnId,
-                newOrder: newIndex || 0
+            // CRITICAL FIX: Re-index ALL cards in the destination column to ensure valid order
+            // This prevents "position reset" or "random sort" on reload due to duplicate indices
+
+            const allCardsInCol = toEl.querySelectorAll('.princhat-kanban-lead-card');
+            const updates: Promise<any>[] = [];
+
+            console.log(`[PrinChat] Re-indexing ${allCardsInCol.length} cards in column ${newColumnId}...`);
+            // Debug: Print the visual order (IDs)
+            const visualOrderIds = Array.from(allCardsInCol).map(c => c.getAttribute('data-lead-id'));
+            console.log('[PrinChat] Visual Order:', visualOrderIds);
+
+            allCardsInCol.forEach((card, index) => {
+              const cardId = (card as HTMLElement).getAttribute('data-lead-id');
+              if (cardId) {
+                // Log payload for debugging
+                console.log(`[PrinChat] Queueing update: Lead ${cardId} -> Order ${index}`);
+                // If it's the moved card, send MOVE (updates column + order)
+                // If it's a sibling, send UPDATE (updates order only)
+                // Actually, MOVE handles both efficiently if we just use it.
+                // But let's use UPDATE_KANBAN_LEAD for siblings to avoid side effects?
+                // Simpler: Send MOVE for the main one, and explicit ORDER update for others.
+
+                // Optimized: 
+                // 1. Move the dragged card first (to switch columns)
+                // 2. Update order for everyone
+
+                if (cardId === leadId) {
+                  updates.push(this.requestFromContentScript({
+                    type: 'MOVE_KANBAN_LEAD',
+                    payload: {
+                      leadId: cardId,
+                      newColumnId, // Change column
+                      newOrder: index // Set explicit index
+                    }
+                  }));
+                } else {
+                  // Just update order for siblings
+                  updates.push(this.requestFromContentScript({
+                    type: 'UPDATE_KANBAN_LEAD', // Use generic update for same-column reorder
+                    payload: {
+                      leadId: cardId,
+                      updates: { order: index, columnId: newColumnId } // Ensure column consistency
+                    }
+                  }));
+                }
               }
-            }).catch(err => console.error('[PrinChat] Error moving lead:', err));
+            });
+
+            // Execute all updates
+            try {
+              await Promise.all(updates);
+              console.log('[PrinChat] ✅ Re-indexing completed.');
+            } catch (err) {
+              console.error('[PrinChat] ❌ Error re-indexing column:', err);
+            }
           }
         }
       });

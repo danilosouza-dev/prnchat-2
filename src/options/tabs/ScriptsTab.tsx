@@ -112,7 +112,7 @@ const ScriptsTab: React.FC<ScriptsTabProps> = ({ setHeaderActions }) => {
     setIsCreating(true);
     setEditingScript(script);
     setFormData({
-      name: script.name,
+      name: script.name || script.title,
       description: script.description || '',
       steps: script.steps,
     });
@@ -151,6 +151,7 @@ const ScriptsTab: React.FC<ScriptsTabProps> = ({ setHeaderActions }) => {
       const script: Script = {
         id: editingScript?.id || generateId(),
         name: formData.name,
+        title: formData.name, // Required for sync
         description: formData.description,
         steps: formData.steps,
         totalDuration: calculateTotalDuration(),
@@ -159,6 +160,14 @@ const ScriptsTab: React.FC<ScriptsTabProps> = ({ setHeaderActions }) => {
       };
 
       await db.saveScript(script);
+      // Auto-sync
+      try {
+        const { syncService } = await import('@/services/sync-service');
+        await syncService.syncScript(script);
+      } catch (e) {
+        console.error('Auto-sync failed:', e);
+      }
+
       await loadData();
       handleCancel();
 
@@ -183,6 +192,14 @@ const ScriptsTab: React.FC<ScriptsTabProps> = ({ setHeaderActions }) => {
 
     try {
       await db.deleteScript(scriptToDelete);
+      // Auto-sync delete
+      try {
+        const { syncService } = await import('@/services/sync-service');
+        await syncService.deleteScript(scriptToDelete);
+      } catch (e) {
+        console.error('Auto-sync delete failed:', e);
+      }
+
       await loadData();
       setDeleteDialogOpen(false);
       setScriptToDelete(null);
@@ -244,7 +261,7 @@ const ScriptsTab: React.FC<ScriptsTabProps> = ({ setHeaderActions }) => {
                     <div className="flex-1">
                       <CardTitle className="text-lg font-semibold text-foreground mb-1 flex items-center gap-2">
                         <Zap size={18} className="text-[#e91e63] flex-shrink-0" />
-                        {script.name}
+                        {script.name || script.title}
                       </CardTitle>
                       {script.description && (
                         <CardDescription className="text-sm text-muted-foreground mt-1">

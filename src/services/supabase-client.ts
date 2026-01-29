@@ -19,12 +19,17 @@ export async function getSupabaseClient(): Promise<SupabaseClient | null> {
         return null; // Force login
     }
 
-    // Create a client instance
+    // Create a client instance with dummy storage for Service Worker compatibility
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
         auth: {
             persistSession: false, // We handle persistence manually in chrome.storage
             autoRefreshToken: true, // Allow SDK to try refreshing if setSession is called
-            detectSessionInUrl: false
+            detectSessionInUrl: false,
+            storage: {
+                getItem: () => null,
+                setItem: () => { },
+                removeItem: () => { },
+            },
         }
     });
 
@@ -36,9 +41,12 @@ export async function getSupabaseClient(): Promise<SupabaseClient | null> {
 
     if (error) {
         console.error('[PrinChat Sync] Failed to restore session:', error.message);
-        // If refresh token is invalid (e.g. revoked), clearing storage might be good, 
-        // but let's just return null so user is prompted to login again.
-        return null;
+
+        // Critical: Clear storage to force UI to show Login screen
+        // Otherwise UI thinks user is logged in (zombie session)
+        await chrome.storage.sync.remove(['auth_session']);
+
+        return null; // Forces re-login
     }
 
     // Check if the session was refreshed (token changed)

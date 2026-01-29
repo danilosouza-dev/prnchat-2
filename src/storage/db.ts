@@ -578,6 +578,9 @@ class DatabaseService {
         tags: Date.now() // Use timestamp to ensure value changes
       });
     }
+
+    // Trigger sync
+    syncService.syncTag(tag).catch(console.error);
   }
 
   async getTag(id: string): Promise<Tag | undefined> {
@@ -600,6 +603,9 @@ class DatabaseService {
         tags: Date.now() // Use timestamp to ensure value changes
       });
     }
+
+    // Trigger sync
+    syncService.deleteTag(id).catch(console.error);
   }
 
   // ==================== FOLDERS ====================
@@ -685,6 +691,9 @@ class DatabaseService {
         signatures: Date.now() // Use timestamp to ensure value changes
       });
     }
+
+    // Trigger sync
+    syncService.syncSignature(signature).catch(console.error);
   }
 
   async getAllSignatures(): Promise<Signature[]> {
@@ -721,14 +730,18 @@ class DatabaseService {
     // Deactivate all signatures
     for (const sig of allSignatures) {
       if (sig.isActive) {
-        await db.put('signatures', { ...sig, isActive: false, updatedAt: Date.now() });
+        const updatedSig = { ...sig, isActive: false, updatedAt: Date.now() };
+        await db.put('signatures', updatedSig);
+        syncService.syncSignature(updatedSig).catch(console.error);
       }
     }
 
     // Activate the selected signature
     const targetSignature = await db.get('signatures', id);
     if (targetSignature) {
-      await db.put('signatures', { ...targetSignature, isActive: true, updatedAt: Date.now() });
+      const updatedTarget = { ...targetSignature, isActive: true, updatedAt: Date.now() };
+      await db.put('signatures', updatedTarget);
+      syncService.syncSignature(updatedTarget).catch(console.error);
     }
 
     // Trigger chrome.storage change event
@@ -1283,7 +1296,14 @@ class DatabaseService {
   async getLeadsByColumn(columnId: string): Promise<LeadContact[]> {
     const db = await this.init();
     const leads = await db.getAllFromIndex('kanban_leads', 'by-columnId', columnId);
-    return leads.sort((a, b) => a.order - b.order);
+    const sorted = leads.sort((a, b) => a.order - b.order);
+
+    // Debug: Log first 3 leads to verify order
+    if (sorted.length > 0) {
+      console.log(`[PrinChat DB] Loaded column ${columnId}:`, sorted.map(l => `${l.id.substring(0, 5)}..(${l.order})`));
+    }
+
+    return sorted;
   }
 
   /**

@@ -1603,15 +1603,14 @@
                     }
                   });
                 }
-              } catch (e) {
-                console.error('Strategy 3 failed', e);
+              } catch (e: any) {
+                console.warn('[PrinChat Page] ℹ️ Strategy 3 (WPP.chat.get) warning:', e?.message || 'unknown');
               }
-            }
-
-          } else {
+            } // Close Strategy 3 if
+          } // Close Store.Label if
+          else {
             // Store.Label is undefined -> Standard WhatsApp.
             // SKIP all label fetching strategies to prevent delay.
-            // console.log('[PrinChat Page] ⚡ Standard WhatsApp detected (No Store.Label). Skipping tag fetch.');
           }
 
           console.log('[PrinChat Page] 🏷️ FINAL TAGS:', chatTags);
@@ -1648,6 +1647,7 @@
         console.log(`[PrinChat Page] 🏷️ Fetching ALL labels (Attempts left: ${attemptsLeft})...`);
         const Store = (window as any).Store;
         const WPP = (window as any).WPP;
+        console.log('[PrinChat Page] 🏷️ WPP Object available:', !!WPP);
 
         const allLabels: any[] = [];
         const seenIds = new Set<string>();
@@ -1740,7 +1740,15 @@
         calibrateLabelsFromDOM();
 
         const addDef = (l: any) => {
-          if (!l || seenIds.has(l.id)) return;
+          if (!l) return;
+
+          // EXTRACT ID SAFELY (Fix for [object Object] issue)
+          let labelId = l.id;
+          if (typeof labelId === 'object' && labelId !== null) {
+            labelId = labelId._serialized || labelId.toString();
+          }
+
+          if (!labelId || seenIds.has(labelId)) return;
 
           // 🔍 DEBUG: Log EVERYTHING WPPConnect gives us for this label
           console.log(`[PrinChat Page] 📋 RAW LABEL DATA for "${l.name || l.id}":`, JSON.stringify(l, null, 2));
@@ -1769,34 +1777,42 @@
           console.log(`[PrinChat Page] 🎨 Color for "${l.name}": ${finalColor} (source: ${colorSource})`);
 
           allLabels.push({
-            id: l.id,
+            id: labelId,
             name: l.name,
             color: finalColor
           });
 
-          seenIds.add(l.id);
+          seenIds.add(labelId);
         };
 
-        // 1. WPP
-        if (WPP?.label?.getLabels) {
+        // PRIORITY 1: WPPConnect (User suggested, usually more reliable for full list)
+        if ((window as any).WPP?.label?.getLabels) {
           try {
-            const wppLabels = await WPP.label.getLabels();
-            if (Array.isArray(wppLabels)) {
+            console.log('[PrinChat Page] 🏷️ Strategy 1: WPP.label.getLabels()');
+            const wppLabels = await (window as any).WPP.label.getLabels();
+            if (Array.isArray(wppLabels) && wppLabels.length > 0) {
+              console.log(`[PrinChat Page] 🏷️ WPP found ${wppLabels.length} labels`);
               wppLabels.forEach(addDef);
             }
-          } catch (e) { console.error('WPP fetch failed', e); }
+          } catch (e) { console.error('[PrinChat Page] WPP fetch failed', e); }
         }
 
-        // 2. Store.Label (common)
+        // PRIORITY 2: Store.Label (Internal)
         if (Store?.Label) {
+          console.log('[PrinChat Page] 🏷️ Strategy 2: Store.Label models');
           const models = Store.Label.models || Store.Label._models || Store.Label.getModelsArray?.() || [];
-          models.forEach(addDef);
+          if (models.length > 0) {
+            console.log(`[PrinChat Page] 🏷️ Store.Label found ${models.length} models`);
+            models.forEach(addDef);
+          }
         }
 
-        // 3. Store.Labels (plural fallback)
+        // PRIORITY 3: Store.Labels (Internal Plural - rarer)
         if (Store?.Labels) {
           const models = Store.Labels.models || Store.Labels._models || [];
-          models.forEach(addDef);
+          if (models.length > 0) {
+            models.forEach(addDef);
+          }
         }
 
         if (allLabels.length > 0) return allLabels;
@@ -2062,13 +2078,37 @@
               }
             }
 
+            // Fetch labels with full details (id, name, color)
+            let chatLabels: { id: string, name: string, color?: string }[] = [];
+            try {
+              const labelIds = chat.labels || [];
+              if (labelIds.length > 0 && Store?.Label) {
+                const allLabels = Store.Label.models || Store.Label._models || [];
+                labelIds.forEach((labelId: string) => {
+                  let label = Store.Label.get(labelId);
+                  if (!label && allLabels.length > 0) {
+                    label = allLabels.find((m: any) => m.id === labelId || m.id._serialized === labelId);
+                  }
+                  if (label) {
+                    chatLabels.push({
+                      id: label.id,
+                      name: label.name,
+                      color: label.color || label.hexColor
+                    });
+                  }
+                });
+              }
+            } catch (e) {
+              console.error('[PrinChat Page] Error fetching labels for GET_CHAT_INFO:', e);
+            }
+
             response = {
               success: true,
               data: {
                 chatName: displayName,
                 chatPhoto: chatPhoto,
                 isGroup: chat.isGroup,
-                tags: chat.labels || []
+                labels: chatLabels
               }
             };
           } else {

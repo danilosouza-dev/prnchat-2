@@ -1475,8 +1475,14 @@
         case 'GET_NOTES_BY_CHAT':
         case 'GET_NOTE':
         case 'DELETE_NOTE':
+        case 'FORCE_INIT':
+        case 'GET_KANBAN_COLUMNS':
+        case 'SAVE_KANBAN_COLUMN':
+        case 'DELETE_KANBAN_COLUMN':
+        case 'MOVE_KANBAN_LEAD': // Whitelist lead movement
+        case 'DELETE_KANBAN_LEAD': // Whitelist lead deletion
           // Forward note operations to background service worker
-          console.log('[PrinChat] Forwarding note operation to background:', action.type);
+          console.log('[PrinChat] Forwarding note/kanban operation to background:', action.type);
           return await chrome.runtime.sendMessage(action);
 
         case 'SET_ACTIVE_SIGNATURE':
@@ -1485,8 +1491,9 @@
         case 'SAVE_SIGNATURE':
         case 'GET_SIGNATURES':
         case 'GET_SIGNATURE':
-          // Forward signature operations to background service worker
-          console.log('[PrinChat] Forwarding signature operation to background:', action.type);
+        case 'SAVE_TAG': // Whitelist tag saving
+          // Forward signature/tag operations to background service worker
+          console.log('[PrinChat] Forwarding operation to background:', action.type);
           return await chrome.runtime.sendMessage(action);
 
         default:
