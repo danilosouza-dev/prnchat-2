@@ -11,6 +11,11 @@
 import { db } from '../storage/db';
 import { syncService } from '../services/sync-service';
 
+// Polyfill window for libraries that expect it (e.g. Supabase internals)
+if (typeof self !== 'undefined' && typeof window === 'undefined') {
+  (self as any).window = self;
+}
+
 class BackgroundService {
   private injectedTabs = new Set<number>();
   private executingSchedules = new Set<string>(); // Track schedules currently executing
@@ -93,6 +98,20 @@ class BackgroundService {
       case 'PING':
         sendResponse({ success: true, data: 'PONG' });
         break;
+
+      case 'TRIGGER_MANUAL_SYNC':
+        console.log('[PrinChat] Manual Sync requested by UI/Content Script');
+        syncService.fetchAndSyncInitialData()
+          .then((result) => sendResponse({ success: true, result }))
+          .catch((error) => sendResponse({ success: false, error: error.message }));
+        return true;
+
+      case 'FORCE_INIT':
+        console.log('[PrinChat] Force Init requested by UI');
+        syncService.fetchAndSyncInitialData()
+          .then((result) => sendResponse({ success: true, result })) // Pass result object
+          .catch((error) => sendResponse({ success: false, error: error.message }));
+        return true;
 
       case 'INJECT_PAGE_SCRIPTS':
         // Content script is asking us to inject the page scripts
@@ -261,6 +280,19 @@ class BackgroundService {
             console.log('[PrinChat] Canceled alarm:', alarmName);
             sendResponse({ success: true });
           })
+          .catch((error) => sendResponse({ success: false, error: error.message }));
+        return true;
+
+      // ==================== TAGS ====================
+      case 'SAVE_TAG':
+        db.saveTag(message.payload)
+          .then(() => sendResponse({ success: true }))
+          .catch((error) => sendResponse({ success: false, error: error.message }));
+        return true;
+
+      case 'DELETE_TAG':
+        db.deleteTag(message.payload.id)
+          .then(() => sendResponse({ success: true }))
           .catch((error) => sendResponse({ success: false, error: error.message }));
         return true;
 

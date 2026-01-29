@@ -85,6 +85,7 @@ export default defineConfig({
           }
           return '[name].js';
         },
+        // chunkFileNames removed because IIFE doesn't support code splitting (usually)
         chunkFileNames: 'chunks/[name]-[hash].js',
         assetFileNames: 'assets/[name]-[hash].[ext]'
       }
