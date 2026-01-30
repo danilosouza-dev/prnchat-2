@@ -473,8 +473,9 @@
 
         await Store.SendMessage.addAndSendMsgToChat(targetChat, message);
 
+        const targetChatId = targetChat.id?._serialized || targetChat.id?.toString() || '';
         document.dispatchEvent(new CustomEvent('PrinChatMessageSent', {
-          detail: { success: true, requestId, method: 'STORE_API' }
+          detail: { success: true, requestId, method: 'STORE_API', chatId: targetChatId, text }
         }));
       } catch (error: any) {
         document.dispatchEvent(new CustomEvent('PrinChatMessageSent', {
@@ -647,8 +648,11 @@
 
         console.log('[PrinChat Page] ✅ Audio sent successfully!');
 
+        const sentChatId = typeof targetChat.id === 'string'
+          ? targetChat.id
+          : (targetChat.id?._serialized || String(targetChat.id));
         document.dispatchEvent(new CustomEvent('PrinChatMessageSent', {
-          detail: { success: true, requestId, method: 'STORE_API_PURE' }
+          detail: { success: true, requestId, method: 'STORE_API_PURE', chatId: sentChatId }
         }));
       } catch (error: any) {
         console.error('[PrinChat Page] ❌ ERROR in audio send:', error);
@@ -764,7 +768,7 @@
         );
 
         document.dispatchEvent(new CustomEvent('PrinChatMessageSent', {
-          detail: { success: true, requestId, method: 'IMAGE' }
+          detail: { success: true, requestId, method: 'IMAGE', chatId: chatIdString }
         }));
       } catch (error: any) {
         debugLog(`❌ ERROR: ${error.message}`, '#ff0000');
@@ -898,7 +902,7 @@
         }
 
         document.dispatchEvent(new CustomEvent('PrinChatMessageSent', {
-          detail: { success: true, requestId, method: 'VIDEO' }
+          detail: { success: true, requestId, method: 'VIDEO', chatId: chatIdString }
         }));
       } catch (error: any) {
         debugLog(`❌ ERROR: ${error.message}`, '#ff0000');
@@ -1015,7 +1019,7 @@
         });
 
         document.dispatchEvent(new CustomEvent('PrinChatMessageSent', {
-          detail: { success: true, requestId, method: 'FILE' }
+          detail: { success: true, requestId, method: 'FILE', chatId: chatIdString }
         }));
       } catch (error: any) {
         debugLog(`❌ ERROR: ${error.message}`, '#ff0000');
@@ -1024,6 +1028,95 @@
         }));
       }
     });
+
+    // =========================================================================
+    // DETECT OUTGOING MESSAGES (when user sends message directly in WhatsApp Web)
+    // =========================================================================
+    const detectOutgoingMessages = () => {
+      const Store = (window as any).Store;
+      const WPP = (window as any).WPP;
+      
+      console.log('[PrinChat Page] 🎯 Setting up outgoing message detector...');
+      
+      // Method 1: Use WPP.chat.onChatSeen (fires when chat changes, including when sending)
+      if (WPP?.chat?.onChatSeen) {
+        try {
+          WPP.chat.onChatSeen((chat: any) => {
+            console.log('[PrinChat Page] 📤 Chat seen event:', chat);
+          });
+        } catch (e) {
+          console.log('[PrinChat Page] ⚠️ WPP onChatSeen failed:', e);
+        }
+      }
+      
+      // Method 2: Monitor Store.Chat.active changes
+      if (Store && Store.Chat) {
+        try {
+          const originalSetActive = Store.Chat.setActive;
+          if (originalSetActive) {
+            Store.Chat.setActive = function(...args: any[]) {
+              console.log('[PrinChat Page] 📤 Chat setActive called:', args);
+              return originalSetActive.apply(this, args);
+            };
+          }
+        } catch (e) {
+          console.log('[PrinChat Page] ⚠️ Monitor active chat failed:', e);
+        }
+      }
+      
+      // Detect outgoing messages by monitoring Store.Chat models
+      let lastMsgCount = new Map(); // chatId -> msg count
+      
+      setInterval(() => {
+        try {
+          const activeChat = Store.Chat.getActive();
+          if (!activeChat || !activeChat.id) return;
+          
+          const chatId = activeChat.id._serialized || String(activeChat.id);
+          const msgs = activeChat.msgs;
+          if (!msgs || !msgs.models) return;
+          
+          const currentCount = msgs.length;
+          const lastCount = lastMsgCount.get(chatId) || 0;
+          
+          // Check if new messages were added
+          if (currentCount > lastCount) {
+            // Get the newest message
+            const lastMsg = msgs.models[currentCount - 1];
+            
+            if (lastMsg && lastMsg.fromMe) {
+              const text = lastMsg.body || '';
+              
+              console.log('[PrinChat Page] 📤 Outgoing message detected:', { 
+                chatId, 
+                text: text.substring(0, 50)
+              });
+              
+              document.dispatchEvent(new CustomEvent('PrinChatMessageSent', {
+                detail: { 
+                  success: true, 
+                  requestId: 'outgoing-' + Date.now(), 
+                  method: 'DETECTED', 
+                  chatId, 
+                  text 
+                }
+              }));
+            }
+          }
+          
+          lastMsgCount.set(chatId, currentCount);
+        } catch (e) {
+          // Ignore errors
+        }
+      }, 500);
+      
+      console.log('[PrinChat Page] ✅ Outgoing message detector initialized');
+      
+      return true;
+    };
+    
+    // Initialize detector after page loads
+    setTimeout(detectOutgoingMessages, 2000);
 
     // Listen for active chat info requests
     document.addEventListener('PrinChatGetActiveChat', async (event: any) => {
@@ -2102,13 +2195,43 @@
               console.error('[PrinChat Page] Error fetching labels for GET_CHAT_INFO:', e);
             }
 
+            // Try to get the real phone number (not Instagram/Facebook ID)
+            // For Instagram contacts, the chatId is an internal ID, not the phone
+            let phoneNumber = chat.contact?.number 
+              || chat.contact?.userid 
+              || chat.contact?.pn;
+            
+            // If no phone number from contact fields, try to convert LID to phone
+            // Using WPP.whatsapp.lidPnCache.getPhoneNumber if available
+            if (!phoneNumber && chatId.includes('@lid')) {
+              try {
+                const WPP = (window as any).WPP;
+                if (WPP?.whatsapp?.lidPnCache?.getPhoneNumber) {
+                  const wid = WPP.whatsapp.WidFactory.createWid(chatId);
+                  const phoneWid = WPP.whatsapp.lidPnCache.getPhoneNumber(wid);
+                  if (phoneWid) {
+                    phoneNumber = phoneWid._serialized || phoneWid.toString();
+                    console.log('[PrinChat Page] ✅ Converted LID to phone:', chatId, '->', phoneNumber);
+                  }
+                }
+              } catch (lidError) {
+                console.warn('[PrinChat Page] Failed to convert LID to phone:', lidError);
+              }
+            }
+            
+            // Fallback to chatId if still no phone number
+            if (!phoneNumber) {
+              phoneNumber = chatId.split('@')[0];
+            }
+
             response = {
               success: true,
               data: {
                 chatName: displayName,
                 chatPhoto: chatPhoto,
                 isGroup: chat.isGroup,
-                labels: chatLabels
+                labels: chatLabels,
+                phoneNumber: phoneNumber
               }
             };
           } else {
