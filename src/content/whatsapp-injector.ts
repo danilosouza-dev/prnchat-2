@@ -517,11 +517,11 @@
       this.setupNavigationObserver();
 
       // Listen for responses from page script
-      document.addEventListener('PrinChatMessageSent', (event: any) => {
+      document.addEventListener('PrinChatMessageSent', async (event: any) => {
         console.log('[PrinChat] 📨 PrinChatMessageSent event received!', event.detail);
 
-        const { success, error, requestId } = event.detail;
-        console.log('[PrinChat] Event details:', { success, error, requestId });
+        const { success, error, requestId, chatId, text } = event.detail;
+        console.log('[PrinChat] Event details:', { success, error, requestId, chatId, text });
         console.log('[PrinChat] Pending requests:', Array.from(this.pendingRequests.keys()));
 
         const pending = this.pendingRequests.get(requestId);
@@ -538,6 +538,71 @@
           this.pendingRequests.delete(requestId);
         } else {
           console.warn('[PrinChat] ⚠️ No pending request found for requestId:', requestId);
+        }
+
+        // If message was sent successfully, update lead (reset unread count and update last message)
+        if (success && chatId) {
+          try {
+            console.log('[PrinChat Kanban] Message sent, updating lead for:', chatId);
+            const leadsResponse = await chrome.runtime.sendMessage({ type: 'GET_ALL_KANBAN_LEADS' });
+            const allLeads = leadsResponse?.data || [];
+            
+            // Normalize chatId for comparison (remove @c.us, @lid, etc.)
+            const normalizeId = (id: string) => {
+              if (!id) return '';
+              return id.replace(/@c\.us|@lid|@g\.us|@s\.whatsapp\.net/g, '');
+            };
+            const normalizedChatId = normalizeId(chatId);
+            
+            // Find lead with flexible matching
+            const existingLead = allLeads.find((l: any) => {
+              const leadId = l.id || '';
+              const leadChatId = l.chatId || '';
+              return normalizeId(leadId) === normalizedChatId || 
+                     normalizeId(leadChatId) === normalizedChatId ||
+                     leadId === chatId || 
+                     leadChatId === chatId;
+            });
+            
+            console.log('[PrinChat Kanban] Looking for lead with chatId:', chatId, 'normalized:', normalizedChatId, 'found:', !!existingLead);
+            
+            if (existingLead) {
+              const updates: any = {};
+              
+              // Reset unread count if > 0
+              if (existingLead.unreadCount > 0) {
+                updates.unreadCount = 0;
+              }
+              
+              // Update last message preview with my message (if text available)
+              if (text) {
+                updates.lastMessage = text;
+                updates.lastMessageTime = Date.now();
+              }
+              
+              // Only update if there are changes
+              if (Object.keys(updates).length > 0) {
+                await chrome.runtime.sendMessage({
+                  type: 'UPDATE_KANBAN_LEAD',
+                  payload: {
+                    leadId: existingLead.id,
+                    updates
+                  }
+                });
+                console.log('[PrinChat Kanban] ✅ Lead updated:', chatId, updates);
+                
+                // Dispatch event for real-time UI update
+                document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
+                  detail: {
+                    leadId: existingLead.id,
+                    updates
+                  }
+                }));
+              }
+            }
+          } catch (e) {
+            console.error('[PrinChat Kanban] Error updating lead after message sent:', e);
+          }
         }
       });
 
@@ -681,11 +746,16 @@
 
             let chatName = '';
             let chatPhoto = '';
+            let phoneNumber = chatId.split('@')[0]; // Default to chatId
 
             if (chatInfoResponse.success && chatInfoResponse.data) {
               chatName = chatInfoResponse.data.chatName || '';
               chatPhoto = chatInfoResponse.data.chatPhoto || '';
-              console.log('[PrinChat Kanban] Got contact info:', { name: chatName, hasPhoto: !!chatPhoto, tags: chatInfoResponse.data.tags });
+              // Use the real phone number from API (not Instagram/Facebook ID)
+              if (chatInfoResponse.data.phoneNumber) {
+                phoneNumber = chatInfoResponse.data.phoneNumber;
+              }
+              console.log('[PrinChat Kanban] Got contact info:', { name: chatName, hasPhoto: !!chatPhoto, phone: phoneNumber, tags: chatInfoResponse.data.tags });
             } else {
               console.warn('[PrinChat Kanban] Could not get chat info, using chatId as name');
             }
@@ -700,11 +770,15 @@
               return;
             }
 
+            // Format phone number for display if no name
+            // Use the real phone number (not Instagram/Facebook internal ID)
+            const formattedName = chatName || this.formatPhoneNumber(phoneNumber);
+
             // Create new lead with unread count
             const newLead = {
-              phone: chatId.split('@')[0],
+              phone: phoneNumber,
               chatId: chatId,
-              name: chatName || chatId.split('@')[0],
+              name: formattedName,
               photo: chatPhoto || '',
               columnId: recentesColumn.id,
               order: 0,
@@ -795,7 +869,7 @@
             message.type === 'UPDATE_KANBAN_COLUMN' || message.type === 'DELETE_KANBAN_COLUMN' ||
             message.type === 'UPDATE_COLUMN_ORDER' || message.type === 'GET_ALL_KANBAN_LEADS' ||
             message.type === 'CREATE_KANBAN_LEAD' || message.type === 'MOVE_KANBAN_LEAD' ||
-            message.type === 'DELETE_KANBAN_LEAD' ||
+            message.type === 'UPDATE_KANBAN_LEAD' || message.type === 'DELETE_KANBAN_LEAD' ||
             message.type === 'FETCH_MEDIA_BLOB') {
             console.log('[PrinChat] Forwarding to background service worker:', message.type);
 
@@ -1480,6 +1554,7 @@
         case 'SAVE_KANBAN_COLUMN':
         case 'DELETE_KANBAN_COLUMN':
         case 'MOVE_KANBAN_LEAD': // Whitelist lead movement
+        case 'UPDATE_KANBAN_LEAD': // Whitelist lead update
         case 'DELETE_KANBAN_LEAD': // Whitelist lead deletion
           // Forward note operations to background service worker
           console.log('[PrinChat] Forwarding note/kanban operation to background:', action.type);
@@ -2148,6 +2223,53 @@
           detail: { requestId, chatId }
         }));
       });
+    }
+
+    /**
+     * Format phone number for display
+     * Examples:
+     *   - Brazil (55): 5511987654321 -> +55 11 98765-4321
+     *   - US (1): 18608382021 -> +1 (860) 838-2021
+     *   - Instagram/Facebook IDs (15+ digits): return as-is (not a phone number)
+     */
+    private formatPhoneNumber(phone: string): string {
+      const digits = phone.replace(/\D/g, '');
+      
+      // CRITICAL: IDs from Instagram/Facebook integration are 15+ digits
+      // These are NOT phone numbers - they are internal WhatsApp IDs
+      // Real phone numbers max out at ~13 digits
+      if (digits.length >= 15) {
+        return phone; // Return original without formatting
+      }
+      
+      if (digits.length < 10) {
+        return digits;
+      }
+
+      // Brazil (12-13 digits)
+      if (digits.startsWith('55') && digits.length >= 12 && digits.length <= 13) {
+        const ddd = digits.substring(2, 4);
+        const number = digits.substring(4);
+        if (number.length === 9) {
+          return `+55 (${ddd}) ${number.substring(0, 5)}-${number.substring(5)}`;
+        } else {
+          return `+55 (${ddd}) ${number.substring(0, 4)}-${number.substring(4)}`;
+        }
+      }
+
+      // US/Canada (exactly 11 digits)
+      if (digits.startsWith('1') && digits.length === 11) {
+        return `+1 (${digits.substring(1, 4)}) ${digits.substring(4, 7)}-${digits.substring(7)}`;
+      }
+
+      // Generic international (up to 14 digits)
+      if (digits.length > 10 && digits.length < 15) {
+        const countryCode = digits.substring(0, digits.length - 10);
+        const rest = digits.substring(digits.length - 10);
+        return `+${countryCode} ${rest.substring(0, 3)} ${rest.substring(3, 6)}-${rest.substring(6)}`;
+      }
+
+      return `+${digits}`;
     }
 
     private async getAllLabels(): Promise<any> {

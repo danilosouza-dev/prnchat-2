@@ -11442,12 +11442,16 @@ class WhatsAppUIOverlay {
       <div class="princhat-kanban-column-body" data-column-id="${column.id}">
 
         ${leads.map((lead: any) => {
-      // Debug missing names
-      if (!lead.name || /^\d+@/.test(lead.name)) {
-        console.log('[PrinChat UI] ⚠️ Rendering card with missing/raw name:', lead);
+      // Check if name is an Instagram/Facebook ID (15+ digits)
+      // IDs like 186083820216376@c.us or 186083820216376@lid should show "Lead"
+      const isInstagramId = /^\d{15,}/.test(lead.name || '');
+      const displayName = isInstagramId ? 'Lead' : (lead.name || 'Desconhecido');
+      
+      if (isInstagramId) {
+        console.log('[PrinChat UI] ⚠️ Instagram ID detected, showing Lead:', lead.name);
       }
 
-      const safeName = this.escapeHtml(lead.name || 'Desconhecido');
+      const safeName = this.escapeHtml(displayName);
       const safeMessage = this.escapeHtml(lead.lastMessage || '');
       const safeId = this.escapeHtml(lead.id || lead.leadId || '');
 
@@ -11664,6 +11668,49 @@ class WhatsAppUIOverlay {
 
     // Drag listeners are now handled globally by setupGlobalKanbanListeners
     // No local listeners needed here
+
+    // Add click handler to cards to open chat and reset unread count
+    const cards = columnEl.querySelectorAll('.princhat-kanban-lead-card');
+    cards.forEach((cardEl: Element) => {
+      const leadId = (cardEl as HTMLElement).getAttribute('data-lead-id');
+      if (leadId) {
+        // Add click handler to the card (excluding buttons inside it)
+        cardEl.addEventListener('click', async (e) => {
+          // Don't trigger if clicking on buttons inside the card
+          const target = e.target as HTMLElement;
+          if (target.closest('.princhat-kanban-card-menu-btn') || 
+              target.closest('.princhat-kanban-delete-btn') ||
+              target.closest('.princhat-kanban-tag-more')) {
+            return;
+          }
+
+          console.log('[PrinChat UI] Card clicked, opening chat:', leadId);
+
+          // Reset unread count in database
+          try {
+            await chrome.runtime.sendMessage({
+              type: 'UPDATE_KANBAN_LEAD',
+              payload: {
+                leadId: leadId,
+                updates: { unreadCount: 0 }
+              }
+            });
+
+            // Update UI immediately
+            document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
+              detail: {
+                leadId: leadId,
+                updates: { unreadCount: 0 }
+              }
+            }));
+
+            console.log('[PrinChat UI] Unread count reset for lead:', leadId);
+          } catch (err) {
+            console.error('[PrinChat UI] Error resetting unread count:', err);
+          }
+        });
+      }
+    });
 
     return columnEl;
   }
