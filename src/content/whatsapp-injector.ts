@@ -546,40 +546,40 @@
             console.log('[PrinChat Kanban] Message sent, updating lead for:', chatId);
             const leadsResponse = await chrome.runtime.sendMessage({ type: 'GET_ALL_KANBAN_LEADS' });
             const allLeads = leadsResponse?.data || [];
-            
+
             // Normalize chatId for comparison (remove @c.us, @lid, etc.)
             const normalizeId = (id: string) => {
               if (!id) return '';
               return id.replace(/@c\.us|@lid|@g\.us|@s\.whatsapp\.net/g, '');
             };
             const normalizedChatId = normalizeId(chatId);
-            
+
             // Find lead with flexible matching
             const existingLead = allLeads.find((l: any) => {
               const leadId = l.id || '';
               const leadChatId = l.chatId || '';
-              return normalizeId(leadId) === normalizedChatId || 
-                     normalizeId(leadChatId) === normalizedChatId ||
-                     leadId === chatId || 
-                     leadChatId === chatId;
+              return normalizeId(leadId) === normalizedChatId ||
+                normalizeId(leadChatId) === normalizedChatId ||
+                leadId === chatId ||
+                leadChatId === chatId;
             });
-            
+
             console.log('[PrinChat Kanban] Looking for lead with chatId:', chatId, 'normalized:', normalizedChatId, 'found:', !!existingLead);
-            
+
             if (existingLead) {
               const updates: any = {};
-              
+
               // Reset unread count if > 0
               if (existingLead.unreadCount > 0) {
                 updates.unreadCount = 0;
               }
-              
+
               // Update last message preview with my message (if text available)
               if (text) {
                 updates.lastMessage = text;
                 updates.lastMessageTime = Date.now();
               }
-              
+
               // Only update if there are changes
               if (Object.keys(updates).length > 0) {
                 await chrome.runtime.sendMessage({
@@ -590,7 +590,7 @@
                   }
                 });
                 console.log('[PrinChat Kanban] ✅ Lead updated:', chatId, updates);
-                
+
                 // Dispatch event for real-time UI update
                 document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
                   detail: {
@@ -662,166 +662,167 @@
 
       // Listen for incoming messages from page script (for triggers)
       document.addEventListener('PrinChatIncomingMessage', async (event: any) => {
-        const { messageText, chatId, timestamp } = event.detail;
-        console.log('[PrinChat] Incoming message detected:', messageText, 'from:', chatId);
+        const { messageText, chatId, timestamp, fromMe } = event.detail;
+        console.log('[PrinChat] Message detected:', messageText, 'from:', chatId, 'fromMe:', fromMe);
 
-        // Send to service worker to check triggers
+        // Send to service worker to check triggers (ONLY for incoming messages)
+        if (!fromMe) {
+          try {
+            // Check if extension context is still valid
+            if (!chrome.runtime?.id) {
+              console.warn('[PrinChat] Extension context invalidated, skipping trigger check');
+              return;
+            }
+
+            await chrome.runtime.sendMessage({
+              type: 'CHECK_TRIGGERS',
+              payload: {
+                messageText,
+                chatId,
+                timestamp
+              }
+            });
+          } catch (e) {
+            console.error('[PrinChat] Error checking triggers:', e);
+          }
+        }
+
+        // AUTO-ADD TO KANBAN / UPDATE KANBAN LEADS
+        // Check if this contact should be added to Kanban or updated
         try {
-          // Check if extension context is still valid
-          if (!chrome.runtime?.id) {
-            console.warn('[PrinChat] Extension context invalidated, skipping trigger check');
+          // Skip group chats
+          if (chatId.includes('@g.us')) {
+            console.log('[PrinChat Kanban] Skipping group chat');
             return;
           }
 
-          await chrome.runtime.sendMessage({
-            type: 'CHECK_TRIGGERS',
-            payload: {
-              messageText,
-              chatId,
-              timestamp
-            }
-          });
+          // Get all leads to check if contact already exists
+          const leadsResponse = await chrome.runtime.sendMessage({ type: 'GET_ALL_KANBAN_LEADS' });
+          const allLeads = leadsResponse?.data || [];
 
-          // AUTO-ADD TO KANBAN RECENTES
-          // Check if this contact should be added to Kanban
-          try {
-            // Skip group chats
-            if (chatId.includes('@g.us')) {
-              console.log('[PrinChat Kanban] Skipping group chat');
-              return;
-            }
+          // Check if contact already in Kanban (check both id and chatId)
+          const existingLead = allLeads.find((l: any) => l.id === chatId || l.chatId === chatId);
 
-            // Get all leads to check if contact already exists
-            const leadsResponse = await chrome.runtime.sendMessage({ type: 'GET_ALL_KANBAN_LEADS' });
-            const allLeads = leadsResponse?.data || [];
+          if (existingLead) {
+            console.log('[PrinChat Kanban] Contact already in Kanban, updating:', chatId);
 
-            // Check if contact already in Kanban (check both id and chatId)
-            const existingLead = allLeads.find((l: any) => l.id === chatId || l.chatId === chatId);
-            if (existingLead) {
-              console.log('[PrinChat Kanban] Contact already in Kanban, updating:', chatId);
-
-              // Update existing lead: increment unread, update message and time
-              // ALSO sync tags/name/photo to keep them fresh
-              console.log('[PrinChat Kanban] Syncing latest contact info...');
-              const chatInfo = await this.getChatInfo(chatId);
-
-              const updates: any = {
-                lastMessage: messageText,
-                lastMessageTime: timestamp || Date.now(),
-                unreadCount: (existingLead.unreadCount || 0) + 1,
-                order: -Date.now() // TRICK: Use negative timestamp to always force to top (smallest number)
-              };
-
-              if (chatInfo.success && chatInfo.data) {
-                if (chatInfo.data.chatName) updates.name = chatInfo.data.chatName;
-                if (chatInfo.data.chatPhoto) updates.photo = chatInfo.data.chatPhoto;
-                if (chatInfo.data.tags) updates.tags = chatInfo.data.tags;
-                console.log('[PrinChat Kanban] Synced tags:', updates.tags);
-              }
-
-              await chrome.runtime.sendMessage({
-                type: 'UPDATE_KANBAN_LEAD',
-                payload: {
-                  leadId: existingLead.id,
-                  updates: updates
-                }
-              });
-
-              console.log('[PrinChat Kanban] ✅ Updated existing lead, unread:', updates.unreadCount);
-
-              // Dispatch event for real-time UI update
-              document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
-                detail: {
-                  leadId: existingLead.id,
-                  updates: updates
-                }
-              }));
-
-              return;
-            }
-
-            // Get contact info using getChatInfo (works for LIDs too)
-            console.log('[PrinChat Kanban] Fetching contact info for:', chatId);
-            const chatInfoResponse = await this.getChatInfo(chatId);
-
-            let chatName = '';
-            let chatPhoto = '';
-            let phoneNumber = chatId.split('@')[0]; // Default to chatId
-
-            if (chatInfoResponse.success && chatInfoResponse.data) {
-              chatName = chatInfoResponse.data.chatName || '';
-              chatPhoto = chatInfoResponse.data.chatPhoto || '';
-              // Use the real phone number from API (not Instagram/Facebook ID)
-              if (chatInfoResponse.data.phoneNumber) {
-                phoneNumber = chatInfoResponse.data.phoneNumber;
-              }
-              console.log('[PrinChat Kanban] Got contact info:', { name: chatName, hasPhoto: !!chatPhoto, phone: phoneNumber, tags: chatInfoResponse.data.tags });
-            } else {
-              console.warn('[PrinChat Kanban] Could not get chat info, using chatId as name');
-            }
-
-            // Get Recentes column ID
-            const columnsResponse = await chrome.runtime.sendMessage({ type: 'GET_KANBAN_COLUMNS' });
-            const columns = columnsResponse?.data || [];
-            const recentesColumn = columns.find((c: any) => c.isDefault === true);
-
-            if (!recentesColumn) {
-              console.warn('[PrinChat Kanban] Recentes column not found');
-              return;
-            }
-
-            // Format phone number for display if no name
-            // Use the real phone number (not Instagram/Facebook internal ID)
-            const formattedName = chatName || this.formatPhoneNumber(phoneNumber);
-
-            // Create new lead with unread count
-            const newLead = {
-              phone: phoneNumber,
-              chatId: chatId,
-              name: formattedName,
-              photo: chatPhoto || '',
-              columnId: recentesColumn.id,
-              order: 0,
+            // Update existing lead
+            const updates: any = {
               lastMessage: messageText,
               lastMessageTime: timestamp || Date.now(),
-              unreadCount: 1,  // New message just arrived
-              tags: chatInfoResponse.data?.tags || [] // Add tags from WA Business
+              // TRICK: Use negative timestamp to always force to top (smallest number)
+              order: -Date.now()
             };
 
-            console.log('[PrinChat Kanban] Auto-adding contact to Recentes:', newLead.name, 'with photo:', !!newLead.photo, 'unread: 1', 'tags:', newLead.tags.length);
+            // Logic for unread count based on who sent the message
+            if (fromMe) {
+              // I sent a message -> Reset unread count to 0
+              updates.unreadCount = 0;
+              console.log('[PrinChat Kanban] Outgoing message -> Resetting unread count');
+            } else {
+              // Incoming message -> Increment unread count
+              updates.unreadCount = (existingLead.unreadCount || 0) + 1;
+              console.log('[PrinChat Kanban] Incoming message -> Incrementing unread count to:', updates.unreadCount);
+            }
 
-            // Save to database
+            // Sync latest contact info to keep it fresh
+            const chatInfo = await this.getChatInfo(chatId);
+            if (chatInfo.success && chatInfo.data) {
+              if (chatInfo.data.chatName) updates.name = chatInfo.data.chatName;
+              if (chatInfo.data.chatPhoto) updates.photo = chatInfo.data.chatPhoto;
+              if (chatInfo.data.tags) updates.tags = chatInfo.data.tags;
+            }
+
             await chrome.runtime.sendMessage({
-              type: 'CREATE_KANBAN_LEAD',
-              payload: newLead
+              type: 'UPDATE_KANBAN_LEAD',
+              payload: {
+                leadId: existingLead.id,
+                updates: updates
+              }
             });
 
-            console.log('[PrinChat Kanban] ✅ Contact added to Recentes');
-
-            // Dispatch event for real-time UI update (new card)
-            document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadCreated', {
+            // Dispatch event for real-time UI update
+            document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
               detail: {
-                lead: newLead
+                leadId: existingLead.id,
+                updates: updates
               }
             }));
 
-          } catch (kanbanError: any) {
-            console.error('[PrinChat Kanban] Error auto-adding to Kanban:', kanbanError);
+            return;
           }
 
-        } catch (error: any) {
-          // Ignore "Extension context invalidated" errors and message channel errors
-          if (error.message?.includes('Extension context invalidated')) {
-            console.warn('[PrinChat] Extension context invalidated, trigger check skipped');
-          } else if (error.message?.includes('message channel closed') ||
-            error.message?.includes('The message port closed')) {
-            // This can happen if the service worker is restarting or the script execution takes too long
-            // It's not a critical error - the trigger check was received, just the response was lost
-            console.warn('[PrinChat] Message channel closed during trigger check (non-critical)');
-          } else {
-            console.error('[PrinChat] Error checking triggers:', error);
+          // IF outgoing message and contact NOT in Kanban -> Do nothing (don't auto-add on send)
+          if (fromMe) {
+            return;
           }
+
+          // IF incoming message and contact NOT in Kanban -> Auto-add to Recentes
+
+          // Get contact info using getChatInfo (works for LIDs too)
+          console.log('[PrinChat Kanban] Fetching contact info for new lead:', chatId);
+          const chatInfoResponse = await this.getChatInfo(chatId);
+
+          let chatName = '';
+          let chatPhoto = '';
+          let phoneNumber = chatId.split('@')[0]; // Default to chatId
+
+          if (chatInfoResponse.success && chatInfoResponse.data) {
+            chatName = chatInfoResponse.data.chatName || '';
+            chatPhoto = chatInfoResponse.data.chatPhoto || '';
+            // Use the real phone number from API (not Instagram/Facebook ID)
+            if (chatInfoResponse.data.phoneNumber) {
+              phoneNumber = chatInfoResponse.data.phoneNumber;
+            }
+          } else {
+            console.warn('[PrinChat Kanban] Could not get chat info, using chatId as name');
+          }
+
+          // Get Recentes column ID
+          const columnsResponse = await chrome.runtime.sendMessage({ type: 'GET_KANBAN_COLUMNS' });
+          const columns = columnsResponse?.data || [];
+          const recentesColumn = columns.find((c: any) => c.isDefault === true);
+
+          if (!recentesColumn) {
+            console.warn('[PrinChat Kanban] Recentes column not found');
+            return;
+          }
+
+          // Format phone number for display if no name
+          const formattedName = chatName || this.formatPhoneNumber(phoneNumber);
+
+          // Create new lead with unread count
+          const newLead = {
+            phone: phoneNumber,
+            chatId: chatId,
+            name: formattedName,
+            photo: chatPhoto || '',
+            columnId: recentesColumn.id,
+            // TRICK: Use negative timestamp to always force to top (smallest number)
+            order: -Date.now(),
+            lastMessage: messageText,
+            lastMessageTime: timestamp || Date.now(),
+            unreadCount: 1,  // New message just arrived
+            tags: chatInfoResponse.data?.tags || [] // Add tags from WA Business
+          };
+
+          console.log('[PrinChat Kanban] Auto-adding contact to Recentes:', newLead.name);
+
+          // Save to database
+          await chrome.runtime.sendMessage({
+            type: 'CREATE_KANBAN_LEAD',
+            payload: newLead
+          });
+
+          // Notify UI to re-render
+          document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadCreated', {
+            detail: { lead: newLead }
+          }));
+
+        } catch (kanbanError: any) {
+          console.error('[PrinChat Kanban] Error auto-adding to Kanban:', kanbanError);
         }
+
       });
 
       this.isReady = true;
@@ -1179,7 +1180,7 @@
               injected: !!injected,
               version: version || 'not set'
             });
-
+    
             if (!injected) {
               console.warn('[PrinChat] Page script may not have initialized yet (functionality should still work)');
             }
@@ -2234,14 +2235,14 @@
      */
     private formatPhoneNumber(phone: string): string {
       const digits = phone.replace(/\D/g, '');
-      
+
       // CRITICAL: IDs from Instagram/Facebook integration are 15+ digits
       // These are NOT phone numbers - they are internal WhatsApp IDs
       // Real phone numbers max out at ~13 digits
       if (digits.length >= 15) {
         return phone; // Return original without formatting
       }
-      
+
       if (digits.length < 10) {
         return digits;
       }

@@ -146,9 +146,7 @@ class WhatsAppUIOverlay {
   private renderedCardIds: Set<string> = new Set(); // Track which cards have been rendered to avoid re-animating them
   private renderDebounceTimer: any = null; // Timer for debouncing Kanban renders
   private areKanbanListenersSetup: boolean = false; // Flag to prevent duplicate listeners
-  private hasSyncedTags: boolean = false;
   private isSortableInitialized: boolean = false; // Flag to prevent double-init
-  // Flag to ensure tags are synced once per session
   // Message Execution System (PARALLEL execution like scripts run independently)
   private runningMessages: Map<string, MessageExecution> = new Map();
   private completedMessages: MessageExecution[] = [];
@@ -245,6 +243,17 @@ class WhatsAppUIOverlay {
 
 
       console.log('[PrinChat UI] ✓ Data loaded');
+
+      // Pre-fetch Labels (Non-blocking) so Kanban has colors ready
+      console.log('[PrinChat UI] 🏷️ Starting background label fetch...');
+      this.requestFromContentScript({ type: 'GET_ALL_LABELS' })
+        .then(response => {
+          if (response && response.data && response.data.labels) {
+            this.globalLabels = response.data.labels;
+            console.log('[PrinChat UI] ✅ Background label fetch complete. Count:', this.globalLabels.length);
+          }
+        })
+        .catch(err => console.warn('[PrinChat UI] Background label fetch failed (will retry on open):', err));
 
       // Update badge counts on load
       this.updateGlobalNotesBadge();
@@ -10798,8 +10807,6 @@ class WhatsAppUIOverlay {
 
     console.log('[PrinChat UI] Opening Kanban overlay...');
 
-    // Reset tag sync flag to ensure tags are synced on every Kanban open
-    this.hasSyncedTags = false;
     console.log('[PrinChat UI] 🔄 Reset hasSyncedTags flag for new session');
 
     // Cleanup Profile Dropdown if open (USER REQ)
@@ -11014,6 +11021,21 @@ class WhatsAppUIOverlay {
           }
         }
 
+        // Update order attribute for sorting stability
+        if (updates.order) {
+          card.setAttribute('data-order', updates.order.toString());
+        }
+
+        // MOVEMENT LOGIC: Move to top of current column when updated (new message)
+        const parentColumnBody = card.closest('.princhat-kanban-column-body');
+        if (parentColumnBody) {
+          // Check if it's already the first element
+          if (parentColumnBody.firstElementChild !== card) {
+            console.log('[PrinChat UI] ⬆️ Moving updated card to top');
+            parentColumnBody.prepend(card);
+          }
+        }
+
         // Add animation
         card.classList.add('princhat-kanban-card-updated');
         setTimeout(() => card.classList.remove('princhat-kanban-card-updated'), 300);
@@ -11197,104 +11219,44 @@ class WhatsAppUIOverlay {
 
       console.log('[PrinChat UI] 🔍 DEBUG: About to fetch/check labels. this.globalLabels.length =', this.globalLabels.length);
 
-      // Fetch Global Labels (if not cached)
+      // OPTIMIZATION: Do NOT block rendering for labels.
+      // If we have them (from background fetch), great. If not, we render without colors
+      // and they will be fixed on next render/refresh.
       if (this.globalLabels.length === 0) {
-        const labelsResponse = await this.requestFromContentScript({ type: 'GET_ALL_LABELS' });
-        if (labelsResponse && labelsResponse.data && labelsResponse.data.labels) {
-          this.globalLabels = labelsResponse.data.labels;
-          console.log('[PrinChat UI] Loaded global labels dictionary:', this.globalLabels.length);
-        }
+        console.log('[PrinChat UI] ⏳ Labels not ready yet. Triggering background fetch...');
+        // Fire and forget catch-up
+        this.requestFromContentScript({ type: 'GET_ALL_LABELS' })
+          .then(res => {
+            if (res?.data?.labels) {
+              this.globalLabels = res.data.labels;
+              console.log('[PrinChat UI] Late label fetch complete.');
+              // CRITICAL FIX: Re-render columns if Kanban is still open to apply colors
+              if (this.isKanbanOpen) {
+                console.log('[PrinChat UI] 🎨 Re-rendering Kanban with new labels...');
+                this.renderKanbanColumns();
+              }
+            }
+          })
+          .catch(console.error);
       } else {
         console.log('[PrinChat UI] Using cached global labels:', this.globalLabels.length);
       }
 
-      // Auto-save labels as Tags to DB for Sync (Run Once per session)
-      if (!this.hasSyncedTags && this.globalLabels.length > 0) {
-        console.log('[PrinChat UI] 🏷️ Syncing labels to DB (Once per session)...');
-        let successCount = 0;
-        let errorCount = 0;
-
-        for (const [index, label] of this.globalLabels.entries()) {
-          // SAFETY: Determine correct ID (handle object vs string)
-          let rawId = label.id;
-          if (typeof rawId === 'object' && rawId !== null) {
-            rawId = rawId._serialized || rawId.user || rawId.toString();
-          }
-
-          // Fallback for objects
-          if (String(rawId) === '[object Object]') {
-            console.error(`[PrinChat UI] ❌ Label ID is [object Object] for "${label.name}". Randomizing.`);
-            rawId = `fallback-${index}-${Date.now()}`;
-          }
-
-          const tagId = `wa-label-${rawId}`;
-
-          try {
-            await this.requestFromContentScript({
-              type: 'SAVE_TAG',
-              payload: {
-                id: tagId,
-                name: label.name,
-                color: label.color || '#2196f3',
-                createdAt: Date.now(),
-                updatedAt: Date.now()
-              }
-            });
-            successCount++;
-          } catch (e) {
-            console.error(`[PrinChat UI] ❌ Error saving tag "${label.name}":`, e);
-            errorCount++;
-          }
-        }
-
-        console.log(`[PrinChat UI] 🏷️ Tag sync completed: ${successCount} success, ${errorCount} errors`);
-        this.hasSyncedTags = true;
-      }
 
       // Fetch All Leads
       const leadsResponse = await this.requestFromContentScript({ type: 'GET_ALL_KANBAN_LEADS' });
       const allLeads = leadsResponse?.data || [];
       console.log('[PrinChat UI] Loaded', allLeads.length, 'total leads');
 
-      // Fetch Contact Info for Leads (Reverted to Stable/Slow method)
-      // We fetch info for ALL leads before rendering to ensure no missing names/photos
-      console.log('[PrinChat UI] ⏳ Fetching contact info for all leads...');
+      // Fetch Contact Info for Leads (INSTANT RENDER + BACKGROUND HYDRATION)
+      // OPTIMIZATION: Render immediately with what we have in DB. Update stale info in background.
+      console.log('[PrinChat UI] 🚀 Instant Render strategy: Using cached lead data.');
 
-      const leadsWithContactInfo: any[] = [];
+      const leadsWithContactInfo: any[] = allLeads;
 
-      // Sequential Loop (Slow but Stable - prevents overload/timeouts)
-      let fetchCount = 0;
-      for (const lead of allLeads) {
-        let chatId = lead.leadId || lead.id || lead.chatId;
-        if (!chatId) {
-          leadsWithContactInfo.push(lead);
-          continue;
-        }
+      // Trigger Background Hydration (Fire and Forget)
+      this.hydrateLeadsInBackground(allLeads).catch(console.error);
 
-        // Normalize ID if needed
-        if (!chatId.includes('@') && /^\d+$/.test(chatId)) {
-          chatId = `${chatId}@c.us`;
-        }
-
-        const info = await this.getContactInfo(chatId);
-
-        // Debug first 5 fetches
-        if (fetchCount < 5) {
-          console.log(`[PrinChat UI] Fetched ${chatId}:`, info);
-        }
-        fetchCount++;
-
-        // If chatPhoto is explicitly null (no photo), use undefined to show placeholder
-        const finalPhoto = info.chatPhoto === null ? undefined : (info.chatPhoto || lead.photo);
-
-        leadsWithContactInfo.push({
-          ...lead,
-          name: info.chatName || lead.name,
-          photo: finalPhoto,
-          labels: info.labels || [],
-          tags: (info.labels || []).map((l: any) => l.id)
-        });
-      }
 
       console.log('[PrinChat UI] ✅ All contact info fetched');
 
@@ -11350,6 +11312,116 @@ class WhatsAppUIOverlay {
       container.innerHTML = '<p style="color: #ff6b6b; text-align: center; padding: 2rem;">Erro ao carregar colunas</p>';
     } finally {
       this.isRenderingKanban = false;
+    }
+  }
+
+  /**
+   * Hydrate leads with fresh contact info in background
+   * Updates DB so next render is fresh.
+   */
+  private async hydrateLeadsInBackground(leads: any[]) {
+    console.log(`[PrinChat UI] 💧 Starting background hydration for ${leads.length} leads...`);
+    const BATCH_SIZE = 10;
+
+    for (let i = 0; i < leads.length; i += BATCH_SIZE) {
+      const batch = leads.slice(i, i + BATCH_SIZE);
+
+      const promises = batch.map(async (lead) => {
+        let chatId = lead.leadId || lead.id || lead.chatId;
+        if (!chatId) return;
+
+        // Normalize ID
+        if (!chatId.includes('@') && /^\d+$/.test(chatId)) {
+          chatId = `${chatId}@c.us`;
+        }
+
+        try {
+          const info = await this.getContactInfo(chatId);
+          // Only update if we have new useful info
+          if (info.chatName || info.labels) {
+            // Update UI immediately (Manual DOM Patching)
+            this.updateCardDOM({
+              ...lead,
+              name: info.chatName || lead.name,
+              photo: info.chatPhoto || lead.photo,
+              labels: info.labels || [],
+              tags: (info.labels || []).map((l: any) => l.id)
+            });
+
+          }
+        } catch (e) {
+          // Ignore errors in background hydration
+        }
+      });
+
+      await Promise.all(promises);
+      // Nice yield to main thread
+      await new Promise(r => setTimeout(r, 100));
+    }
+    console.log('[PrinChat UI] ✅ Background hydration complete.');
+  }
+
+  /**
+   * Manually update a card's DOM element with fresh data
+   * This ensures "pop-in" of new data without full re-render
+   */
+  private updateCardDOM(lead: any) {
+    const card = document.querySelector(`.princhat-kanban-lead-card[data-lead-id="${lead.id}"]`);
+    if (!card) return;
+
+    // 1. Update Name
+    const nameEl = card.querySelector('.princhat-kanban-lead-name');
+    if (nameEl) {
+      // Instagram ID check
+      const isInstagramId = /^\d{15,}/.test(lead.name || '');
+      const displayName = isInstagramId ? 'Lead' : (lead.name || 'Desconhecido');
+      nameEl.textContent = displayName;
+    }
+
+    // 2. Update Photo
+    const photoContainer = card.querySelector('.princhat-kanban-lead-photo');
+    if (photoContainer) {
+      if (lead.photo) {
+        photoContainer.innerHTML = `<img src="${lead.photo}" alt="${lead.name}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">`;
+      } else {
+        const initial = (lead.name || '?').charAt(0).toUpperCase();
+        photoContainer.innerHTML = `<div class="princhat-kanban-lead-photo-placeholder">${initial}</div>`;
+      }
+    }
+
+    // 3. Update Tags
+    // Remove existing tags if any
+    const existingTags = card.querySelector('.princhat-kanban-lead-tags');
+    if (existingTags) existingTags.remove();
+
+    if (lead.tags && lead.tags.length > 0) {
+      const tagsContainer = document.createElement('div');
+      tagsContainer.className = 'princhat-kanban-lead-tags';
+
+      const firstTag = lead.tags[0];
+
+      // Lookup label info
+      let labelInfo = this.globalLabels.find(l => l.id === firstTag || (l.name && l.name.toLowerCase() === firstTag.toLowerCase()));
+      // Fallback
+      if (!labelInfo && lead.labels) {
+        labelInfo = lead.labels.find((l: any) => String(l.id) === String(firstTag) || (l.name && l.name === firstTag));
+      }
+
+      const tagName = labelInfo ? labelInfo.name : firstTag;
+      const tagColor = labelInfo ? (labelInfo.color || labelInfo.hexColor || '#2196f3') : '#2196f3';
+      const safeColor = tagColor.startsWith('#') ? tagColor : '#' + tagColor;
+
+      let tagsHtml = `<span class="princhat-lead-tag" style="background-color: ${safeColor}">${this.escapeHtml(tagName)}</span>`;
+
+      if (lead.tags.length > 1) {
+        tagsHtml += `<span class="princhat-lead-tag-more">+${lead.tags.length - 1}</span>`;
+      }
+
+      tagsContainer.innerHTML = tagsHtml;
+
+      // Append after lead-preview or lead-info
+      const leadInfo = card.querySelector('.princhat-kanban-lead-info');
+      if (leadInfo) leadInfo.appendChild(tagsContainer);
     }
   }
 
@@ -11446,7 +11518,7 @@ class WhatsAppUIOverlay {
       // IDs like 186083820216376@c.us or 186083820216376@lid should show "Lead"
       const isInstagramId = /^\d{15,}/.test(lead.name || '');
       const displayName = isInstagramId ? 'Lead' : (lead.name || 'Desconhecido');
-      
+
       if (isInstagramId) {
         console.log('[PrinChat UI] ⚠️ Instagram ID detected, showing Lead:', lead.name);
       }
@@ -11678,9 +11750,9 @@ class WhatsAppUIOverlay {
         cardEl.addEventListener('click', async (e) => {
           // Don't trigger if clicking on buttons inside the card
           const target = e.target as HTMLElement;
-          if (target.closest('.princhat-kanban-card-menu-btn') || 
-              target.closest('.princhat-kanban-delete-btn') ||
-              target.closest('.princhat-kanban-tag-more')) {
+          if (target.closest('.princhat-kanban-card-menu-btn') ||
+            target.closest('.princhat-kanban-delete-btn') ||
+            target.closest('.princhat-kanban-tag-more')) {
             return;
           }
 
@@ -11688,7 +11760,7 @@ class WhatsAppUIOverlay {
 
           // Reset unread count in database
           try {
-            await chrome.runtime.sendMessage({
+            await this.requestFromContentScript({
               type: 'UPDATE_KANBAN_LEAD',
               payload: {
                 leadId: leadId,
