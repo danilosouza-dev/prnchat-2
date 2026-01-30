@@ -1035,9 +1035,9 @@
     const detectOutgoingMessages = () => {
       const Store = (window as any).Store;
       const WPP = (window as any).WPP;
-      
+
       console.log('[PrinChat Page] 🎯 Setting up outgoing message detector...');
-      
+
       // Method 1: Use WPP.chat.onChatSeen (fires when chat changes, including when sending)
       if (WPP?.chat?.onChatSeen) {
         try {
@@ -1048,13 +1048,13 @@
           console.log('[PrinChat Page] ⚠️ WPP onChatSeen failed:', e);
         }
       }
-      
+
       // Method 2: Monitor Store.Chat.active changes
       if (Store && Store.Chat) {
         try {
           const originalSetActive = Store.Chat.setActive;
           if (originalSetActive) {
-            Store.Chat.setActive = function(...args: any[]) {
+            Store.Chat.setActive = function (...args: any[]) {
               console.log('[PrinChat Page] 📤 Chat setActive called:', args);
               return originalSetActive.apply(this, args);
             };
@@ -1063,58 +1063,58 @@
           console.log('[PrinChat Page] ⚠️ Monitor active chat failed:', e);
         }
       }
-      
+
       // Detect outgoing messages by monitoring Store.Chat models
       let lastMsgCount = new Map(); // chatId -> msg count
-      
+
       setInterval(() => {
         try {
           const activeChat = Store.Chat.getActive();
           if (!activeChat || !activeChat.id) return;
-          
+
           const chatId = activeChat.id._serialized || String(activeChat.id);
           const msgs = activeChat.msgs;
           if (!msgs || !msgs.models) return;
-          
+
           const currentCount = msgs.length;
           const lastCount = lastMsgCount.get(chatId) || 0;
-          
+
           // Check if new messages were added
           if (currentCount > lastCount) {
             // Get the newest message
             const lastMsg = msgs.models[currentCount - 1];
-            
+
             if (lastMsg && lastMsg.fromMe) {
               const text = lastMsg.body || '';
-              
-              console.log('[PrinChat Page] 📤 Outgoing message detected:', { 
-                chatId, 
+
+              console.log('[PrinChat Page] 📤 Outgoing message detected:', {
+                chatId,
                 text: text.substring(0, 50)
               });
-              
+
               document.dispatchEvent(new CustomEvent('PrinChatMessageSent', {
-                detail: { 
-                  success: true, 
-                  requestId: 'outgoing-' + Date.now(), 
-                  method: 'DETECTED', 
-                  chatId, 
-                  text 
+                detail: {
+                  success: true,
+                  requestId: 'outgoing-' + Date.now(),
+                  method: 'DETECTED',
+                  chatId,
+                  text
                 }
               }));
             }
           }
-          
+
           lastMsgCount.set(chatId, currentCount);
         } catch (e) {
           // Ignore errors
         }
       }, 500);
-      
+
       console.log('[PrinChat Page] ✅ Outgoing message detector initialized');
-      
+
       return true;
     };
-    
+
     // Initialize detector after page loads
     setTimeout(detectOutgoingMessages, 2000);
 
@@ -1626,13 +1626,33 @@
             return undefined;
           };
 
+          // Load cached colors from localStorage (DOM Calibration)
+          // This ensures consistency with GET_ALL_LABELS and prevents color flipping during hydration
+          let cachedColors: Record<string, string> = {};
+          try {
+            const cache = JSON.parse(localStorage.getItem('princhat_label_cache') || '{}');
+            cachedColors = cache.byName || {};
+          } catch (e) { }
+
           // Helper to add label
           const addLabel = (id: string, name: string, rawColor?: any, model?: any) => {
             if (!chatLabels.find(l => l.id === id)) {
-              let finalColor = rawColor;
-              if (!finalColor && model) {
+              let finalColor: string | undefined = undefined;
+
+              // PRIORITY 1: Cached DOM Color (Visual Truth)
+              // This MUST take precedence during hydration to match what user sees
+              if (name && cachedColors[name]) {
+                finalColor = cachedColors[name];
+              }
+              // PRIORITY 2: Direct/Raw Color
+              else if (rawColor) {
+                finalColor = rawColor;
+              }
+              // PRIORITY 3: Extract from Model
+              else if (model) {
                 finalColor = extractColor(model);
               }
+
               chatLabels.push({ id, name, color: finalColor });
               chatTags.push(name);
             }
@@ -1686,6 +1706,16 @@
             if (chatTags.length === 0 && WPP?.chat?.get) {
               console.log('[PrinChat Page] 🏷️ Strategy 3: WPP.chat.get');
               try {
+                // Stricter validation: Must be a string AND look like a valid WID ending (c.us, g.us, lid)
+                if (!chatId || typeof chatId !== 'string' || !chatId.match(/@(?:c\.us|g\.us|lid)$/)) {
+                  // Suppress warning for purely numeric IDs (likely raw phone numbers not yet normalized)
+                  if (typeof chatId === 'string' && /^\d+$/.test(chatId)) {
+                    console.debug('[PrinChat Page] Skipping WPP.chat.get for raw number:', chatId);
+                    return;
+                  }
+                  // Throwing here will be caught by the catch block below
+                  throw new Error(`Invalid chatId format for WPP.chat.get: ${chatId}`);
+                }
                 const wppChat = await WPP.chat.get(chatId);
                 if (wppChat && wppChat.labels && Array.isArray(wppChat.labels)) {
                   wppChat.labels.forEach((l: any) => {
@@ -1849,8 +1879,16 @@
           let finalColor: string | undefined = undefined;
           let colorSource = 'unknown';
 
-          // PRIORITY 1: DOM Calibration (name-based lookup from visual scraping)
-          if (cachedColors[l.name]) {
+          // PRIORITY 1: Direct Color Property (Most accurate if available)
+          if (l.hexColor || l.color) {
+            finalColor = l.hexColor || l.color;
+            // Ensure hash if missing
+            if (finalColor && !finalColor.startsWith('#')) finalColor = '#' + finalColor;
+            colorSource = 'direct property';
+          }
+
+          // PRIORITY 2: DOM Calibration (name-based lookup from visual scraping)
+          else if (cachedColors[l.name]) {
             finalColor = cachedColors[l.name];
             colorSource = `DOM calibration (name: "${l.name}")`;
           }
@@ -1950,8 +1988,8 @@
         const scriptLoadTime = Date.now();
 
         Store.Msg.on('add', (msg: any) => {
-          // Only process incoming messages (not sent by us)
-          if (msg && !msg.id.fromMe && msg.type === 'chat' && msg.body) {
+          // Process ALL messages (incoming AND outgoing)
+          if (msg && msg.type === 'chat' && msg.body) {
             (async () => {
               const now = Date.now();
               // Get message timestamp (convert to milliseconds if needed)
@@ -2000,7 +2038,8 @@
                 detail: {
                   messageText: msg.body,
                   chatId: chatId,
-                  timestamp: msgTimestamp
+                  timestamp: msgTimestamp,
+                  fromMe: msg.id.fromMe || false // Add fromMe flag
                 }
               }));
             })();
@@ -2197,10 +2236,10 @@
 
             // Try to get the real phone number (not Instagram/Facebook ID)
             // For Instagram contacts, the chatId is an internal ID, not the phone
-            let phoneNumber = chat.contact?.number 
-              || chat.contact?.userid 
+            let phoneNumber = chat.contact?.number
+              || chat.contact?.userid
               || chat.contact?.pn;
-            
+
             // If no phone number from contact fields, try to convert LID to phone
             // Using WPP.whatsapp.lidPnCache.getPhoneNumber if available
             if (!phoneNumber && chatId.includes('@lid')) {
@@ -2218,7 +2257,7 @@
                 console.warn('[PrinChat Page] Failed to convert LID to phone:', lidError);
               }
             }
-            
+
             // Fallback to chatId if still no phone number
             if (!phoneNumber) {
               phoneNumber = chatId.split('@')[0];
