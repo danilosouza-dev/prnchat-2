@@ -10668,9 +10668,48 @@ class WhatsAppUIOverlay {
 
         .princhat-kanban-lead-unread {
           border-radius: 999px !important;
-          min-width: 16px !important;
+          width: 20px !important; /* Fixed width for perfect circle */
+          height: 20px !important;
+          min-width: 20px !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
           text-align: center !important;
-          padding: 0 4px !important;
+          padding: 0 !important; /* Remove padding to ensure centering */
+          line-height: 1 !important;
+          aspect-ratio: 1/1 !important;
+        }
+
+        /* Fix alignment of bottom metadata icons */
+        .princhat-kanban-lead-meta {
+          display: flex !important;
+          align-items: center !important;
+          margin-top: 8px !important;
+          gap: 12px !important;
+          color: #9e9e9e !important;
+          font-size: 13px !important;
+          
+          /* Alignment Fix: Reset padding/margin to align with text */
+          padding: 8px 0 0 0 !important; 
+          margin-left: 0 !important;
+          width: 100% !important;
+          
+          /* Visual Fix: Move border here and add padding-top to separate hover effect */
+          border-top: 1px solid rgba(134, 150, 160, 0.15) !important;
+        }
+
+        .princhat-kanban-meta-item {
+           display: flex;
+           align-items: center;
+           gap: 4px;
+           padding: 4px; 
+           border-radius: 4px;
+           cursor: pointer;
+           margin-left: -4px; /* Compensate for padding to align icon flush left */
+        }
+
+        .princhat-kanban-meta-item:hover {
+          background-color: rgba(134, 150, 160, 0.1);
         }
       `;
       (document.head || document.documentElement).appendChild(style);
