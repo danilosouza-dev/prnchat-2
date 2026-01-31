@@ -315,6 +315,11 @@ class WhatsAppUIOverlay {
       this.injectKanbanButton();
       console.log('[PrinChat UI] ✓ Kanban button injected');
 
+      // Inject critical Kanban styles (Time badge fix)
+      console.log('[PrinChat UI] Step 12.3: Injecting Kanban styles...');
+      this.injectKanbanStyles();
+      console.log('[PrinChat UI] ✓ Kanban styles injected');
+
       // Monitor chat header changes
       console.log('[PrinChat UI] Step 13: Setting up chat header monitor...');
       this.monitorChatHeaderChanges();
@@ -10630,6 +10635,43 @@ class WhatsAppUIOverlay {
   // ==================== KANBAN SYSTEM ====================
 
   /**
+   * Inject critical Kanban styles to ensure layout correctness
+   */
+  private injectKanbanStyles() {
+    const styleId = 'princhat-kanban-critical-styles';
+    if (!document.getElementById(styleId)) {
+      const style = document.createElement('style');
+      style.id = styleId;
+      style.textContent = `
+        .princhat-kanban-lead-header {
+          display: flex !important;
+          justify-content: space-between !important;
+          align-items: center !important;
+          width: 100% !important;
+          margin-bottom: 4px !important;
+        }
+
+        .princhat-kanban-lead-time-badge {
+          display: flex !important;
+          align-items: center !important;
+          gap: 6px !important;
+          margin-left: auto !important; /* Push to right */
+          white-space: nowrap !important;
+        }
+
+        .princhat-kanban-lead-time {
+          font-size: 11px !important;
+          color: #9e9e9e !important;
+          font-weight: 400 !important;
+          line-height: 1 !important;
+        }
+      `;
+      (document.head || document.documentElement).appendChild(style);
+      console.log('[PrinChat UI] 🎨 Injected critical Kanban styles');
+    }
+  }
+
+  /**
    * Inject Kanban button into WhatsApp sidebar
    */
   private injectKanbanButton() {
@@ -10707,9 +10749,9 @@ class WhatsAppUIOverlay {
       icon.setAttribute('data-icon', 'kanban');
 
       icon.innerHTML = `
-        <rect x="3" y="3" width="6" height="18" rx="1" stroke="currentColor" stroke-width="2" fill="none"/>
-        <rect x="12" y="3" width="3" height="18" rx="1" stroke="currentColor" stroke-width="2" fill="none"/>
-        <rect x="18" y="3" width="3" height="18" rx="1" stroke="currentColor" stroke-width="2" fill="none"/>
+        <rect x="3" y="3" width="6" height="18" rx="1" stroke="currentColor" stroke-width="2" fill="none" />
+        <rect x="12" y="3" width="3" height="18" rx="1" stroke="currentColor" stroke-width="2" fill="none" />
+        <rect x="18" y="3" width="3" height="18" rx="1" stroke="currentColor" stroke-width="2" fill="none" />
       `;
 
       iconWrapper.appendChild(icon);
@@ -10830,9 +10872,9 @@ class WhatsAppUIOverlay {
         const newColumnBtn = document.createElement('button');
         newColumnBtn.className = 'princhat-kanban-btn-new-column princhat-header-kanban-btn';
         newColumnBtn.innerHTML = `
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 5v14M5 12h14"/>
-          </svg>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
           Nova Coluna
         `;
         newColumnBtn.addEventListener('click', () => {
@@ -10859,12 +10901,12 @@ class WhatsAppUIOverlay {
     overlay.className = 'princhat-kanban-overlay';
 
     overlay.innerHTML = `
-      <div class="princhat-kanban-board">
-        <div class="princhat-kanban-columns-container">
-          <!-- Columns will be rendered here -->
+        <div class="princhat-kanban-board">
+          <div class="princhat-kanban-columns-container">
+            <!--Columns will be rendered here-->
+          </div>
         </div>
-      </div>
-    `;
+        `;
 
     // Setup global drag listeners
     // Setup global drag listeners
@@ -11006,7 +11048,7 @@ class WhatsAppUIOverlay {
       console.log('[PrinChat UI] 🔄 Lead updated:', leadId, updates);
 
       // Find and update the card in DOM
-      const card = this.kanbanOverlay?.querySelector(`.princhat-kanban-lead-card[data-lead-id="${leadId}"]`);
+      const card = this.kanbanOverlay?.querySelector(`.princhat - kanban - lead - card[data - lead - id="${leadId}"]`);
       if (card) {
         // Update last message preview
         if (updates.lastMessage) {
@@ -11251,7 +11293,7 @@ class WhatsAppUIOverlay {
       });
       let columns = Array.from(uniqueColumnsMap.values());
 
-      console.log(`[PrinChat UI] Loaded ${columns.length} unique columns (from ${rawColumns.length} raw)`);
+      console.log(`[PrinChat UI] Loaded ${columns.length} unique columns(from ${rawColumns.length} raw)`);
 
 
       console.log('[PrinChat UI] 🔍 DEBUG: About to fetch/check labels. this.globalLabels.length =', this.globalLabels.length);
@@ -11369,7 +11411,7 @@ class WhatsAppUIOverlay {
 
         // Normalize ID
         if (!chatId.includes('@') && /^\d+$/.test(chatId)) {
-          chatId = `${chatId}@c.us`;
+          chatId = `${chatId} @c.us`;
         }
 
         try {
@@ -11403,7 +11445,7 @@ class WhatsAppUIOverlay {
    * This ensures "pop-in" of new data without full re-render
    */
   private updateCardDOM(lead: any) {
-    const card = document.querySelector(`.princhat-kanban-lead-card[data-lead-id="${lead.id}"]`);
+    const card = document.querySelector(`.princhat-kanban - lead - card[data - lead - id="${lead.id}"]`);
     if (!card) return;
 
     // 1. Update Name
@@ -11419,10 +11461,10 @@ class WhatsAppUIOverlay {
     const photoContainer = card.querySelector('.princhat-kanban-lead-photo');
     if (photoContainer) {
       if (lead.photo) {
-        photoContainer.innerHTML = `<img src="${lead.photo}" alt="${lead.name}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">`;
+        photoContainer.innerHTML = `< img src = "${lead.photo}" alt = "${lead.name}" style = "width: 100%; height: 100%; border-radius: 50%; object-fit: cover;" > `;
       } else {
         const initial = (lead.name || '?').charAt(0).toUpperCase();
-        photoContainer.innerHTML = `<div class="princhat-kanban-lead-photo-placeholder">${initial}</div>`;
+        photoContainer.innerHTML = `< div class="princhat-kanban-lead-photo-placeholder" > ${initial} </div>`;
       }
     }
 
@@ -11448,10 +11490,16 @@ class WhatsAppUIOverlay {
       const tagColor = labelInfo ? (labelInfo.color || labelInfo.hexColor || '#2196f3') : '#2196f3';
       const safeColor = tagColor.startsWith('#') ? tagColor : '#' + tagColor;
 
-      // SOLID COLOR LOGIC (Synced with createColumnElement)
-      let finalBg = safeColor;
-      let finalColor = '#ffffff';
-      let textShadow = '0 1px 2px rgba(0,0,0,0.2)';
+      let finalBg = 'rgba(33, 150, 243, 0.30)'; // Fallback default
+      let finalColor = '#2196f3';
+      let textShadow = 'none';
+
+      if (tagColor) {
+        // Tag Color at 30% opacity (Legacy Style from Commit 9915674)
+        finalBg = `color-mix(in srgb, ${safeColor} 30%, transparent)`;
+        finalColor = safeColor;
+        textShadow = 'none';
+      }
 
       let tagsHtml = `
       <span class="princhat-kanban-tag" style="background-color: ${finalBg}; color: ${finalColor} !important; text-shadow: ${textShadow}; text-transform: none; font-size: 11px; font-weight: 500 !important; padding: 2px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; margin-right: 4px;">
@@ -11481,9 +11529,17 @@ class WhatsAppUIOverlay {
 
       tagsContainer.innerHTML = tagsHtml;
 
-      // Append after lead-preview or lead-info
+      // Append after lead-preview or before lead-meta to maintain correct order
       const leadInfo = card.querySelector('.princhat-kanban-lead-info');
-      if (leadInfo) leadInfo.appendChild(tagsContainer);
+      const leadMeta = card.querySelector('.princhat-kanban-lead-meta');
+
+      if (leadInfo) {
+        if (leadMeta) {
+          leadInfo.insertBefore(tagsContainer, leadMeta);
+        } else {
+          leadInfo.appendChild(tagsContainer);
+        }
+      }
     }
   }
 
@@ -11581,13 +11637,12 @@ class WhatsAppUIOverlay {
       const isInstagramId = /^\d{15,}/.test(lead.name || '');
       const displayName = isInstagramId ? 'Lead' : (lead.name || 'Desconhecido');
 
-      if (isInstagramId) {
-        console.log('[PrinChat UI] ⚠️ Instagram ID detected, showing Lead:', lead.name);
-      }
-
       const safeName = this.escapeHtml(displayName);
       const safeMessage = this.escapeHtml(lead.lastMessage || '');
       const safeId = this.escapeHtml(lead.id || lead.leadId || '');
+
+      // Fallback to updatedAt if lastMessageTime is missing (for legacy leads)
+      const displayTime = lead.lastMessageTime || lead.updatedAt;
 
       return `
           <div class="princhat-kanban-lead-card" data-lead-id="${safeId}">
@@ -11601,7 +11656,7 @@ class WhatsAppUIOverlay {
               <div class="princhat-kanban-lead-header">
                 <h4 class="princhat-kanban-lead-name">${safeName}</h4>
                 <div class="princhat-kanban-lead-time-badge">
-                  ${lead.lastMessageTime ? `<span class="princhat-kanban-lead-time">${new Date(lead.lastMessageTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>` : ''}
+                  ${displayTime ? `<span class="princhat-kanban-lead-time">${new Date(displayTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>` : ''}
                   ${lead.unreadCount && lead.unreadCount > 0 ? `<span class="princhat-kanban-lead-unread"${lead.unreadCount > 9 ? ' data-count="9+"' : ''}>${lead.unreadCount > 9 ? '9+' : lead.unreadCount}</span>` : ''}
                 </div>
               </div>
@@ -11642,12 +11697,10 @@ class WhatsAppUIOverlay {
             let textShadow = 'none';
 
             if (labelColor) {
-              // SOLID COLOR LOGIC (Restored as per user request)
-              // Background: Solid Tag Color
-              // Text: White (High contrast)
-              finalBg = labelColor;
-              finalColor = '#ffffff';
-              textShadow = '0 1px 2px rgba(0,0,0,0.2)'; // Add shadow for better readability
+              // Tag Color at 30% opacity (Legacy Style from Commit 9915674)
+              finalBg = `color-mix(in srgb, ${labelColor} 30%, transparent)`;
+              finalColor = labelColor;
+              textShadow = 'none';
             }
 
             return `
@@ -11824,7 +11877,7 @@ class WhatsAppUIOverlay {
                 updates: { unreadCount: 0 }
               }
             });
-
+  
             // Update UI immediately
             document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
               detail: {
@@ -11832,7 +11885,7 @@ class WhatsAppUIOverlay {
                 updates: { unreadCount: 0 }
               }
             }));
-
+  
             console.log('[PrinChat UI] Unread count reset for lead:', leadId);
           } catch (err) {
             console.error('[PrinChat UI] Error resetting unread count:', err);
