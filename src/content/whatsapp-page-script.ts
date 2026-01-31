@@ -1519,7 +1519,12 @@
           }
 
           // Strategy 7: DOM Scraping (Final Fallback - Visual)
-          if (!chatPhoto) {
+          // CRITICAL FIX: Only scrape DOM if the requested chat is actually the one OPEN on screen.
+          // Otherwise, background hydration for other chats will scrape the WRONG photo (the active one).
+          const activeChatId = (window as any).Store?.Chat?.active?.()?.id?._serialized;
+          const isActiveChat = activeChatId === chatId;
+
+          if (!chatPhoto && isActiveChat) {
             console.log('[PrinChat Page] Strategies 1-6 failed. Trying DOM scraping from header...');
             try {
               // The main chat header
@@ -1575,7 +1580,11 @@
         }
 
         // Final Name Fallback: DOM Scraping
-        if ((!chatName || chatName === 'Chat' || chatName.includes('@')) && !contact && !chat) {
+        // Only if we are on the active chat (same reason as photo)
+        const activeChatIdName = (window as any).Store?.Chat?.active?.()?.id?._serialized;
+        const isActiveChatName = activeChatIdName === chatId;
+
+        if ((!chatName || chatName === 'Chat' || chatName.includes('@')) && !contact && !chat && isActiveChatName) {
           try {
             const header = document.querySelector('#main > header');
             if (header) {
@@ -1984,26 +1993,31 @@
         const processedMessages = new Set<string>();
         const MAX_MESSAGE_AGE = 10000; // Only process messages from last 10 seconds
 
-        // Record current time as "script loaded" time
-        const scriptLoadTime = Date.now();
-
         Store.Msg.on('add', (msg: any) => {
           // Process ALL messages (incoming AND outgoing)
           if (msg && msg.type === 'chat' && msg.body) {
             (async () => {
+              // STRICT VALIDATION: Ignore if no timestamp (don't default to now)
+              if (!msg.t) {
+                return;
+              }
+
+              // STRICT VALIDATION: Ignore if not a new message (prevents history sync from triggering)
+              if (msg.isNewMsg === false) {
+                return;
+              }
+
               const now = Date.now();
-              // Get message timestamp (convert to milliseconds if needed)
-              const msgTimestamp = msg.t ? msg.t * 1000 : now;
+              const msgTimestamp = msg.t * 1000;
               const messageAge = now - msgTimestamp;
 
-              // Skip if message is older than MAX_MESSAGE_AGE
-              // Also skip messages that happened before script loaded (history messages)
-              if (messageAge > MAX_MESSAGE_AGE || msgTimestamp < scriptLoadTime) {
-                console.log('[PrinChat] Skipping old/history message:', {
-                  body: msg.body.substring(0, 30),
+              // Skip if message is older than MAX_MESSAGE_AGE (e.g. 60 seconds)
+              // This is a safety net for "new" messages that are actually from a long sync
+              if (messageAge > MAX_MESSAGE_AGE && messageAge > 60000) {
+                console.log('[PrinChat] Skipping old message detected as new:', {
+                  body: msg.body ? msg.body.substring(0, 30) : 'media',
                   age: messageAge,
-                  msgTime: new Date(msgTimestamp).toLocaleTimeString(),
-                  loadTime: new Date(scriptLoadTime).toLocaleTimeString()
+                  msgTime: new Date(msgTimestamp).toLocaleTimeString()
                 });
                 return;
               }
@@ -2039,7 +2053,7 @@
                   messageText: msg.body,
                   chatId: chatId,
                   timestamp: msgTimestamp,
-                  fromMe: msg.id.fromMe || false // Add fromMe flag
+                  fromMe: msg.id.fromMe || msg.fromMe || false // Add fromMe flag
                 }
               }));
             })();

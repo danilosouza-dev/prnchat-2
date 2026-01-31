@@ -700,19 +700,45 @@
           const leadsResponse = await chrome.runtime.sendMessage({ type: 'GET_ALL_KANBAN_LEADS' });
           const allLeads = leadsResponse?.data || [];
 
+          // Normalize ID helper for consistent matching
+          const normalizeId = (id: string) => {
+            if (!id) return '';
+            return id.replace(/@c\.us|@lid|@g\.us|@s\.whatsapp\.net/g, '');
+          };
+          const normalizedChatId = normalizeId(chatId);
+
           // Check if contact already in Kanban (check both id and chatId)
-          const existingLead = allLeads.find((l: any) => l.id === chatId || l.chatId === chatId);
+          const existingLead = allLeads.find((l: any) => {
+            const leadId = l.id || '';
+            const leadChatId = l.chatId || '';
+            return normalizeId(leadId) === normalizedChatId ||
+              normalizeId(leadChatId) === normalizedChatId ||
+              leadId === chatId ||
+              leadChatId === chatId;
+          });
 
           if (existingLead) {
             console.log('[PrinChat Kanban] Contact already in Kanban, updating:', chatId);
 
             // Update existing lead
             const updates: any = {
-              lastMessage: messageText,
-              lastMessageTime: timestamp || Date.now(),
               // TRICK: Use negative timestamp to always force to top (smallest number)
               order: -Date.now()
             };
+
+            // Only update lastMessage if this message is newer than what we have
+            // This prevents old messages (ghosts) from overwriting newer ones
+            const newMessageTime = timestamp || Date.now();
+            if (!existingLead.lastMessageTime || newMessageTime >= existingLead.lastMessageTime) {
+              updates.lastMessage = messageText;
+              updates.lastMessageTime = newMessageTime;
+            } else {
+              console.log('[PrinChat Kanban] Skipping lastMessage update (older message):', {
+                current: existingLead.lastMessageTime,
+                new: newMessageTime,
+                text: messageText
+              });
+            }
 
             // Logic for unread count based on who sent the message
             if (fromMe) {
