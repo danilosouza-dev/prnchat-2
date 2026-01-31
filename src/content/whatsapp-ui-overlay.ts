@@ -10665,6 +10665,13 @@ class WhatsAppUIOverlay {
           font-weight: 400 !important;
           line-height: 1 !important;
         }
+
+        .princhat-kanban-lead-unread {
+          border-radius: 999px !important;
+          min-width: 16px !important;
+          text-align: center !important;
+          padding: 0 4px !important;
+        }
       `;
       (document.head || document.documentElement).appendChild(style);
       console.log('[PrinChat UI] 🎨 Injected critical Kanban styles');

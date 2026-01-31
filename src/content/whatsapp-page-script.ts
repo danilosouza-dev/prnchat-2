@@ -1995,7 +1995,8 @@
 
         Store.Msg.on('add', (msg: any) => {
           // Process ALL messages (incoming AND outgoing)
-          if (msg && msg.type === 'chat' && msg.body) {
+          // Relaxed check to include media types
+          if (msg && (msg.type === 'chat' || msg.type === 'image' || msg.type === 'video' || msg.type === 'audio' || msg.type === 'ptt' || msg.type === 'document' || msg.type === 'sticker' || msg.type === 'location' || msg.type === 'vcard')) {
             (async () => {
               // STRICT VALIDATION: Ignore if no timestamp (don't default to now)
               if (!msg.t) {
@@ -2027,7 +2028,6 @@
 
               // Skip if already processed
               if (processedMessages.has(messageId)) {
-                console.log('[PrinChat] Skipping duplicate message:', msg.body.substring(0, 30));
                 return;
               }
 
@@ -2040,7 +2040,26 @@
                 oldMessages.forEach(id => processedMessages.delete(id));
               }
 
-              console.log('[PrinChat] New message received:', msg.body, `(age: ${messageAge}ms)`);
+              // Determine Message Preview Text
+              let messageText = msg.body || '';
+
+              if (msg.type === 'image') {
+                messageText = msg.caption ? `📷 ${msg.caption}` : '📷 Foto';
+              } else if (msg.type === 'video') {
+                messageText = msg.caption ? `📹 ${msg.caption}` : '📹 Vídeo';
+              } else if (msg.type === 'audio' || msg.type === 'ptt') {
+                messageText = '🎵 Áudio';
+              } else if (msg.type === 'document') {
+                messageText = msg.caption ? `📄 ${msg.caption}` : (msg.fileName ? `📄 ${msg.fileName}` : '📄 Arquivo');
+              } else if (msg.type === 'sticker') {
+                messageText = '💟 Figurinha';
+              } else if (msg.type === 'location') {
+                messageText = '📍 Localização';
+              } else if (msg.type === 'vcard') {
+                messageText = '👤 Contato';
+              }
+
+              console.log('[PrinChat] New message received:', messageText, `(age: ${messageAge}ms)`);
 
               // Get chatId from message (can be LID, getChatInfo will handle it)
               const chatId = msg.id?.remote?.toString() || msg.from?.toString() || '';
@@ -2050,7 +2069,7 @@
               // getChatInfo in the injector will fetch name/photo
               document.dispatchEvent(new CustomEvent('PrinChatIncomingMessage', {
                 detail: {
-                  messageText: msg.body,
+                  messageText: messageText, // Use formatted text
                   chatId: chatId,
                   timestamp: msgTimestamp,
                   fromMe: msg.id.fromMe || msg.fromMe || false // Add fromMe flag
