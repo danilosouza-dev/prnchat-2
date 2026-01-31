@@ -10903,7 +10903,7 @@ class WhatsAppUIOverlay {
     document.addEventListener('PrinChatIncomingMessage', (event: any) => {
       if (!this.isKanbanOpen) return;
 
-      const { messageText, chatId, timestamp } = event.detail;
+      const { messageText, chatId, timestamp, fromMe } = event.detail;
       console.log('[PrinChat UI] 📨 Incoming message (Optimistic):', chatId);
 
       // 1. Find card (Try multiple ID formats for Standard/Business compatibility)
@@ -10918,17 +10918,23 @@ class WhatsAppUIOverlay {
       }
 
       if (card) {
-        // 2. Move to top of its column (Recentes logic usually, or just visual bump)
-        // Ideally should check if column is sorted by time, but for now just bump visually
-        const columnBody = card.closest('.princhat-kanban-column-body');
-        if (columnBody) {
-          columnBody.prepend(card);
+        // 2. Move to top of its CURRENT column (Prevent Column Jump)
+        // Ensure we find the column body relative to the card
+        const currentColumnBody = card.closest('.princhat-kanban-column-body');
+        if (currentColumnBody) {
+          // Only move if not already at the top
+          if (currentColumnBody.firstElementChild !== card) {
+            console.log('[PrinChat UI] ⬆️ Bumping card to top of CURRENT column');
+            currentColumnBody.prepend(card);
+          }
         }
 
-        // 3. Update preview text
+        // 3. Update preview text with "Você:" prefix if applicable
         const previewEl = card.querySelector('.princhat-kanban-lead-preview');
         if (previewEl) {
-          previewEl.textContent = messageText.length > 50 ? messageText.substring(0, 50) + '...' : messageText;
+          const prefix = fromMe ? 'Você: ' : '';
+          const fullText = prefix + messageText;
+          previewEl.textContent = fullText.length > 50 ? fullText.substring(0, 50) + '...' : fullText;
         }
 
         // 4. Update time
@@ -10937,22 +10943,53 @@ class WhatsAppUIOverlay {
           timeEl.textContent = new Date(timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
         }
 
-        // 5. Increment unread count
+        // 5. Unread Count Logic (Clear on Reply, Increment on Receive)
         const timeBadgeEl = card.querySelector('.princhat-kanban-lead-time-badge');
-        if (timeBadgeEl) {
-          let badge = timeBadgeEl.querySelector('.princhat-kanban-lead-unread');
-          let count = 0;
-          if (badge) {
-            const current = parseInt(badge.textContent || '0');
-            count = isNaN(current) ? 9 : current; // 9+ case simplified
-          } else {
-            badge = document.createElement('span');
-            badge.className = 'princhat-kanban-lead-unread';
-            timeBadgeEl.appendChild(badge);
+
+        if (fromMe) {
+          // If message is from ME, clear unread count
+          console.log('[PrinChat UI] 📤 Outgoing message detected - Clearing unread count for:', chatId);
+
+          if (timeBadgeEl) {
+            const badge = timeBadgeEl.querySelector('.princhat-kanban-lead-unread');
+            if (badge) badge.remove();
           }
-          count++;
-          badge.textContent = count > 9 ? '9+' : String(count);
-          if (count > 9) badge.setAttribute('data-count', '9+');
+
+          // Persist reset to database
+          this.requestFromContentScript({
+            type: 'UPDATE_KANBAN_LEAD',
+            payload: {
+              leadId: chatId,
+              updates: { unreadCount: 0 }
+            }
+          }).catch(err => console.error('[PrinChat UI] Failed to clear unread count in DB:', err));
+
+        } else {
+          // If message is INCOMING, increment unread count
+          if (timeBadgeEl) {
+            let badge = timeBadgeEl.querySelector('.princhat-kanban-lead-unread');
+            let count = 0;
+            if (badge) {
+              const current = parseInt(badge.textContent || '0');
+              count = isNaN(current) ? 9 : current;
+            } else {
+              badge = document.createElement('span');
+              badge.className = 'princhat-kanban-lead-unread';
+              timeBadgeEl.appendChild(badge);
+            }
+            count++;
+
+            // Limit visual count to 9+
+            badge.textContent = count > 9 ? '9+' : String(count);
+            if (count > 9) badge.setAttribute('data-count', '9+');
+
+            // Persist increment to database (Optional: DB might already handle this via background listener?)
+            // Usually background handles incrementing for incoming messages. 
+            // We only need to force reset on outgoing.
+            // But to be safe/synced, we can update here too, or trust the sync.
+            // Let's trust the background listener for increments to avoid double-counting if we send updates.
+            // Actually, for optimistic UI, we update visual here.
+          }
         }
 
         // 6. Highlight animation
@@ -11267,7 +11304,7 @@ class WhatsAppUIOverlay {
 
       columns.forEach((column: any) => {
         const columnLeads = leadsWithContactInfo.filter((l: any) => l.columnId === column.id)
-          .sort((a: any, b: any) => a.order - b.order);
+          .sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
         const columnEl = this.createColumnElement(column, columnLeads, this.globalLabels);
         fragment.appendChild(columnEl);
       });
@@ -11411,10 +11448,35 @@ class WhatsAppUIOverlay {
       const tagColor = labelInfo ? (labelInfo.color || labelInfo.hexColor || '#2196f3') : '#2196f3';
       const safeColor = tagColor.startsWith('#') ? tagColor : '#' + tagColor;
 
-      let tagsHtml = `<span class="princhat-lead-tag" style="background-color: ${safeColor}">${this.escapeHtml(tagName)}</span>`;
+      // SOLID COLOR LOGIC (Synced with createColumnElement)
+      let finalBg = safeColor;
+      let finalColor = '#ffffff';
+      let textShadow = '0 1px 2px rgba(0,0,0,0.2)';
+
+      let tagsHtml = `
+      <span class="princhat-kanban-tag" style="background-color: ${finalBg}; color: ${finalColor} !important; text-shadow: ${textShadow}; text-transform: none; font-size: 11px; font-weight: 500 !important; padding: 2px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; margin-right: 4px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+          <line x1="7" x2="7.01" y1="7" y2="7"/>
+        </svg>
+        ${this.escapeHtml(tagName)}
+      </span>`;
 
       if (lead.tags.length > 1) {
-        tagsHtml += `<span class="princhat-lead-tag-more">+${lead.tags.length - 1}</span>`;
+        tagsHtml += `<span class="princhat-kanban-tag-more princhat-no-drag" style="cursor: pointer !important; pointer-events: auto !important; position: relative !important; z-index: 99 !important; font-weight: 600 !important; font-size: 10px !important; background-color: rgba(158, 158, 158, 0.2) !important; color: #9e9e9e !important; padding: 2px 6px !important; border-radius: 4px !important; display: inline-flex !important; align-items: center !important; height: 16px !important;" data-action="show-more-tags" data-tags="${encodeURIComponent(JSON.stringify(
+          (() => {
+            const remainingTags = lead.tags.slice(1);
+            return remainingTags.map((tag: string) => {
+              let info = this.globalLabels.find(l => l.id === tag || (l.name && l.name.toLowerCase() === tag.toLowerCase()));
+              if (!info && lead.labels) info = lead.labels.find((l: any) => l.id === tag || (l.name && l.name.toLowerCase() === tag.toLowerCase()));
+
+              return {
+                name: info?.name || tag,
+                color: info?.color || '#2196f3'
+              };
+            });
+          })()
+        ))}">+${lead.tags.length - 1}</span>`;
       }
 
       tagsContainer.innerHTML = tagsHtml;
@@ -11580,17 +11642,12 @@ class WhatsAppUIOverlay {
             let textShadow = 'none';
 
             if (labelColor) {
-              // Background: Tag Color at 30% opacity
-              // We use simple style manipulation - assume labelColor is hex or rgb
-              // Since adjustColorOpacity helper is not used here anymore? Wait, line 10565 used it.
-              // But we removed adjustColorOpacity?? No, I verify availability.
-              // If adjustColorOpacity exists on 'this', use it. Else manual.
-              // Actually, keep logic simple:
-              finalBg = `color-mix(in srgb, ${labelColor} 30%, transparent)`;
-              // Fallback for older browsers? Just confirm adjustColorOpacity availability later.
-              // For now, assume it works or use opacity style.
-              finalColor = labelColor;
-              textShadow = 'none';
+              // SOLID COLOR LOGIC (Restored as per user request)
+              // Background: Solid Tag Color
+              // Text: White (High contrast)
+              finalBg = labelColor;
+              finalColor = '#ffffff';
+              textShadow = '0 1px 2px rgba(0,0,0,0.2)'; // Add shadow for better readability
             }
 
             return `
@@ -11604,7 +11661,7 @@ class WhatsAppUIOverlay {
           `;
           })()}
                   
-        ${lead.tags.length > 1 ? `<span class="princhat-kanban-tag-more princhat-no-drag" style="cursor: pointer !important; pointer-events: auto !important; position: relative !important; z-index: 99 !important; font-weight: 500 !important;" data-action="show-more-tags" data-tags="${encodeURIComponent(JSON.stringify(
+        ${lead.tags.length > 1 ? `<span class="princhat-kanban-tag-more princhat-no-drag" style="cursor: pointer !important; pointer-events: auto !important; position: relative !important; z-index: 99 !important; font-weight: 600 !important; font-size: 10px !important; background-color: rgba(158, 158, 158, 0.2) !important; color: #9e9e9e !important; padding: 2px 6px !important; border-radius: 4px !important; display: inline-flex !important; align-items: center !important; height: 16px !important;" data-action="show-more-tags" data-tags="${encodeURIComponent(JSON.stringify(
             (() => {
               const remainingTags = lead.tags.slice(1);
               return remainingTags.map((tag: string) => {
@@ -11660,9 +11717,8 @@ class WhatsAppUIOverlay {
           </svg>
         </div>
       </div>
-      </div>
     </div>
-  `;
+  </div>`;
     }).join('')}
       </div>
     `;
@@ -11758,7 +11814,8 @@ class WhatsAppUIOverlay {
 
           console.log('[PrinChat UI] Card clicked, opening chat:', leadId);
 
-          // Reset unread count in database
+          /* 
+          // REMOVED: Unread count should NOT clear on click, only on reply (User Request)
           try {
             await this.requestFromContentScript({
               type: 'UPDATE_KANBAN_LEAD',
@@ -11780,6 +11837,7 @@ class WhatsAppUIOverlay {
           } catch (err) {
             console.error('[PrinChat UI] Error resetting unread count:', err);
           }
+          */
         });
       }
     });

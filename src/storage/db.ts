@@ -1205,6 +1205,7 @@ class DatabaseService {
     const newLead: LeadContact = {
       ...lead,
       id: lead.phone, // Use phone as ID (WhatsApp chat ID format)
+      order: lead.order ?? -now, // Default to top of list if order is missing
       createdAt: now,
       updatedAt: now,
     };
