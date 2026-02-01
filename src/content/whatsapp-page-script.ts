@@ -2131,16 +2131,48 @@
     try {
       if (Store.Chat && typeof Store.Chat.on === 'function') {
         Store.Chat.on('change:labels', (chatModel: any) => {
-          console.log('[PrinChat Page] 🏷️👥 Chat Labels Changed!', chatModel?.id?._serialized);
-          console.log('[PrinChat Page] 🔍 New labels for chat:', chatModel?.labels);
+          console.log('[PrinChat DEBUG] 1. Store.Chat change:labels fired! ID:', chatModel?.id?._serialized);
+          console.log('[PrinChat DEBUG] 1. RAW Labels:', JSON.stringify(chatModel?.labels));
 
-          window.dispatchEvent(new CustomEvent('PrinChatLabelsChanged', {
+          // Sanitize tags: Ensure we send a list of string IDs
+          let rawLabels = chatModel?.labels || [];
+          let cleanTags: string[] = [];
+
+          if (Array.isArray(rawLabels)) {
+            try {
+              cleanTags = rawLabels.map((l: any) => {
+                // If it's an object with ID, use ID. If strictly string, use string.
+                if (typeof l === 'object' && l?.id) return l.id;
+                if (typeof l === 'string') return l;
+                return String(l); // Fallback
+              }).filter(Boolean); // Remove null/undefined
+            } catch (err) {
+              console.error('[PrinChat DEBUG] 🛑 Error cleaning tags:', err);
+            }
+          }
+
+          // Extract contact details for potential lead creation
+          const contact = chatModel?.contact || {};
+          const name = contact?.name || contact?.pushname || chatModel?.name || chatModel?.formattedTitle || 'Desconhecido';
+          const profilePic = contact?.profilePicThumb?.eurl || contact?.profilePicThumb?.img || '';
+          const isGroup = chatModel?.isGroup || false;
+
+          console.log('[PrinChat DEBUG] 2. Sanitized Tags:', cleanTags);
+
+          // Use document.dispatchEvent to ensure content scripts (injector) can assume it
+          document.dispatchEvent(new CustomEvent('PrinChatLabelsChanged', {
             detail: {
               timestamp: Date.now(),
               reason: 'chat_labels_change',
-              chatId: chatModel?.id?._serialized
+              chatId: chatModel?.id?._serialized,
+              tags: cleanTags,
+              // Extra data for creating lead if it doesn't exist
+              name: name,
+              photo: profilePic,
+              isGroup: isGroup
             }
           }));
+          console.log('[PrinChat DEBUG] 3. Dispatched PrinChatLabelsChanged to Document');
         });
         console.log('[PrinChat] ✅ Chat.change:labels monitoring active');
       }

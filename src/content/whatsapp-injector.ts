@@ -851,6 +851,88 @@
 
       });
 
+      // Listen for label/tag changes (from page script)
+      document.addEventListener('PrinChatLabelsChanged', async (event: any) => {
+        const { chatId, tags, name, photo, isGroup } = event.detail;
+        console.log('[PrinChat DEBUG] 4. Injector received PrinChatLabelsChanged!', chatId, tags);
+
+        if (!chatId || !tags) {
+          console.warn('[PrinChat DEBUG] ⚠️ Missing chatId or tags in event');
+          return;
+        }
+
+        try {
+          console.log('[PrinChat DEBUG] 5. Sending UPDATE_KANBAN_LEAD to Background...');
+          // Update database directly
+          const updateResult = await chrome.runtime.sendMessage({
+            type: 'UPDATE_KANBAN_LEAD',
+            payload: {
+              leadId: chatId,
+              updates: { tags: tags }
+            }
+          });
+
+          console.log('[PrinChat DEBUG] 6. Background Response:', updateResult);
+
+          if (updateResult.success) {
+            console.log('[PrinChat DEBUG] 7. Lead updated in DB. Dispatching PrinChatKanbanLeadUpdated...');
+
+            // Notify UI to re-render immediately with fresh data
+            // We use LEAD_UPDATED event which UI Overlay listens to
+            document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
+              detail: {
+                leadId: updateResult.data?.id, // This might be undefined if background doesn't return data object
+                changes: { tags: tags }
+              }
+            }));
+            console.log('[PrinChat DEBUG] 8. Dispatched PrinChatKanbanLeadUpdated');
+          } else {
+            // Handle "Lead Not Found" by Creating it
+            console.log('[PrinChat DEBUG] 🛑 Update failed. Attempting to CREATE lead...', updateResult.error);
+
+            if (isGroup) {
+              console.log('[PrinChat DEBUG] 🛑 Skipping creation because it is a group.');
+              return;
+            }
+
+            const newLead = {
+              id: chatId,
+              name: name || 'Novo Contato',
+              number: chatId.split('@')[0],
+              photo: photo || '',
+              columnId: 'column-1', // Default to "Recentes" (assuming column-1 exists, or backend handles it)
+              tags: tags,
+              unreadCount: 0,
+              lastMessage: '',
+              lastMessageTime: Date.now()
+            };
+
+            const createResult = await chrome.runtime.sendMessage({
+              type: 'CREATE_KANBAN_LEAD',
+              payload: newLead
+            });
+
+            if (createResult.success) {
+              console.log('[PrinChat DEBUG] 7b. Lead CREATED in DB. Dispatching PrinChatKanbanLeadUpdated...');
+              document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
+                detail: {
+                  leadId: chatId,
+                  changes: { tags: tags } // Treat creation as an update for UI
+                }
+              }));
+              // Also dispatch Created event if UI listens to it specifically
+              document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadCreated', {
+                detail: { lead: createResult.data }
+              }));
+            } else {
+              console.error('[PrinChat DEBUG] 🛑 Failed to CREATE lead:', createResult.error);
+            }
+          }
+        } catch (e) {
+          console.error('[PrinChat DEBUG] 🛑 Error updating tags in injector:', e);
+        }
+      });
+
       this.isReady = true;
       console.log('[PrinChat] WhatsApp Web injector ready');
 
