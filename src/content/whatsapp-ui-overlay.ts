@@ -9879,6 +9879,18 @@ class WhatsAppUIOverlay {
       this.updateMessageStatusPopup(); // Updates executions popup
     });
 
+    // Listen for lead updates (like tag changes) from injector
+    document.addEventListener('PrinChatKanbanLeadUpdated', (event: any) => {
+      console.log('[PrinChat DEBUG] 9. UI received PrinChatKanbanLeadUpdated!', event.detail);
+
+      // If Kanban is open, we should re-render or update specific card
+      if (this.isKanbanOpen) {
+        console.log('[PrinChat DEBUG] 10. Kanban is OPEN. Queuing render...');
+        this.queueKanbanRender();
+      } else {
+        console.log('[PrinChat DEBUG] 10. Kanban is CLOSED. Cache will naturally refresh on next open.');
+      }
+    });
     // Listen for message completion
     document.addEventListener('PrinChatMessageComplete', (event: any) => {
       const { messageId, success } = event.detail;
@@ -10698,6 +10710,23 @@ class WhatsAppUIOverlay {
           border-top: 1px solid rgba(134, 150, 160, 0.15) !important;
         }
 
+        /* Unified Tag Style for Consistency */
+        .princhat-kanban-tag-unified {
+          display: inline-flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          font-size: 10px !important;
+          font-weight: 500 !important;
+          line-height: 1.3 !important;
+          padding: 1px 6px !important;
+          border-radius: 4px !important;
+          text-transform: none !important;
+          gap: 4px !important;
+          min-height: 18px !important; /* Enforce minimum height for consistency */
+          height: auto !important;
+          box-sizing: border-box !important;
+        }
+
         .princhat-kanban-meta-item {
            display: flex;
            align-items: center;
@@ -11181,7 +11210,8 @@ class WhatsAppUIOverlay {
     });
 
     // Listen for label/tag changes (colors or new labels)
-    window.addEventListener('PrinChatLabelsChanged', async (event: any) => {
+    // Listen for label/tag changes (colors or new labels)
+    document.addEventListener('PrinChatLabelsChanged', async (event: any) => {
       try {
         console.log('[PrinChat UI] 🏷️📥 Label change detected!', event.detail);
 
@@ -11557,7 +11587,7 @@ class WhatsAppUIOverlay {
       </span>`;
 
       if (lead.tags.length > 1) {
-        tagsHtml += `<span class="princhat-kanban-tag-more princhat-no-drag" style="cursor: pointer !important; pointer-events: auto !important; position: relative !important; z-index: 99 !important; font-weight: 600 !important; font-size: 10px !important; background-color: rgba(158, 158, 158, 0.2) !important; color: #9e9e9e !important; padding: 2px 6px !important; border-radius: 4px !important; display: inline-flex !important; align-items: center !important; height: 16px !important;" data-action="show-more-tags" data-tags="${encodeURIComponent(JSON.stringify(
+        tagsHtml += `<span class="princhat-kanban-tag-more princhat-no-drag princhat-kanban-tag-unified" style="cursor: pointer !important; pointer-events: auto !important; position: relative !important; z-index: 99 !important; background-color: rgba(158, 158, 158, 0.2) !important; color: #9e9e9e !important; " data-action="show-more-tags" data-tags="${encodeURIComponent(JSON.stringify(
           (() => {
             const remainingTags = lead.tags.slice(1);
             return remainingTags.map((tag: string) => {
@@ -11750,7 +11780,7 @@ class WhatsAppUIOverlay {
             }
 
             return `
-            <span class="princhat-kanban-tag" style="background-color: ${labelColor ? labelColor + '4D' : finalBg}; color: ${finalColor} !important; text-shadow: ${textShadow}; text-transform: none; font-size: 11px; font-weight: 500 !important; padding: 2px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; margin-right: 4px;">
+            <span class="princhat-kanban-tag princhat-kanban-tag-unified" style="background-color: ${labelColor ? labelColor + '4D' : finalBg}; color: ${finalColor} !important; text-shadow: ${textShadow}; margin-right: 4px;">
               <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
                 <line x1="7" x2="7.01" y1="7" y2="7"/>
@@ -11760,7 +11790,7 @@ class WhatsAppUIOverlay {
           `;
           })()}
                   
-        ${lead.tags.length > 1 ? `<span class="princhat-kanban-tag-more princhat-no-drag" style="cursor: pointer !important; pointer-events: auto !important; position: relative !important; z-index: 99 !important; font-weight: 600 !important; font-size: 10px !important; background-color: rgba(158, 158, 158, 0.2) !important; color: #9e9e9e !important; padding: 2px 6px !important; border-radius: 4px !important; display: inline-flex !important; align-items: center !important; height: 16px !important;" data-action="show-more-tags" data-tags="${encodeURIComponent(JSON.stringify(
+        ${lead.tags.length > 1 ? `<span class="princhat-kanban-tag-more princhat-no-drag princhat-kanban-tag-unified" style="cursor: pointer !important; pointer-events: auto !important; position: relative !important; z-index: 99 !important; background-color: rgba(158, 158, 158, 0.2) !important; color: #9e9e9e !important; " data-action="show-more-tags" data-tags="${encodeURIComponent(JSON.stringify(
             (() => {
               const remainingTags = lead.tags.slice(1);
               return remainingTags.map((tag: string) => {
@@ -12308,6 +12338,7 @@ class WhatsAppUIOverlay {
           tooltip.style.padding = '8px';
           tooltip.style.display = 'flex';
           tooltip.style.flexDirection = 'column';
+          tooltip.style.alignItems = 'flex-start'; // Prevent tags from stretching
           tooltip.style.gap = '4px';
           tooltip.style.boxShadow = '0 4px 12px rgba(0,0,0,0.5)';
           tooltip.style.minWidth = '120px';
@@ -12319,8 +12350,9 @@ class WhatsAppUIOverlay {
           tagsOrLabels.forEach((item: string | any) => {
             const tagEl = document.createElement('span');
             tagEl.className = 'princhat-kanban-tooltip-tag';
-            // IMPORTANT: Force inherited font styles
+            // IMPORTANT: Force inherited font styles AND Unified Class
             tagEl.classList.add('princhat-kanban-tag');
+            tagEl.classList.add('princhat-kanban-tag-unified');
 
             // Unify structure
             const isObject = typeof item === 'object' && item !== null;
@@ -12341,11 +12373,14 @@ class WhatsAppUIOverlay {
             tagEl.style.color = textColor;
             tagEl.style.setProperty('color', textColor, 'important');
             tagEl.style.textShadow = textShadow;
-            tagEl.style.textTransform = 'none';
-            tagEl.style.setProperty('font-weight', '500', 'important');
-            tagEl.style.fontSize = '12px';
-            tagEl.style.padding = '4px 8px';
-            tagEl.style.borderRadius = '4px';
+
+            // Removed inline styles that are covered by .princhat-kanban-tag-unified
+            // tagEl.style.textTransform = 'none';
+            // tagEl.style.fontWeight...
+            // tagEl.style.fontSize...
+            // tagEl.style.padding...
+            // tagEl.style.borderRadius...
+
             tagEl.style.border = 'none';
 
             // Flex layout

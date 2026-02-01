@@ -524,15 +524,44 @@ class BackgroundService {
           try {
             console.log('[Background] UPDATE_KANBAN_LEAD request received:', message.payload);
             const { leadId, updates } = message.payload;
-            await db.updateLead(leadId, updates);
-            console.log('[Background] Lead updated:', leadId);
-            sendResponse({ success: true });
+
+            try {
+              // Try exact match first
+              await db.updateLead(leadId, updates);
+              console.log('[Background] Lead updated (exact match):', leadId);
+              sendResponse({ success: true, data: { id: leadId } });
+            } catch (err: any) {
+              console.log('[Background] Exact update failed, trying ID variations...');
+
+              // Try alternatives
+              let altId = '';
+              if (leadId.includes('@c.us')) {
+                altId = leadId.replace('@c.us', '');
+              } else if (leadId.includes('@g.us')) {
+                altId = leadId.replace('@g.us', ''); // Unlikely for leads but possible
+              } else {
+                // If pure number, try adding suffix
+                altId = `${leadId}@c.us`;
+              }
+
+              if (altId && altId !== leadId) {
+                try {
+                  await db.updateLead(altId, updates);
+                  console.log('[Background] Lead updated (alternative match):', altId);
+                  sendResponse({ success: true, data: { id: altId } });
+                  return;
+                } catch (e2) {
+                  // Both failed
+                  throw err; // Throw original error
+                }
+              } else {
+                throw err;
+              }
+            }
           } catch (error: any) {
             console.error('[Background] Error updating Kanban lead:',
               error?.name,
-              error?.message,
-              error?.code,
-              'Payload:', JSON.stringify(message.payload)
+              error?.message
             );
             sendResponse({ success: false, error: error.message });
           }
