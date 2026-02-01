@@ -862,12 +862,16 @@
         }
 
         try {
+          // CRITICAL: Normalize chatId to match database format (without @lid, @c.us, etc.)
+          const normalizedChatId = chatId.replace(/@lid$|@c\.us$|@s\.whatsapp\.net$|@g\.us$/g, '');
+          console.log(`[PrinChat DEBUG] 5. Normalized chatId: "${chatId}" → "${normalizedChatId}"`);
+
           console.log('[PrinChat DEBUG] 5. Sending UPDATE_KANBAN_LEAD to Background...');
           // Update database directly
           const updateResult = await chrome.runtime.sendMessage({
             type: 'UPDATE_KANBAN_LEAD',
             payload: {
-              leadId: chatId,
+              leadId: normalizedChatId, // Use normalized ID
               updates: { tags: tags }
             }
           });
