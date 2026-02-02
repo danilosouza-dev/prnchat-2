@@ -10838,33 +10838,39 @@ class WhatsAppUIOverlay {
       buttonSpan.appendChild(button);
       buttonWrapper.appendChild(buttonSpan);
 
-      // Insert after Communities/Channels (Index 4 - usually the megaphone or group icon)
-      // Robust Method: Find by aria-label "Canais" or "Channels" or "Status" (fallback)
-      const channelsBtn = sidebarContainer.querySelector('[aria-label="Canais"]') ||
-        sidebarContainer.querySelector('[aria-label="Channels"]') ||
-        sidebarContainer.querySelector('[data-navbar-item-index="4"]'); // Fallback to index 4
-
-      const targetElement = channelsBtn?.closest('.x1c4vz4f.xs83m0k.xdl72j9') || channelsBtn?.parentElement;
-
-      if (targetElement && targetElement.parentElement) {
-        // Insert AFTER the channels/megaphone
-        targetElement.insertAdjacentElement('afterend', buttonWrapper);
-        console.log('[PrinChat UI] ✅ Kanban button inserted after Channels/Megaphone');
-      } else if (metaAiWrapper.parentElement) {
-        // Fallback: Append to end
-        metaAiWrapper.parentElement.appendChild(buttonWrapper);
-        console.log('[PrinChat UI] ✅ Kanban button appended to sidebar end (Fallback)');
-      } else {
-        console.error('[PrinChat UI] ❌ Could not find parent element to insert button');
-        return;
-      }
-
-      // Add click handler
+      // Add click handler BEFORE insertion to ensure it's always attached
       button.addEventListener('click', (e) => {
         e.stopPropagation();
         console.log('[PrinChat UI] Kanban button clicked');
         this.toggleKanbanOverlay();
       });
+
+      // Insert directly after "Anunciar no Facebook" button
+      const anunciarBtn = sidebarContainer.querySelector('[aria-label="Anunciar no Facebook"]');
+      const anunciarWrapper = anunciarBtn?.closest('.x1c4vz4f.xs83m0k.xdl72j9');
+
+      if (anunciarWrapper) {
+        anunciarWrapper.insertAdjacentElement('afterend', buttonWrapper);
+        console.log('[PrinChat UI] ✅ Kanban button inserted after Anunciar icon');
+      } else {
+        // Anunciar button not found yet - retry after delay
+        console.log('[PrinChat UI] ⚠️ Anunciar button not found, will retry in 1s...');
+        setTimeout(() => {
+          const retryAnunciarBtn = sidebarContainer.querySelector('[aria-label="Anunciar no Facebook"]');
+          const retryAnunciarWrapper = retryAnunciarBtn?.closest('.x1c4vz4f.xs83m0k.xdl72j9');
+
+          if (retryAnunciarWrapper) {
+            retryAnunciarWrapper.insertAdjacentElement('afterend', buttonWrapper);
+            console.log('[PrinChat UI] ✅ Kanban button inserted after Anunciar icon (retry)');
+          } else if (metaAiWrapper.parentElement) {
+            // Still not found - fallback to append
+            metaAiWrapper.parentElement.appendChild(buttonWrapper);
+            console.log('[PrinChat UI] ⚠️ Anunciar button still not found, appended to end');
+          } else {
+            console.error('[PrinChat UI] ❌ Could not find parent element to insert button');
+          }
+        }, 1000);
+      }
 
       console.log('[PrinChat UI] ✅ Kanban button injected successfully');
     } catch (error: any) {
