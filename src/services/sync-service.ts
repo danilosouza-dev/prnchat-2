@@ -43,13 +43,37 @@ class SyncService {
                 return;
             }
 
+            // VALIDATION: Check if column_id exists in Supabase before syncing
+            let validColumnId: string | undefined = lead.columnId;
+
+            if (validColumnId) {
+                const { data: columnCheck } = await supabase
+                    .from('kanban_columns')
+                    .select('id')
+                    .eq('id', validColumnId)
+                    .single();
+
+                if (!columnCheck) {
+                    console.warn(`[PrinChat Sync] ⚠️ Column ${validColumnId} not found in Supabase. Setting to NULL to prevent foreign key error.`);
+                    validColumnId = undefined;
+
+                    // Also update local DB to reflect this change
+                    try {
+                        await db.updateLead(lead.id, { columnId: undefined });
+                        console.log(`[PrinChat Sync] 🔄 Updated local lead ${lead.name} to have NULL column_id`);
+                    } catch (localUpdateError) {
+                        console.warn('[PrinChat Sync] Could not update local column_id:', localUpdateError);
+                    }
+                }
+            }
+
             const { data, error } = await supabase
                 .from('leads')
                 .upsert({
                     id: lead.id, // Primary Key (Matches chat_id)
                     chat_id: lead.id, // lead.id is phone number/chatId
                     user_id: user.id, // REQUIRED for RLS
-                    column_id: lead.columnId,
+                    column_id: validColumnId, // Use validated column_id (may be null)
                     order: lead.order,
                     name: lead.name,
                     phone: lead.phone,
