@@ -33,11 +33,14 @@ class MediaService {
 
             // 2. Prepare Upload
             // The worker expects the raw binary in the body
+            // IMPORTANT: Encode filename to support special characters (accents, emoji, etc.)
+            const encodedFilename = encodeURIComponent(finalFilename);
+
             const response = await fetch(WORKER_URL, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`,
-                    'X-Filename': finalFilename,
+                    'X-Filename': encodedFilename, // URL-encoded to support non-ASCII chars
                     // 'Content-Type': file.type // content-type of the request body is implicitly set by fetch if using Blob? 
                     // Actually worker reads arrayBuffer directly, so we just pass the blob body
                 },
@@ -61,6 +64,72 @@ class MediaService {
         } catch (error) {
             console.error('[PrinChat Media] Error uploading media:', error);
             throw error;
+        }
+    }
+
+    /**
+     * Delete a file from Bunny.net via Cloudflare Worker
+     * @param fileUrl The public URL of the file to delete
+     * @returns Promise<boolean> True if deleted successfully
+     */
+    async deleteMedia(fileUrl: string): Promise<boolean> {
+        try {
+            // Extract filename from URL
+            // Format: https://princhat.b-cdn.net/2de45b4d-ef3c-4d99-af39-2f8e1a5f5a07/audio-1769088324297-7jpm7cra.mp3
+            const urlParts = fileUrl.split('/');
+            const encodedUserId = urlParts[urlParts.length - 2]; // user_id folder (may be encoded)
+            const encodedFilename = urlParts[urlParts.length - 1]; // actual file (may be encoded)
+
+            // Decode to get original names (worker will re-encode for Bunny API)
+            const userId = decodeURIComponent(encodedUserId);
+            const filename = decodeURIComponent(encodedFilename);
+            const filePath = `${userId}/${filename}`;
+
+            console.log('[PrinChat Media] Deleting file from Bunny:', filePath);
+
+            // Get Auth Token
+            const supabase = await getSupabaseClient();
+            if (!supabase) {
+                throw new Error('Not authenticated');
+            }
+
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) {
+                throw new Error('No active session');
+            }
+
+            const token = session.access_token;
+
+            // Call DELETE endpoint on worker
+            // IMPORTANT: Encode filePath for header (same as upload)
+            const encodedFilePath = filePath.split('/').map(part => encodeURIComponent(part)).join('/');
+
+            const response = await fetch(WORKER_URL, {
+                method: 'DELETE',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'X-File-Path': encodedFilePath // URL-encoded to support non-ASCII chars
+                }
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.warn(`[PrinChat Media] Delete failed: ${response.status} ${errorText}`);
+                return false;
+            }
+
+            const result = await response.json();
+            if (result.success) {
+                console.log('[PrinChat Media] File deleted successfully from Bunny');
+                return true;
+            } else {
+                console.warn('[PrinChat Media] Delete returned false:', result);
+                return false;
+            }
+
+        } catch (error) {
+            console.error('[PrinChat Media] Error deleting media:', error);
+            return false; // Don't throw, just return false to not break deletion flow
         }
     }
 

@@ -442,9 +442,8 @@ class DatabaseService {
             console.log('[PrinChat DB] 🔍 fileData.blob size:', fileData.blob?.size);
             msg.fileData = fileData.blob;
             msg.fileName = fileData.fileName;
-          } else {
-            console.warn('[PrinChat DB] ⚠️ No file blob found for message:', msg.id, msg.name);
           }
+          // Note: If no blob found, file is in Bunny CDN (expected behavior)
         }
 
         return msg;
@@ -456,6 +455,42 @@ class DatabaseService {
 
   async deleteMessage(id: string): Promise<void> {
     const db = await this.init();
+
+    // CLEANUP: Delete file from Bunny CDN before deleting from DB
+    try {
+      const message = await db.get('messages', id);
+
+      if (message) {
+        // Check if message has media URLs (uploaded to Bunny)
+        const mediaUrls: string[] = [];
+
+        if (message.audioUrl) mediaUrls.push(message.audioUrl);
+        if (message.imageUrl) mediaUrls.push(message.imageUrl);
+        if (message.videoUrl) mediaUrls.push(message.videoUrl);
+        if (message.fileUrl) mediaUrls.push(message.fileUrl);
+
+        if (mediaUrls.length > 0) {
+          console.log(`[PrinChat DB] Message ${id} has ${mediaUrls.length} media file(s) in Bunny. Deleting...`);
+
+          // Import media service and delete files
+          const { mediaService } = await import('../services/media-service');
+
+          for (const url of mediaUrls) {
+            const deleted = await mediaService.deleteMedia(url);
+            if (deleted) {
+              console.log(`[PrinChat DB] ✅ Deleted from Bunny: ${url}`);
+            } else {
+              console.warn(`[PrinChat DB] ⚠️ Failed to delete from Bunny: ${url}`);
+            }
+          }
+        }
+      }
+    } catch (cleanupError) {
+      console.warn('[PrinChat DB] Error cleaning up Bunny files (continuing with deletion):', cleanupError);
+      // Don't throw - we still want to delete from DB even if Bunny cleanup fails
+    }
+
+    // Delete from IndexedDB
     await db.delete('messages', id);
     // Delete associated media blobs if they exist
     await db.delete('audioBlobs', id);
