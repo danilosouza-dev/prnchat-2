@@ -697,13 +697,55 @@
 
           try {
             let photo = '';
+            let bestName = '';
+            let bestTags: string[] = [];
+            let bestLabels: any[] = [];
             for (const variant of variants) {
               const info = await this.getChatInfo(variant);
-              const candidatePhoto = info?.success ? (info.data?.chatPhoto || '') : '';
+              const infoData = info?.success ? info.data : null;
+              const candidatePhoto = infoData?.chatPhoto || '';
               if (this.isRenderablePhotoUrl(candidatePhoto)) {
                 photo = candidatePhoto;
                 this.logPhotoResolution(primaryChatId, 'rehydrate', 'retry', photo);
+              }
+
+              if (!bestName && typeof infoData?.chatName === 'string' && infoData.chatName.trim()) {
+                bestName = infoData.chatName.trim();
+              }
+
+              if (bestTags.length === 0 && Array.isArray(infoData?.tags) && infoData.tags.length > 0) {
+                bestTags = infoData.tags.filter(Boolean);
+              }
+
+              if (bestLabels.length === 0 && Array.isArray(infoData?.labels) && infoData.labels.length > 0) {
+                bestLabels = infoData.labels.filter(Boolean);
+                if (bestTags.length === 0) {
+                  bestTags = bestLabels.map((label: any) => label?.id || label?.name).filter(Boolean);
+                }
+              }
+
+              if (photo && bestTags.length > 0 && bestLabels.length > 0) {
                 break;
+              }
+            }
+
+            if (!photo) {
+              for (const variant of variants) {
+                const photoResponse = await this.sendRuntimeMessage({
+                  type: 'GET_CHAT_PHOTO',
+                  payload: { chatId: variant }
+                });
+                const responseData = photoResponse?.data;
+                const candidatePhoto = photoResponse?.success
+                  ? (typeof responseData === 'string'
+                    ? responseData
+                    : (responseData?.chatPhoto || ''))
+                  : '';
+                if (this.isRenderablePhotoUrl(candidatePhoto)) {
+                  photo = candidatePhoto;
+                  this.logPhotoResolution(primaryChatId, 'rehydrate', 'chatInfo', photo);
+                  break;
+                }
               }
             }
 
@@ -711,7 +753,21 @@
               photo = this.findSidebarPhotoByChat(primaryChatId, chatName) || '';
             }
 
-            if (!this.isRenderablePhotoUrl(photo)) {
+            const updates: any = {};
+            if (this.isRenderablePhotoUrl(photo)) {
+              updates.photo = photo;
+            }
+            if (bestName) {
+              updates.name = bestName;
+            }
+            if (bestTags.length > 0) {
+              updates.tags = bestTags;
+            }
+            if (bestLabels.length > 0) {
+              updates.labels = bestLabels;
+            }
+
+            if (Object.keys(updates).length === 0) {
               continue;
             }
 
@@ -719,7 +775,7 @@
               type: 'UPDATE_KANBAN_LEAD',
               payload: {
                 leadId,
-                updates: { photo }
+                updates
               }
             });
 
@@ -727,7 +783,7 @@
               document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
                 detail: {
                   leadId,
-                  updates: { photo }
+                  updates
                 }
               }));
             }
@@ -999,7 +1055,7 @@
               // Self-heal hidden leads: if their column is missing/invalid, move back to default column.
               const fallbackColumnId = await this.resolveFallbackColumnIdForLead(existingLead);
               if (fallbackColumnId) {
-                console.warn('[PrinChat Kanban] Lead with invalid/missing column detected. Moving to default column:', {
+                console.log('[PrinChat Kanban] Lead with invalid/missing column detected. Moving to default column:', {
                   leadId: existingLead.id,
                   previousColumnId: existingLead.columnId,
                   newColumnId: fallbackColumnId
@@ -1209,7 +1265,7 @@
             // Self-heal hidden leads: if their column is missing/invalid, move back to default column.
             const fallbackColumnId = await this.resolveFallbackColumnIdForLead(existingLead);
             if (fallbackColumnId) {
-              console.warn('[PrinChat Kanban] Lead with invalid/missing column detected. Moving to default column:', {
+              console.log('[PrinChat Kanban] Lead with invalid/missing column detected. Moving to default column:', {
                 leadId: existingLead.id,
                 previousColumnId: existingLead.columnId,
                 newColumnId: fallbackColumnId
@@ -1250,7 +1306,15 @@
                 updates.photo = chatInfo.chatPhoto;
                 this.logPhotoResolution(chatId, 'update', 'chatInfo', updates.photo);
               }
-              if (chatInfo.tags) updates.tags = chatInfo.tags;
+              if (Array.isArray(chatInfo.tags) && chatInfo.tags.length > 0) {
+                updates.tags = chatInfo.tags.filter(Boolean);
+              }
+              if (Array.isArray(chatInfo.labels) && chatInfo.labels.length > 0) {
+                updates.labels = chatInfo.labels.filter(Boolean);
+                if (!updates.tags || updates.tags.length === 0) {
+                  updates.tags = updates.labels.map((label: any) => label?.id || label?.name).filter(Boolean);
+                }
+              }
 
               const resolvedChatId = this.normalizeChatIdentifier(chatInfo.chatId || canonicalChatId || chatId);
               if (resolvedChatId && resolvedChatId !== existingLead.chatId) {
@@ -1365,6 +1429,12 @@
           const normalizedLeadChatId = resolvedChatId || (phoneNumber ? `${phoneNumber}@c.us` : this.normalizeChatIdentifier(chatId));
 
           // Create new lead with unread count
+          const chatInfoLabels = Array.isArray(chatInfo?.labels) ? chatInfo.labels.filter(Boolean) : [];
+          const chatInfoTagsRaw = Array.isArray(chatInfo?.tags) ? chatInfo.tags.filter(Boolean) : [];
+          const chatInfoTags = chatInfoTagsRaw.length > 0
+            ? chatInfoTagsRaw
+            : chatInfoLabels.map((label: any) => label?.id || label?.name).filter(Boolean);
+
           const newLead = {
             phone: phoneNumber,
             chatId: normalizedLeadChatId,
@@ -1376,7 +1446,8 @@
             lastMessage: messageText,
             lastMessageTime: timestamp || Date.now(),
             unreadCount: 1,  // New message just arrived
-            tags: chatInfo?.tags || [] // Add tags from WA Business
+            tags: chatInfoTags,
+            labels: chatInfoLabels
           };
 
           console.log('[PrinChat Kanban] Auto-adding contact to Recentes:', newLead.name);
@@ -1391,8 +1462,9 @@
           }
 
           const createdLeadId = createResult?.data?.id;
-          if (createdLeadId) {
-            this.refreshLeadPhotoFromChat(createdLeadId, normalizedLeadChatId || chatId, formattedName).catch(() => null);
+          const refreshLeadKey = createdLeadId || normalizedLeadChatId || chatId;
+          if (refreshLeadKey) {
+            this.refreshLeadPhotoFromChat(refreshLeadKey, normalizedLeadChatId || chatId, formattedName).catch(() => null);
           }
 
           // Notify UI to re-render
@@ -2228,13 +2300,18 @@
         case 'GET_CHAT_INFO':
           return await this.getChatInfo(action.payload?.chatId);
 
-        case 'GET_CHAT_PHOTO':
+        case 'GET_CHAT_PHOTO': {
           const chatInfo = await this.getChatInfo(action.payload?.chatId);
           if (chatInfo.success && chatInfo.data) {
-            return { success: true, data: chatInfo.data.chatPhoto };
-          } else {
-            return { success: false, error: chatInfo.error || 'Could not get chat info' };
+            return {
+              success: true,
+              data: {
+                chatPhoto: chatInfo.data.chatPhoto
+              }
+            };
           }
+          return { success: false, error: chatInfo.error || 'Could not get chat info' };
+        }
 
         case 'GET_ALL_LABELS':
           return await this.getAllLabels();

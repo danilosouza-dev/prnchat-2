@@ -10711,10 +10711,10 @@ class WhatsAppUIOverlay {
           display: inline-flex !important;
           align-items: center !important;
           justify-content: center !important;
-          font-size: 10px !important;
+          font-size: 11px !important;
           font-weight: 500 !important;
           line-height: 1.3 !important;
-          padding: 1px 6px !important;
+          padding: 2px 8px !important;
           border-radius: 4px !important;
           text-transform: none !important;
           gap: 4px !important;
@@ -11310,7 +11310,7 @@ class WhatsAppUIOverlay {
         // If event includes specific chat data, update that card INSTANTLY
         if (event.detail?.chatId && event.detail?.tags !== undefined) {
           console.log('[PrinChat UI] 🎯 Specific chat update detected - applying instant update');
-          await this.updateCardTagsInstantly(event.detail.chatId, event.detail.tags);
+          await this.updateCardTagsInstantly(event.detail.chatId, event.detail.tags, false);
         }
 
         // ALSO queue full render (as backup/sync for global label changes)
@@ -11408,7 +11408,7 @@ class WhatsAppUIOverlay {
    * Instantly update tags for a specific card without full re-render
    * Uses the robust ID matching strategy
    */
-  private async updateCardTagsInstantly(chatId: string, newTags: string[]): Promise<void> {
+  private async updateCardTagsInstantly(chatId: string, newTags: string[], allowClear: boolean = false): Promise<void> {
     if (!this.isKanbanOpen) {
       console.log('[PrinChat UI] ⚠️ Kanban not open - skipping instant update');
       return;
@@ -11460,34 +11460,74 @@ class WhatsAppUIOverlay {
       this.globalLabels = allLabels; // Update cache
     }
 
-    // Find tags container
-    const tagsContainer = card.querySelector('.princhat-kanban-lead-tags');
+    // Find/create tags container
+    let tagsContainer = card.querySelector('.princhat-kanban-lead-tags') as HTMLElement | null;
     if (!tagsContainer) {
-      console.warn('[PrinChat UI] Tags container not found in card');
+      const leadInfo = card.querySelector('.princhat-kanban-lead-info');
+      const leadMeta = card.querySelector('.princhat-kanban-lead-meta');
+      if (!leadInfo) {
+        console.warn('[PrinChat UI] Tags container could not be created (lead info missing)');
+        return;
+      }
+      tagsContainer = document.createElement('div');
+      tagsContainer.className = 'princhat-kanban-lead-tags';
+      if (leadMeta) {
+        leadInfo.insertBefore(tagsContainer, leadMeta);
+      } else {
+        leadInfo.appendChild(tagsContainer);
+      }
+    }
+
+    const normalizedTags = Array.isArray(newTags) ? newTags.filter(Boolean) : [];
+    if (normalizedTags.length === 0) {
+      if (allowClear) {
+        tagsContainer.remove();
+        console.log(`[PrinChat UI] ✅ Card ${chatId} tags cleared`);
+      } else {
+        console.log(`[PrinChat UI] ⚠️ Ignoring transient empty tag update for ${chatId}`);
+      }
       return;
     }
 
     // Render tags (reuse logic from updateCardDOM)
-    const MAX_VISIBLE = 2;
-    const tagElements = newTags.slice(0, MAX_VISIBLE).map(tagId => {
-      const label = allLabels.find((l: any) => l.id === tagId);
-      if (!label) return '';
-
-      const bgColor = label.hexColor || '#4A5568';
-      const textColor = this.getContrastColor(bgColor);
+    const MAX_VISIBLE = 1;
+    const tagElements = normalizedTags.slice(0, MAX_VISIBLE).map(tagId => {
+      const normalizedTag = String(tagId).toLowerCase();
+      const label = allLabels.find((l: any) =>
+        l.id === tagId ||
+        (typeof l.name === 'string' && l.name.toLowerCase() === normalizedTag)
+      );
+      const tagName = label?.name || String(tagId);
+      const labelColor = label?.hexColor || label?.color || '#2196f3';
+      const finalBg = labelColor ? `${labelColor}4D` : 'rgba(33, 150, 243, 0.30)';
+      const finalColor = labelColor || '#2196f3';
+      const textShadow = 'none';
 
       return `
-        <span class="princhat-kanban-tag" style="background-color: ${bgColor}; color: ${textColor};">
-          ${label.name || 'Tag'}
+        <span class="princhat-kanban-tag princhat-kanban-tag-unified" style="background-color: ${finalBg}; color: ${finalColor} !important; text-shadow: ${textShadow}; margin-right: 4px;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+            <line x1="7" x2="7.01" y1="7" y2="7"/>
+          </svg>
+          ${this.escapeHtml(tagName)}
         </span>
       `;
     }).join('');
 
-    const hiddenCount = Math.max(0, newTags.length - MAX_VISIBLE);
+    const hiddenCount = Math.max(0, normalizedTags.length - MAX_VISIBLE);
     const moreButton = hiddenCount > 0 ? `
-      <button class="princhat-kanban-more-tags" data-action="show-more-tags" data-tags='${JSON.stringify(newTags)}'>
-        +${hiddenCount}
-      </button>
+      <span class="princhat-kanban-tag-more princhat-no-drag princhat-kanban-tag-unified" style="cursor: pointer !important; pointer-events: auto !important; position: relative !important; z-index: 99 !important; background-color: rgba(158, 158, 158, 0.2) !important; color: #9e9e9e !important; " data-action="show-more-tags" data-tags="${encodeURIComponent(JSON.stringify(
+      (() => {
+        const remainingTags = normalizedTags.slice(1);
+        return remainingTags.map((tag: string) => {
+          const info = allLabels.find((l: any) => l.id === tag || (l.name && l.name.toLowerCase() === String(tag).toLowerCase()));
+          return {
+            name: info?.name || tag,
+            color: info?.color || info?.hexColor || '#2196f3'
+          };
+        });
+      })()
+    ))}">+${hiddenCount}</span>
     ` : '';
 
     tagsContainer.innerHTML = tagElements + moreButton;
@@ -11514,6 +11554,9 @@ class WhatsAppUIOverlay {
 
       await this.pollVisibleCardsForTagChanges();
     }, 8000); // Every 8 seconds
+
+    // Run one immediate pass so cards opened before full hydration don't stay stale.
+    this.pollVisibleCardsForTagChanges().catch(() => null);
   }
 
   /**
@@ -11541,35 +11584,52 @@ class WhatsAppUIOverlay {
 
     // Fetch current leads from DB
     const response = await this.requestFromContentScript({ type: 'GET_ALL_KANBAN_LEADS' });
-    if (!response?.data?.leads) return;
-
-    const allLeads = response.data.leads;
+    const allLeads = Array.isArray(response?.data)
+      ? response.data
+      : (Array.isArray(response?.data?.leads) ? response.data.leads : []);
+    if (allLeads.length === 0) return;
 
     for (const card of Array.from(visibleCards)) {
-      const chatId = card.getAttribute('data-lead-id');
-      if (!chatId) continue;
+      const cardLeadId = card.getAttribute('data-lead-id');
+      if (!cardLeadId) continue;
 
-      // Find lead in DB
-      const lead = allLeads.find((l: any) => l.chatId === chatId);
+      const cardVariants = this.buildLeadChatVariants(cardLeadId);
+      const cardIdentity = this.extractLeadIdentity(cardLeadId);
+
+      // Find lead in DB using scoped ID, chatId variants, or canonical identity
+      const lead = allLeads.find((l: any) => {
+        const leadCandidates = [l?.id, l?.chatId, l?.phone];
+        for (const candidate of leadCandidates) {
+          const candidateVariants = this.buildLeadChatVariants(candidate);
+          if (candidateVariants.some((variant) => cardVariants.includes(variant))) {
+            return true;
+          }
+          const candidateIdentity = this.extractLeadIdentity(candidate);
+          if (candidateIdentity && cardIdentity && candidateIdentity === cardIdentity) {
+            return true;
+          }
+        }
+        return false;
+      });
       if (!lead) continue;
 
       const currentTags = lead.tags || [];
-      const lastTags = this.lastPolledTags.get(chatId) || [];
+      const lastTags = this.lastPolledTags.get(cardLeadId) || [];
 
       // Compare tags
       const tagsChanged = JSON.stringify(currentTags.sort()) !== JSON.stringify(lastTags.sort());
 
       if (tagsChanged) {
-        console.log(`[PrinChat UI] 🔄 Polling detected tag change for ${chatId}`);
+        console.log(`[PrinChat UI] 🔄 Polling detected tag change for ${cardLeadId}`);
         console.log(`[PrinChat UI]   Old: ${JSON.stringify(lastTags)}`);
         console.log(`[PrinChat UI]   New: ${JSON.stringify(currentTags)}`);
 
-        await this.updateCardTagsInstantly(chatId, currentTags);
-        this.lastPolledTags.set(chatId, currentTags);
+        await this.updateCardTagsInstantly(cardLeadId, currentTags, true);
+        this.lastPolledTags.set(cardLeadId, currentTags);
       } else {
         // Update cache even if no change (first poll)
-        if (!this.lastPolledTags.has(chatId)) {
-          this.lastPolledTags.set(chatId, currentTags);
+        if (!this.lastPolledTags.has(cardLeadId)) {
+          this.lastPolledTags.set(cardLeadId, currentTags);
         }
       }
     }
@@ -11833,7 +11893,7 @@ class WhatsAppUIOverlay {
               // CRITICAL FIX: Re-render columns if Kanban is still open to apply colors
               if (this.isKanbanOpen) {
                 console.log('[PrinChat UI] 🎨 Re-rendering Kanban with new labels...');
-                this.renderKanbanColumns();
+                this.queueKanbanRender();
               }
             }
           })
@@ -11951,6 +12011,7 @@ class WhatsAppUIOverlay {
   private async hydrateLeadsInBackground(leads: any[]) {
     console.log(`[PrinChat UI] 💧 Starting background hydration for ${leads.length} leads...`);
     const BATCH_SIZE = 4;
+    const RETRY_DELAYS_MS = [0, 1200, 2600];
 
     for (let i = 0; i < leads.length; i += BATCH_SIZE) {
       const batch = leads.slice(i, i + BATCH_SIZE);
@@ -11959,42 +12020,111 @@ class WhatsAppUIOverlay {
         const chatId = this.resolveLeadChatId(lead);
         if (!chatId) return;
 
-        try {
-          const info = await this.getContactInfo(chatId);
-          const sidebarPhoto = this.getSidebarPhotoForLead(chatId, lead?.name);
-          const resolvedPhoto = this.isRenderablePhotoUrl(info.chatPhoto)
-            ? info.chatPhoto
-            : (this.isRenderablePhotoUrl(lead.photo) ? lead.photo : (sidebarPhoto || ''));
-          // Only update if we have new useful info
-          if (info.chatName || resolvedPhoto || info.labels) {
-            // Update UI immediately (Manual DOM Patching)
-            const hydratedLead = {
-              ...lead,
-              chatId,
-              name: info.chatName || lead.name,
-              photo: resolvedPhoto,
-              labels: info.labels || [],
-              tags: (info.labels || []).map((l: any) => l.id)
-            };
+        let currentLead = { ...lead, chatId };
+        const requiresPhotoHydration = !this.isRenderablePhotoUrl(currentLead.photo);
+        const requiresTagHydration = !Array.isArray(currentLead.tags) || currentLead.tags.length === 0;
+        const maxAttempts = requiresPhotoHydration
+          ? RETRY_DELAYS_MS.length
+          : (requiresTagHydration ? 2 : 1);
 
-            this.updateCardDOM({
-              ...hydratedLead,
-              name: this.resolveLeadDisplayName(hydratedLead),
-            });
+        for (let attemptIndex = 0; attemptIndex < maxAttempts; attemptIndex++) {
+          const delayMs = RETRY_DELAYS_MS[Math.min(attemptIndex, RETRY_DELAYS_MS.length - 1)];
+          if (delayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+          }
 
-            if (hydratedLead.id && resolvedPhoto && resolvedPhoto !== lead.photo) {
-              this.requestFromContentScript({
-                type: 'UPDATE_KANBAN_LEAD',
-                payload: {
-                  leadId: hydratedLead.id,
-                  updates: { photo: resolvedPhoto }
-                }
-              }).catch(() => null);
+          try {
+            const info = await this.getContactInfo(chatId);
+            const labels = Array.isArray(info.labels) ? info.labels : [];
+            const hasFreshLabels = labels.length > 0;
+            const sidebarPhoto = this.getSidebarPhotoForLead(chatId, info.chatName || currentLead?.name);
+
+            let resolvedPhoto = '';
+            if (this.isRenderablePhotoUrl(info.chatPhoto)) {
+              resolvedPhoto = String(info.chatPhoto);
+            } else if (this.isRenderablePhotoUrl(currentLead.photo)) {
+              resolvedPhoto = currentLead.photo;
+            } else if (sidebarPhoto) {
+              resolvedPhoto = sidebarPhoto;
+            } else {
+              const directPhoto = await this.getChatPhotoForLead(chatId);
+              resolvedPhoto = directPhoto || '';
             }
 
+            const nextLabels = hasFreshLabels
+              ? labels
+              : (Array.isArray((currentLead as any).labels) ? (currentLead as any).labels : []);
+            const nextTags = hasFreshLabels
+              ? labels.map((l: any) => l.id).filter(Boolean)
+              : (Array.isArray(currentLead.tags) ? currentLead.tags : []);
+
+            const updates: any = {};
+            const nextName = (info.chatName || currentLead.name || '').trim();
+            if (nextName && nextName !== currentLead.name) {
+              updates.name = nextName;
+            }
+
+            if (this.isRenderablePhotoUrl(resolvedPhoto) && resolvedPhoto !== currentLead.photo) {
+              updates.photo = resolvedPhoto;
+            }
+
+            if (hasFreshLabels) {
+              const currentTags = Array.isArray(currentLead.tags) ? currentLead.tags : [];
+              if (JSON.stringify(currentTags) !== JSON.stringify(nextTags)) {
+                updates.tags = nextTags;
+              }
+
+              const currentLabels = Array.isArray((currentLead as any).labels) ? (currentLead as any).labels : [];
+              if (JSON.stringify(currentLabels) !== JSON.stringify(nextLabels)) {
+                updates.labels = nextLabels;
+              }
+            }
+
+            if (Object.keys(updates).length > 0) {
+              currentLead = {
+                ...currentLead,
+                ...updates,
+                chatId,
+                tags: updates.tags ?? nextTags,
+                labels: updates.labels ?? nextLabels,
+              };
+
+              if (!document.body.classList.contains('kanban-is-dragging')) {
+                this.updateCardDOM({
+                  ...currentLead,
+                  name: this.resolveLeadDisplayName(currentLead),
+                });
+              }
+
+              if (currentLead.id) {
+                this.requestFromContentScript({
+                  type: 'UPDATE_KANBAN_LEAD',
+                  payload: {
+                    leadId: currentLead.id,
+                    updates
+                  }
+                }).catch(() => null);
+
+                document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
+                  detail: {
+                    leadId: currentLead.id,
+                    updates
+                  }
+                }));
+              }
+            }
+
+            const hasPhotoNow = this.isRenderablePhotoUrl(currentLead.photo);
+            const hasTagsNow = Array.isArray(currentLead.tags) && currentLead.tags.length > 0;
+            const canStopByPhoto = !requiresPhotoHydration || hasPhotoNow;
+            const canStopByTags = !requiresTagHydration || hasTagsNow;
+
+            if (canStopByPhoto && canStopByTags) {
+              break;
+            }
+          } catch (_e) {
+            // ignore in background hydration retries
           }
-        } catch (e) {
-          // Ignore errors in background hydration
         }
       });
 
@@ -12010,7 +12140,8 @@ class WhatsAppUIOverlay {
    * This ensures "pop-in" of new data without full re-render
    */
   private updateCardDOM(lead: any) {
-    const card = this.findKanbanCardElementByLeadId(lead.id);
+    const cardLookupId = lead?.id || lead?.chatId || lead?.leadId;
+    const card = this.findKanbanCardElementByLeadId(cardLookupId);
     if (!card) return;
 
     const resolvedName = this.resolveLeadDisplayName(lead);
@@ -12039,15 +12170,20 @@ class WhatsAppUIOverlay {
     }
 
     // 3. Update Tags
-    // Remove existing tags if any
-    const existingTags = card.querySelector('.princhat-kanban-lead-tags');
-    if (existingTags) existingTags.remove();
+    // IMPORTANT: only rewrite tags if caller explicitly sent tag/label payload.
+    // This prevents hydration races from wiping existing tags with empty data.
+    const hasTagPayload = Array.isArray(lead?.tags) || Array.isArray(lead?.labels);
+    if (hasTagPayload) {
+      const existingTags = card.querySelector('.princhat-kanban-lead-tags');
+      if (existingTags) existingTags.remove();
+    }
 
-    if (lead.tags && lead.tags.length > 0) {
+    const normalizedTags = Array.isArray(lead?.tags) ? lead.tags.filter(Boolean) : [];
+    if (hasTagPayload && normalizedTags.length > 0) {
       const tagsContainer = document.createElement('div');
       tagsContainer.className = 'princhat-kanban-lead-tags';
 
-      const firstTag = lead.tags[0];
+      const firstTag = normalizedTags[0];
 
       // Lookup label info
       let labelInfo = this.globalLabels.find(l => l.id === firstTag || (l.name && l.name.toLowerCase() === firstTag.toLowerCase()));
@@ -12072,7 +12208,7 @@ class WhatsAppUIOverlay {
       }
 
       let tagsHtml = `
-      <span class="princhat-kanban-tag" style="background-color: ${finalBg}; color: ${finalColor} !important; text-shadow: ${textShadow}; text-transform: none; font-size: 11px; font-weight: 500 !important; padding: 2px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; margin-right: 4px;">
+      <span class="princhat-kanban-tag princhat-kanban-tag-unified" style="background-color: ${finalBg}; color: ${finalColor} !important; text-shadow: ${textShadow}; text-transform: none; font-size: 11px; font-weight: 500 !important; padding: 2px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; margin-right: 4px;">
         <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
           <line x1="7" x2="7.01" y1="7" y2="7"/>
@@ -12080,10 +12216,10 @@ class WhatsAppUIOverlay {
         ${this.escapeHtml(tagName)}
       </span>`;
 
-      if (lead.tags.length > 1) {
+      if (normalizedTags.length > 1) {
         tagsHtml += `<span class="princhat-kanban-tag-more princhat-no-drag princhat-kanban-tag-unified" style="cursor: pointer !important; pointer-events: auto !important; position: relative !important; z-index: 99 !important; background-color: rgba(158, 158, 158, 0.2) !important; color: #9e9e9e !important; " data-action="show-more-tags" data-tags="${encodeURIComponent(JSON.stringify(
           (() => {
-            const remainingTags = lead.tags.slice(1);
+            const remainingTags = normalizedTags.slice(1);
             return remainingTags.map((tag: string) => {
               let info = this.globalLabels.find(l => l.id === tag || (l.name && l.name.toLowerCase() === tag.toLowerCase()));
               if (!info && lead.labels) info = lead.labels.find((l: any) => l.id === tag || (l.name && l.name.toLowerCase() === tag.toLowerCase()));
@@ -12094,7 +12230,7 @@ class WhatsAppUIOverlay {
               };
             });
           })()
-        ))}">+${lead.tags.length - 1}</span>`;
+        ))}">+${normalizedTags.length - 1}</span>`;
       }
 
       tagsContainer.innerHTML = tagsHtml;
@@ -12123,14 +12259,34 @@ class WhatsAppUIOverlay {
         payload: { chatId }
       }, 9000);
 
+      let chatPhoto = response?.data?.chatPhoto;
+      if (!this.isRenderablePhotoUrl(chatPhoto)) {
+        chatPhoto = await this.getChatPhotoForLead(chatId);
+      }
+
       return {
         chatName: response?.data?.chatName || response?.data?.name,
-        chatPhoto: response?.data?.chatPhoto,
+        chatPhoto,
         labels: response?.data?.labels || []
       };
     } catch (error) {
       console.error('[PrinChat UI] Error fetching contact info:', error);
       return {};
+    }
+  }
+
+  private async getChatPhotoForLead(chatId: string): Promise<string | undefined> {
+    if (!chatId) return undefined;
+    try {
+      const response = await this.requestFromContentScript({
+        type: 'GET_CHAT_PHOTO',
+        payload: { chatId }
+      }, 7000);
+      const responseData = response?.data;
+      const photo = typeof responseData === 'string' ? responseData : responseData?.chatPhoto;
+      return this.isRenderablePhotoUrl(photo) ? photo : undefined;
+    } catch (_error) {
+      return undefined;
     }
   }
 
@@ -13649,26 +13805,6 @@ class WhatsAppUIOverlay {
   /**
    * Helper to set buttons to loading state (hide badges)
    */
-  /**
-   * Calculate optimal text color (black or white) based on background color
-   * Uses WCAG luminance formula for accessibility
-   */
-  private getContrastColor(hexColor: string): string {
-    // Remove # if present
-    const hex = hexColor.replace('#', '');
-
-    // Convert to RGB
-    const r = parseInt(hex.substring(0, 2), 16);
-    const g = parseInt(hex.substring(2, 4), 16);
-    const b = parseInt(hex.substring(4, 6), 16);
-
-    // Calculate relative luminance (WCAG formula)
-    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-
-    // Return white for dark backgrounds, black for light backgrounds
-    return luminance > 0.5 ? '#000000' : '#FFFFFF';
-  }
-
   private setButtonsLoadingState(isLoading: boolean) {
     const notesBadge = document.querySelector('.notes-badge') as HTMLElement;
     if (notesBadge) notesBadge.style.opacity = isLoading ? '0.5' : '1';

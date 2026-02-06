@@ -91,6 +91,7 @@ class DatabaseService {
   private readonly DB_NAME = 'princhat-db';
   private readonly DB_VERSION = 8; // Updated to version 8 for Kanban support
   private kanbanInitLocks = new Map<string, Promise<void>>();
+  private kanbanColumnNormalizationLocks = new Map<string, Promise<void>>();
   private leadNormalizationLocks = new Map<string, Promise<void>>();
 
   async init(): Promise<IDBPDatabase<PrinChatDB>> {
@@ -291,6 +292,132 @@ class DatabaseService {
     }
 
     return identity;
+  }
+
+  private async normalizeAndMergeKanbanColumns(instanceId?: string): Promise<void> {
+    const scope = this.normalizeScope(instanceId);
+    const lockKey = scope || '__all__';
+
+    const pending = this.kanbanColumnNormalizationLocks.get(lockKey);
+    if (pending) {
+      await pending;
+      return;
+    }
+
+    const run = (async () => {
+      const db = await this.init();
+      const allColumns = await db.getAll('kanban_columns');
+      const scopedColumns = allColumns.filter((column) => this.matchesScope(column, scope));
+      if (scopedColumns.length <= 1) return;
+
+      const groupedByName = new Map<string, KanbanColumn[]>();
+      for (const column of scopedColumns) {
+        const key = (column.name || '')
+          .trim()
+          .toLowerCase() || column.id;
+        const group = groupedByName.get(key) || [];
+        group.push(column);
+        groupedByName.set(key, group);
+      }
+
+      const allLeads = await db.getAll('kanban_leads');
+      const scopedLeads = allLeads.filter((lead) => this.matchesScope(lead, scope));
+
+      const replacementByColumnId = new Map<string, string>();
+      const duplicateColumnIds = new Set<string>();
+      let changed = false;
+
+      for (const group of groupedByName.values()) {
+        if (group.length <= 1) continue;
+
+        const sorted = [...group].sort((a, b) => {
+          if (!!a.isDefault !== !!b.isDefault) return a.isDefault ? -1 : 1;
+          const orderDiff = (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER);
+          if (orderDiff !== 0) return orderDiff;
+          const createdDiff = (a.createdAt || 0) - (b.createdAt || 0);
+          if (createdDiff !== 0) return createdDiff;
+          return String(a.id).localeCompare(String(b.id));
+        });
+
+        const primary = sorted[0];
+        if (!primary) continue;
+
+        const desiredOrder = Math.min(...sorted.map((col) => col.order ?? Number.MAX_SAFE_INTEGER));
+        const shouldBeDefault = sorted.some((col) => !!col.isDefault);
+        const primaryNeedsUpdate =
+          primary.order !== desiredOrder ||
+          (!!primary.isDefault) !== shouldBeDefault ||
+          this.normalizeScope(primary.instanceId) !== scope;
+
+        if (primaryNeedsUpdate) {
+          await db.put('kanban_columns', {
+            ...primary,
+            instanceId: scope,
+            order: desiredOrder,
+            isDefault: shouldBeDefault,
+            updatedAt: Date.now(),
+          });
+          changed = true;
+        }
+
+        for (const duplicate of sorted.slice(1)) {
+          replacementByColumnId.set(duplicate.id, primary.id);
+          duplicateColumnIds.add(duplicate.id);
+        }
+      }
+
+      for (const lead of scopedLeads) {
+        const replacementColumnId = replacementByColumnId.get(lead.columnId);
+        if (!replacementColumnId) continue;
+
+        await db.put('kanban_leads', {
+          ...lead,
+          columnId: replacementColumnId,
+          updatedAt: Date.now(),
+        });
+        changed = true;
+      }
+
+      for (const duplicateId of duplicateColumnIds) {
+        await db.delete('kanban_columns', duplicateId);
+        changed = true;
+      }
+
+      const refreshedColumns = (await db.getAll('kanban_columns'))
+        .filter((column) => this.matchesScope(column, scope))
+        .sort((a, b) => a.order - b.order);
+      const validColumnIds = new Set(refreshedColumns.map((column) => column.id));
+      const fallbackColumnId =
+        refreshedColumns.find((column) => column.isDefault)?.id
+        || refreshedColumns[0]?.id
+        || null;
+
+      if (fallbackColumnId) {
+        for (const lead of scopedLeads) {
+          if (lead.columnId && validColumnIds.has(lead.columnId)) continue;
+          await db.put('kanban_leads', {
+            ...lead,
+            columnId: fallbackColumnId,
+            updatedAt: Date.now(),
+          });
+          changed = true;
+        }
+      }
+
+      if (changed && typeof chrome !== 'undefined' && chrome.storage) {
+        await chrome.storage.local.set({
+          kanban_columns: Date.now(),
+          kanban_leads: Date.now(),
+        });
+      }
+    })();
+
+    this.kanbanColumnNormalizationLocks.set(lockKey, run);
+    try {
+      await run;
+    } finally {
+      this.kanbanColumnNormalizationLocks.delete(lockKey);
+    }
   }
 
   private async normalizeAndMergeLeads(instanceId?: string): Promise<void> {
@@ -1348,6 +1475,7 @@ class DatabaseService {
     const db = await this.init();
     if (instanceId) {
       await this.initializeDefaultKanbanColumns(instanceId);
+      await this.normalizeAndMergeKanbanColumns(instanceId);
     }
 
     const columns = await db.getAllFromIndex('kanban_columns', 'by-order');
@@ -1676,6 +1804,9 @@ class DatabaseService {
    * Get all leads
    */
   async getAllLeads(instanceId?: string): Promise<LeadContact[]> {
+    if (instanceId) {
+      await this.normalizeAndMergeKanbanColumns(instanceId);
+    }
     await this.normalizeAndMergeLeads(instanceId);
     const db = await this.init();
     const leads = await db.getAll('kanban_leads');
@@ -1686,6 +1817,9 @@ class DatabaseService {
    * Get leads for a specific column
    */
   async getLeadsByColumn(columnId: string, instanceId?: string): Promise<LeadContact[]> {
+    if (instanceId) {
+      await this.normalizeAndMergeKanbanColumns(instanceId);
+    }
     await this.normalizeAndMergeLeads(instanceId);
     const db = await this.init();
     const leads = await db.getAllFromIndex('kanban_leads', 'by-columnId', columnId);
