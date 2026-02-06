@@ -10,6 +10,7 @@
 
 import { db } from '../storage/db';
 import { syncService } from '../services/sync-service';
+import { sessionService } from '../services/session-service';
 
 // Polyfill window for libraries that expect it (e.g. Supabase internals)
 if (typeof self !== 'undefined' && typeof window === 'undefined') {
@@ -55,6 +56,7 @@ class BackgroundService {
 
     // Trigger initial sync (non-blocking)
     syncService.fetchAndSyncInitialData().catch(console.error);
+    sessionService.start().catch(console.error);
 
     // Set up schedule checker alarm (every minute)
     await this.setupScheduleChecker();
@@ -83,6 +85,14 @@ class BackgroundService {
     }
   }
 
+  private requireInstanceId(payload: any): string {
+    const instanceId = payload?.instanceId;
+    if (!instanceId || typeof instanceId !== 'string') {
+      throw new Error('INSTANCE_REQUIRED: Missing instanceId in payload');
+    }
+    return instanceId;
+  }
+
   /**
    * Handle messages from other parts of the extension
    */
@@ -93,6 +103,13 @@ class BackgroundService {
   ): boolean {
     console.log('[PrinChat] Service worker received message:', message.type, 'from tab:', sender.tab?.id);
 
+    if (typeof message?.payload?.instanceId === 'string') {
+      sessionService.setInstance(message.payload.instanceId);
+      sessionService.verifyAndHeartbeat().catch((error) => {
+        console.warn('[PrinChat Session] On-demand validation failed:', error);
+      });
+    }
+
     // Handle different message types
     switch (message.type) {
       case 'PING':
@@ -101,14 +118,14 @@ class BackgroundService {
 
       case 'TRIGGER_MANUAL_SYNC':
         console.log('[PrinChat] Manual Sync requested by UI/Content Script');
-        syncService.fetchAndSyncInitialData()
+        syncService.fetchAndSyncInitialData(message.payload?.instanceId)
           .then((result) => sendResponse({ success: true, result }))
           .catch((error) => sendResponse({ success: false, error: error.message }));
         return true;
 
       case 'FORCE_INIT':
         console.log('[PrinChat] Force Init requested by UI');
-        syncService.fetchAndSyncInitialData()
+        syncService.fetchAndSyncInitialData(message.payload?.instanceId)
           .then((result) => sendResponse({ success: true, result })) // Pass result object
           .catch((error) => sendResponse({ success: false, error: error.message }));
         return true;
@@ -248,39 +265,58 @@ class BackgroundService {
         return true; // Keep channel open for async response
 
       case 'SAVE_SCHEDULE':
-        db.saveSchedule(message.payload)
-          .then(async () => {
+        (async () => {
+          try {
+            const instanceId = this.requireInstanceId(message.payload);
+            const schedulePayload = { ...message.payload, instanceId };
+            await db.saveSchedule(schedulePayload);
             // Create a specific alarm for this schedule
-            await this.createScheduleAlarm(message.payload);
+            await this.createScheduleAlarm(schedulePayload);
             sendResponse({ success: true });
-          })
-          .catch((error) => sendResponse({ success: false, error: error.message }));
+          } catch (error: any) {
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
         return true;
 
       case 'GET_SCHEDULES_BY_CHAT':
-        db.getSchedulesByChatId(message.payload.chatId)
-          .then((schedules) => sendResponse({ success: true, data: schedules }))
-          .catch((error) => sendResponse({ success: false, error: error.message }));
+        (async () => {
+          try {
+            const instanceId = this.requireInstanceId(message.payload);
+            const schedules = await db.getSchedulesByChatId(message.payload.chatId, instanceId);
+            sendResponse({ success: true, data: schedules });
+          } catch (error: any) {
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
         return true;
 
       case 'GET_ALL_SCHEDULES':
-        db.getAllSchedules()
-          .then((schedules) => {
+        (async () => {
+          try {
+            const instanceId = this.requireInstanceId(message.payload);
+            const schedules = await db.getAllSchedules(instanceId);
             sendResponse({ success: true, data: schedules });
-          })
-          .catch((error) => sendResponse({ success: false, error: error.message }));
+          } catch (error: any) {
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
         return true;
 
       case 'DELETE_SCHEDULE':
-        db.deleteSchedule(message.payload.id)
-          .then(async () => {
+        (async () => {
+          try {
+            const instanceId = this.requireInstanceId(message.payload);
+            await db.deleteSchedule(message.payload.id, instanceId);
             // Cancel the alarm for this schedule
             const alarmName = `schedule-${message.payload.id}`;
             await chrome.alarms.clear(alarmName);
             console.log('[PrinChat] Canceled alarm:', alarmName);
             sendResponse({ success: true });
-          })
-          .catch((error) => sendResponse({ success: false, error: error.message }));
+          } catch (error: any) {
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
         return true;
 
       // ==================== TAGS ====================
@@ -299,8 +335,9 @@ class BackgroundService {
       case 'UPDATE_SCHEDULE_STATUS':
         (async () => {
           try {
+            const instanceId = this.requireInstanceId(message.payload);
             const { id, status } = message.payload;
-            await db.updateScheduleStatus(id, status);
+            await db.updateScheduleStatus(id, status, instanceId);
 
             // If changing to paused, clear the alarm
             if (status === 'paused') {
@@ -311,7 +348,7 @@ class BackgroundService {
 
             // If changing from paused to pending, check if we need to send immediately or create new alarm
             if (status === 'pending') {
-              const schedule = await db.getSchedule(id);
+              const schedule = await db.getSchedule(id, instanceId);
               if (schedule) {
                 const now = Date.now();
                 if (schedule.scheduledTime <= now) {
@@ -337,7 +374,8 @@ class BackgroundService {
       case 'CREATE_NOTE':
         (async () => {
           try {
-            const note = await db.createNote(message.payload);
+            const instanceId = this.requireInstanceId(message.payload);
+            const note = await db.createNote({ ...message.payload, instanceId });
             sendResponse({ success: true, data: note });
           } catch (error: any) {
             console.error('[Background] Error creating note:', error);
@@ -349,7 +387,8 @@ class BackgroundService {
       case 'UPDATE_NOTE':
         (async () => {
           try {
-            await db.updateNote(message.payload.id, message.payload);
+            const instanceId = this.requireInstanceId(message.payload);
+            await db.updateNote(message.payload.id, message.payload, instanceId);
             sendResponse({ success: true });
           } catch (error: any) {
             console.error('[Background] Error updating note:', error);
@@ -361,11 +400,12 @@ class BackgroundService {
       case 'GET_NOTES_BY_CHAT':
         (async () => {
           try {
+            const instanceId = this.requireInstanceId(message.payload);
             console.log('[Background] GET_NOTES_BY_CHAT handler called');
             console.log('[Background] Payload:', message.payload);
             console.log('[Background] ChatId:', message.payload.chatId);
 
-            const notes = await db.getNotesByChatId(message.payload.chatId);
+            const notes = await db.getNotesByChatId(message.payload.chatId, instanceId);
 
             console.log('[Background] Notes retrieved:', notes);
             console.log('[Background] Notes count:', notes.length);
@@ -381,7 +421,7 @@ class BackgroundService {
       case 'GET_NOTE':
         (async () => {
           try {
-            const note = await db.getNote(message.payload.id);
+            const note = await db.getNote(message.payload.id, this.requireInstanceId(message.payload));
             sendResponse({ success: true, data: note });
           } catch (error: any) {
             console.error('[Background] Error getting note:', error);
@@ -393,7 +433,7 @@ class BackgroundService {
       case 'DELETE_NOTE':
         (async () => {
           try {
-            await db.deleteNote(message.payload.id);
+            await db.deleteNote(message.payload.id, this.requireInstanceId(message.payload));
             sendResponse({ success: true });
           } catch (error: any) {
             console.error('[Background] Error deleting note:', error);
@@ -406,7 +446,7 @@ class BackgroundService {
         (async () => {
           try {
             console.log('[Background] GET_ALL_NOTES request received');
-            const notes = await db.getAllNotes();
+            const notes = await db.getAllNotes(this.requireInstanceId(message.payload));
             console.log('[Background] Fetched', notes.length, 'notes:', notes);
             sendResponse({ success: true, data: notes });
           } catch (error: any) {
@@ -420,8 +460,9 @@ class BackgroundService {
       case 'GET_KANBAN_COLUMNS':
         (async () => {
           try {
+            const instanceId = this.requireInstanceId(message.payload);
             console.log('[Background] GET_KANBAN_COLUMNS request received');
-            const columns = await db.getAllKanbanColumns();
+            const columns = await db.getAllKanbanColumns(instanceId);
             console.log('[Background] Fetched', columns.length, 'columns');
             sendResponse({ success: true, data: columns });
           } catch (error: any) {
@@ -434,9 +475,10 @@ class BackgroundService {
       case 'CREATE_KANBAN_COLUMN':
         (async () => {
           try {
+            const instanceId = this.requireInstanceId(message.payload);
             console.log('[Background] CREATE_KANBAN_COLUMN request received:', message.payload);
             const { name, color, description } = message.payload;
-            const column = await db.createKanbanColumn(name, color, description);
+            const column = await db.createKanbanColumn(name, color, description, instanceId);
             console.log('[Background] Column created:', column.id);
             sendResponse({ success: true, data: column });
           } catch (error: any) {
@@ -449,9 +491,10 @@ class BackgroundService {
       case 'UPDATE_KANBAN_COLUMN':
         (async () => {
           try {
+            const instanceId = this.requireInstanceId(message.payload);
             console.log('[Background] UPDATE_KANBAN_COLUMN request received:', message.payload);
             const { id, updates } = message.payload;
-            await db.updateKanbanColumn(id, updates);
+            await db.updateKanbanColumn(id, updates, instanceId);
             console.log('[Background] Column updated:', id);
             sendResponse({ success: true });
           } catch (error: any) {
@@ -464,9 +507,10 @@ class BackgroundService {
       case 'DELETE_KANBAN_COLUMN':
         (async () => {
           try {
+            const instanceId = this.requireInstanceId(message.payload);
             console.log('[Background] DELETE_KANBAN_COLUMN request received:', message.payload);
             const { id } = message.payload;
-            await db.deleteKanbanColumn(id);
+            await db.deleteKanbanColumn(id, instanceId);
             console.log('[Background] Column deleted:', id);
             sendResponse({ success: true });
           } catch (error: any) {
@@ -479,9 +523,10 @@ class BackgroundService {
       case 'UPDATE_COLUMN_ORDER':
         (async () => {
           try {
+            const instanceId = this.requireInstanceId(message.payload);
             console.log('[Background] UPDATE_COLUMN_ORDER request received:', message.payload);
             const { columnId, newOrder } = message.payload;
-            await db.updateColumnOrder(columnId, newOrder);
+            await db.updateColumnOrder(columnId, newOrder, instanceId);
             console.log('[Background] Column order updated:', columnId, 'to', newOrder);
             sendResponse({ success: true });
           } catch (error: any) {
@@ -494,8 +539,9 @@ class BackgroundService {
       case 'GET_ALL_KANBAN_LEADS':
         (async () => {
           try {
+            const instanceId = this.requireInstanceId(message.payload);
             console.log('[Background] GET_ALL_KANBAN_LEADS request received');
-            const leads = await db.getAllLeads();
+            const leads = await db.getAllLeads(instanceId);
             console.log('[Background] Fetched', leads.length, 'leads');
             sendResponse({ success: true, data: leads });
           } catch (error: any) {
@@ -508,8 +554,9 @@ class BackgroundService {
       case 'CREATE_KANBAN_LEAD':
         (async () => {
           try {
+            const instanceId = this.requireInstanceId(message.payload);
             console.log('[Background] CREATE_KANBAN_LEAD request received:', message.payload);
-            const lead = await db.createLead(message.payload);
+            const lead = await db.createLead({ ...message.payload, instanceId });
             console.log('[Background] Lead created:', lead.id);
             sendResponse({ success: true, data: lead });
           } catch (error: any) {
@@ -522,12 +569,13 @@ class BackgroundService {
       case 'UPDATE_KANBAN_LEAD':
         (async () => {
           try {
+            const instanceId = this.requireInstanceId(message.payload);
             console.log('[Background] UPDATE_KANBAN_LEAD request received:', message.payload);
             const { leadId, updates } = message.payload;
 
             try {
               // Try exact match first
-              await db.updateLead(leadId, updates);
+              await db.updateLead(leadId, updates, instanceId);
               console.log('[Background] Lead updated (exact match):', leadId);
               sendResponse({ success: true, data: { id: leadId } });
             } catch (err: any) {
@@ -546,7 +594,7 @@ class BackgroundService {
 
               if (altId && altId !== leadId) {
                 try {
-                  await db.updateLead(altId, updates);
+                  await db.updateLead(altId, updates, instanceId);
                   console.log('[Background] Lead updated (alternative match):', altId);
                   sendResponse({ success: true, data: { id: altId } });
                   return;
@@ -571,9 +619,10 @@ class BackgroundService {
       case 'MOVE_KANBAN_LEAD':
         (async () => {
           try {
+            const instanceId = this.requireInstanceId(message.payload);
             console.log('[Background] MOVE_KANBAN_LEAD request received:', message.payload);
             const { leadId, newColumnId, newOrder } = message.payload;
-            await db.moveLead(leadId, newColumnId, newOrder);
+            await db.moveLead(leadId, newColumnId, newOrder, instanceId);
             console.log('[Background] Lead moved:', leadId);
             sendResponse({ success: true });
           } catch (error: any) {
@@ -586,9 +635,10 @@ class BackgroundService {
       case 'DELETE_KANBAN_LEAD':
         (async () => {
           try {
+            const instanceId = this.requireInstanceId(message.payload);
             console.log('[Background] DELETE_KANBAN_LEAD request received:', message.payload);
             const { leadId } = message.payload;
-            await db.deleteLead(leadId);
+            await db.deleteLead(leadId, instanceId);
             console.log('[Background] Lead deleted:', leadId);
             sendResponse({ success: true });
           } catch (error: any) {
@@ -625,6 +675,7 @@ class BackgroundService {
 
             // Trigger initial sync
             syncService.fetchAndSyncInitialData().catch(console.error);
+            sessionService.start().catch(console.error);
 
             sendResponse({ success: true });
           } catch (error: any) {

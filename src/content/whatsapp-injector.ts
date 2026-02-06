@@ -485,6 +485,9 @@
     private isReady = false;
     private pendingRequests = new Map<string, { resolve: Function, reject: Function }>();
     private scriptExecutor: ScriptExecutor;
+    private currentInstanceCache: { value: string } | null = null;
+    private injectScriptsInFlight: Promise<void> | null = null;
+    private pendingPhotoRefreshByLead = new Map<string, Promise<void>>();
 
     // Map to track multiple direct script executions (from footer shortcuts)
     // Each script has its own isolated state instead of shared global flags
@@ -497,6 +500,421 @@
       this.scriptExecutor = new ScriptExecutor();
       this.scriptExecutor.setInjector(this);
       this.init();
+    }
+
+    private isScopedDataMessage(type: string): boolean {
+      return type === 'SAVE_SCHEDULE' ||
+        type === 'GET_SCHEDULES_BY_CHAT' ||
+        type === 'GET_ALL_SCHEDULES' ||
+        type === 'DELETE_SCHEDULE' ||
+        type === 'UPDATE_SCHEDULE_STATUS' ||
+        type === 'CREATE_NOTE' ||
+        type === 'UPDATE_NOTE' ||
+        type === 'GET_NOTES_BY_CHAT' ||
+        type === 'GET_NOTE' ||
+        type === 'DELETE_NOTE' ||
+        type === 'GET_ALL_NOTES' ||
+        type === 'GET_KANBAN_COLUMNS' ||
+        type === 'CREATE_KANBAN_COLUMN' ||
+        type === 'UPDATE_KANBAN_COLUMN' ||
+        type === 'DELETE_KANBAN_COLUMN' ||
+        type === 'UPDATE_COLUMN_ORDER' ||
+        type === 'GET_ALL_KANBAN_LEADS' ||
+        type === 'CREATE_KANBAN_LEAD' ||
+        type === 'MOVE_KANBAN_LEAD' ||
+        type === 'UPDATE_KANBAN_LEAD' ||
+        type === 'DELETE_KANBAN_LEAD' ||
+        type === 'FORCE_INIT' ||
+        type === 'TRIGGER_MANUAL_SYNC';
+    }
+
+    private normalizeChatIdentifier(chatId?: string): string {
+      const raw = this.extractRawChatIdentifier(chatId);
+      if (!raw) return '';
+
+      let normalized = raw;
+      const atIndex = normalized.indexOf('@');
+      const userPart = (atIndex >= 0 ? normalized.slice(0, atIndex) : normalized).replace(/:\d+$/g, '');
+      const domainPart = atIndex >= 0 ? normalized.slice(atIndex) : '';
+      if (!userPart) return '';
+
+      return `${userPart}${domainPart}`;
+    }
+
+    private extractRawChatIdentifier(chatId?: string): string {
+      if (!chatId || typeof chatId !== 'string') return '';
+      let normalized = chatId.trim().toLowerCase();
+      if (!normalized) return '';
+
+      const scopedSeparator = normalized.lastIndexOf('::');
+      if (scopedSeparator >= 0) {
+        normalized = normalized.slice(scopedSeparator + 2);
+      }
+
+      normalized = normalized.replace(/^waid?:/, '');
+      return normalized;
+    }
+
+    private getCanonicalChatIdentity(chatId?: string): string {
+      const normalized = this.normalizeChatIdentifier(chatId);
+      if (!normalized) return '';
+
+      const atIndex = normalized.indexOf('@');
+      const userPart = atIndex >= 0 ? normalized.slice(0, atIndex) : normalized;
+      return userPart.trim();
+    }
+
+    private buildChatIdVariants(chatId?: string): string[] {
+      const raw = this.extractRawChatIdentifier(chatId);
+      const normalized = this.normalizeChatIdentifier(chatId);
+      const identity = this.getCanonicalChatIdentity(chatId);
+      const variants = new Set<string>();
+
+      if (raw) variants.add(raw);
+      if (normalized) variants.add(normalized);
+      if (identity) {
+        variants.add(identity);
+        if (identity !== 'status') {
+          variants.add(`${identity}@c.us`);
+          variants.add(`${identity}@s.whatsapp.net`);
+          variants.add(`${identity}@lid`);
+        }
+      }
+
+      return Array.from(variants).filter(Boolean);
+    }
+
+    private logPhotoResolution(
+      rawChatId: string,
+      phase: 'create' | 'update' | 'rehydrate',
+      photoSource: 'event' | 'chatInfo' | 'sidebar' | 'retry',
+      photo?: string
+    ) {
+      if (!this.isRenderablePhotoUrl(photo)) return;
+      console.log('[PrinChat Kanban] Photo resolved', {
+        phase,
+        rawChatId,
+        canonicalChatId: this.getCanonicalChatIdentity(rawChatId),
+        photoSource
+      });
+    }
+
+    private shouldIgnoreKanbanChat(chatId?: string): boolean {
+      const normalized = this.normalizeChatIdentifier(chatId);
+      if (!normalized) return true;
+
+      const identity = this.getCanonicalChatIdentity(normalized);
+      if (identity === 'status') return true;
+      if (normalized === 'status@broadcast') return true;
+      if (normalized.endsWith('@broadcast')) return true;
+
+      return false;
+    }
+
+    private isRenderablePhotoUrl(value?: string): boolean {
+      if (!value || typeof value !== 'string') return false;
+      const src = value.trim();
+      if (!src || src === 'data:' || src.startsWith('data:image/svg')) return false;
+      return src.startsWith('http') || src.startsWith('blob:') || src.startsWith('data:image/');
+    }
+
+    private findSidebarPhotoByChat(chatId?: string, chatName?: string): string | undefined {
+      const variants = this.buildChatIdVariants(chatId);
+      if (variants.length === 0) return undefined;
+
+      const roots = Array.from(document.querySelectorAll('#pane-side, #side'));
+      const searchRoots = roots.length > 0 ? roots : [document.body];
+
+      const findElementPhoto = (element: Element | null): string | undefined => {
+        if (!element) return undefined;
+        const images = Array.from(element.querySelectorAll('img')) as HTMLImageElement[];
+        for (const img of images) {
+          if (this.isRenderablePhotoUrl(img.src)) return img.src;
+        }
+        const nodes = Array.from(element.querySelectorAll('*')) as HTMLElement[];
+        for (const node of nodes) {
+          const bgImage = window.getComputedStyle(node).backgroundImage;
+          if (!bgImage || bgImage === 'none' || !bgImage.includes('url(')) continue;
+          const match = bgImage.match(/url\(["']?(.*?)["']?\)/i);
+          const url = match?.[1];
+          if (this.isRenderablePhotoUrl(url)) return url;
+        }
+        return undefined;
+      };
+
+      for (const root of searchRoots) {
+        if (!root) continue;
+
+        const rows = Array.from(root.querySelectorAll('[data-id]')) as HTMLElement[];
+        for (const row of rows) {
+          const dataId = String(row.getAttribute('data-id') || '').toLowerCase();
+          if (!dataId) continue;
+          if (!variants.some((variant) => dataId.includes(variant))) continue;
+
+          const listItem = row.closest('[role="listitem"]') || row;
+          const photo = findElementPhoto(listItem);
+          if (photo) {
+            this.logPhotoResolution(chatId || '', 'rehydrate', 'sidebar', photo);
+            return photo;
+          }
+        }
+
+        if (chatName) {
+          const normalizedName = chatName.trim().toLowerCase();
+          const titleNodes = Array.from(root.querySelectorAll('span[title], div[title]')) as HTMLElement[];
+          for (const node of titleNodes) {
+            const title = String(node.getAttribute('title') || node.textContent || '').trim().toLowerCase();
+            if (!title || title !== normalizedName) continue;
+
+            const listItem = node.closest('[role="listitem"]') || node.closest('[data-id]') || node.parentElement;
+            const photo = findElementPhoto(listItem);
+            if (photo) {
+              this.logPhotoResolution(chatId || '', 'rehydrate', 'sidebar', photo);
+              return photo;
+            }
+          }
+        }
+      }
+
+      return undefined;
+    }
+
+    private async refreshLeadPhotoFromChat(leadId: string, chatId: string, chatName?: string): Promise<void> {
+      if (!leadId || !chatId) return;
+
+      const inFlight = this.pendingPhotoRefreshByLead.get(leadId);
+      if (inFlight) {
+        return inFlight;
+      }
+
+      const task = (async () => {
+        const attempts = [600, 1400, 3000, 6000];
+        const variants = this.buildChatIdVariants(chatId);
+        const primaryChatId = variants[0] || this.normalizeChatIdentifier(chatId) || chatId;
+
+        for (const delayMs of attempts) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+
+          try {
+            let photo = '';
+            for (const variant of variants) {
+              const info = await this.getChatInfo(variant);
+              const candidatePhoto = info?.success ? (info.data?.chatPhoto || '') : '';
+              if (this.isRenderablePhotoUrl(candidatePhoto)) {
+                photo = candidatePhoto;
+                this.logPhotoResolution(primaryChatId, 'rehydrate', 'retry', photo);
+                break;
+              }
+            }
+
+            if (!photo) {
+              photo = this.findSidebarPhotoByChat(primaryChatId, chatName) || '';
+            }
+
+            if (!this.isRenderablePhotoUrl(photo)) {
+              continue;
+            }
+
+            const updateResult = await this.sendRuntimeMessage({
+              type: 'UPDATE_KANBAN_LEAD',
+              payload: {
+                leadId,
+                updates: { photo }
+              }
+            });
+
+            if (updateResult?.success) {
+              document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
+                detail: {
+                  leadId,
+                  updates: { photo }
+                }
+              }));
+            }
+
+            return;
+          } catch (_error) {
+            // ignore and keep retrying
+          }
+        }
+
+      })();
+
+      this.pendingPhotoRefreshByLead.set(leadId, task);
+      try {
+        await task;
+      } finally {
+        const current = this.pendingPhotoRefreshByLead.get(leadId);
+        if (current === task) {
+          this.pendingPhotoRefreshByLead.delete(leadId);
+        }
+      }
+    }
+
+    private async reinjectPageScripts(): Promise<void> {
+      if (this.injectScriptsInFlight) {
+        await this.injectScriptsInFlight;
+        return;
+      }
+
+      this.injectScriptsInFlight = (async () => {
+        try {
+          await this.injectScripts();
+        } catch (error) {
+          console.warn('[PrinChat] Reinjection attempt failed:', error);
+        }
+      })();
+
+      try {
+        await this.injectScriptsInFlight;
+      } finally {
+        this.injectScriptsInFlight = null;
+      }
+    }
+
+    private async withCurrentInstance(message: any): Promise<any> {
+      if (!message || !this.isScopedDataMessage(message.type)) {
+        return message;
+      }
+
+      const legacyScope = 'legacy_unassigned';
+      const payload = (message.payload && typeof message.payload === 'object')
+        ? { ...message.payload }
+        : {};
+
+      if (payload.instanceId === legacyScope) {
+        throw new Error('INSTANCE_NOT_READY: Invalid legacy scope for scoped operation');
+      }
+
+      if (!payload.instanceId || typeof payload.instanceId !== 'string') {
+        payload.instanceId = await this.getCurrentInstanceId(false);
+      }
+
+      if (payload.instanceId === legacyScope) {
+        throw new Error('INSTANCE_NOT_READY: Could not resolve current WhatsApp instance');
+      }
+
+      return { ...message, payload };
+    }
+
+    private async resolveFallbackColumnIdForLead(existingLead: any): Promise<string | null> {
+      try {
+        const columnsResponse = await this.sendRuntimeMessage({ type: 'GET_KANBAN_COLUMNS' });
+        if (!columnsResponse?.success) {
+          return null;
+        }
+
+        const columns = columnsResponse?.data || [];
+        const hasValidColumn = !!existingLead?.columnId && columns.some((c: any) => c.id === existingLead.columnId);
+        if (hasValidColumn) {
+          return null;
+        }
+
+        const defaultColumn = columns.find((c: any) => c.isDefault === true);
+        return defaultColumn?.id || null;
+      } catch (_error) {
+        return null;
+      }
+    }
+
+    private async sendRuntimeMessage(message: any): Promise<any> {
+      const maxAttempts = 3;
+      const messageType = String(message?.type || '');
+      const scopedMessage = this.isScopedDataMessage(messageType);
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const messageWithScope = await this.withCurrentInstance(message);
+          const response = await chrome.runtime.sendMessage(messageWithScope);
+
+          if (scopedMessage && response && response.success === false) {
+            const responseError = String(response.error || '');
+            const instanceResponseError =
+              responseError.includes('INSTANCE_REQUIRED') ||
+              responseError.includes('INSTANCE_NOT_READY');
+
+            if (instanceResponseError) {
+              throw new Error(`INSTANCE_NOT_READY: ${responseError}`);
+            }
+          }
+
+          return response;
+        } catch (error: any) {
+          const errorMsg = String(error?.message || error || '');
+          const isInstanceError =
+            errorMsg.includes('INSTANCE_NOT_READY') ||
+            errorMsg.includes('INSTANCE_REQUIRED');
+
+          if (!isInstanceError || attempt === maxAttempts) {
+            throw error;
+          }
+
+          this.currentInstanceCache = null;
+          if (attempt === 1) {
+            await this.reinjectPageScripts();
+          }
+          await new Promise(resolve => setTimeout(resolve, 300 * attempt));
+        }
+      }
+
+      throw new Error('INSTANCE_NOT_READY: Could not send scoped message');
+    }
+
+    private requestCurrentInstanceId(): Promise<string> {
+      const now = Date.now();
+
+      return new Promise((resolve, reject) => {
+        const requestId = `instance-${now}-${Math.random().toString(36).slice(2, 9)}`;
+        const timeout = setTimeout(() => {
+          document.removeEventListener('PrinChatCurrentInstanceResult', handler);
+          reject(new Error('INSTANCE_NOT_READY: Timeout resolving current WhatsApp instance'));
+        }, 5000);
+
+        const handler = (event: any) => {
+          if (event.detail?.requestId !== requestId) return;
+          clearTimeout(timeout);
+          document.removeEventListener('PrinChatCurrentInstanceResult', handler);
+
+          if (event.detail?.success && event.detail?.instanceId && event.detail.instanceId !== 'legacy_unassigned') {
+            resolve(String(event.detail.instanceId));
+            return;
+          }
+
+          reject(new Error(event.detail?.error || 'INSTANCE_NOT_READY: Could not resolve current WhatsApp instance'));
+        };
+
+        document.addEventListener('PrinChatCurrentInstanceResult', handler);
+        document.dispatchEvent(new CustomEvent('PrinChatGetCurrentInstance', {
+          detail: { requestId }
+        }));
+      });
+    }
+
+    async getCurrentInstanceId(forceRefresh: boolean = false): Promise<string> {
+      if (!forceRefresh && this.currentInstanceCache) {
+        return this.currentInstanceCache.value;
+      }
+
+      const attempts = forceRefresh ? 1 : 2;
+
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        try {
+          const resolved = await this.requestCurrentInstanceId();
+          this.currentInstanceCache = { value: resolved };
+          return resolved;
+        } catch (error) {
+          if (attempt === 1) {
+            await this.reinjectPageScripts();
+          }
+          if (attempt < attempts) {
+            await new Promise(resolve => setTimeout(resolve, 350));
+            continue;
+          }
+        }
+      }
+
+      this.currentInstanceCache = null;
+      throw new Error('INSTANCE_NOT_READY: Could not resolve current WhatsApp instance');
     }
 
     private async init() {
@@ -544,30 +962,50 @@
         if (success && chatId) {
           try {
             console.log('[PrinChat Kanban] Message sent, updating lead for:', chatId);
-            const leadsResponse = await chrome.runtime.sendMessage({ type: 'GET_ALL_KANBAN_LEADS' });
+            const leadsResponse = await this.sendRuntimeMessage({ type: 'GET_ALL_KANBAN_LEADS' });
+            if (!leadsResponse?.success) {
+              throw new Error(leadsResponse?.error || 'Failed to fetch Kanban leads');
+            }
             const allLeads = leadsResponse?.data || [];
 
-            // Normalize chatId for comparison (remove @c.us, @lid, etc.)
-            const normalizeId = (id: string) => {
-              if (!id) return '';
-              return id.replace(/@c\.us|@lid|@g\.us|@s\.whatsapp\.net/g, '');
-            };
-            const normalizedChatId = normalizeId(chatId);
+            const chatIdVariants = this.buildChatIdVariants(chatId);
+            const chatVariantSet = new Set(chatIdVariants);
+            const normalizedChatId = this.getCanonicalChatIdentity(chatId);
 
             // Find lead with flexible matching
             const existingLead = allLeads.find((l: any) => {
-              const leadId = l.id || '';
-              const leadChatId = l.chatId || '';
-              return normalizeId(leadId) === normalizedChatId ||
-                normalizeId(leadChatId) === normalizedChatId ||
-                leadId === chatId ||
-                leadChatId === chatId;
+              const leadCandidates = [l?.id, l?.chatId, l?.phone];
+
+              for (const candidate of leadCandidates) {
+                const candidateVariants = this.buildChatIdVariants(candidate);
+                if (candidateVariants.some((variant) => chatVariantSet.has(variant))) {
+                  return true;
+                }
+
+                const candidateIdentity = this.getCanonicalChatIdentity(candidate);
+                if (candidateIdentity && normalizedChatId && candidateIdentity === normalizedChatId) {
+                  return true;
+                }
+              }
+
+              return false;
             });
 
             console.log('[PrinChat Kanban] Looking for lead with chatId:', chatId, 'normalized:', normalizedChatId, 'found:', !!existingLead);
 
             if (existingLead) {
               const updates: any = {};
+
+              // Self-heal hidden leads: if their column is missing/invalid, move back to default column.
+              const fallbackColumnId = await this.resolveFallbackColumnIdForLead(existingLead);
+              if (fallbackColumnId) {
+                console.warn('[PrinChat Kanban] Lead with invalid/missing column detected. Moving to default column:', {
+                  leadId: existingLead.id,
+                  previousColumnId: existingLead.columnId,
+                  newColumnId: fallbackColumnId
+                });
+                updates.columnId = fallbackColumnId;
+              }
 
               // Reset unread count if > 0
               if (existingLead.unreadCount > 0) {
@@ -582,13 +1020,16 @@
 
               // Only update if there are changes
               if (Object.keys(updates).length > 0) {
-                await chrome.runtime.sendMessage({
+                const updateResult = await this.sendRuntimeMessage({
                   type: 'UPDATE_KANBAN_LEAD',
                   payload: {
                     leadId: existingLead.id,
                     updates
                   }
                 });
+                if (!updateResult?.success) {
+                  throw new Error(updateResult?.error || 'Failed to update Kanban lead');
+                }
                 console.log('[PrinChat Kanban] ✅ Lead updated:', chatId, updates);
 
                 // Dispatch event for real-time UI update
@@ -662,7 +1103,7 @@
 
       // Listen for incoming messages from page script (for triggers)
       document.addEventListener('PrinChatIncomingMessage', async (event: any) => {
-        const { messageText, chatId, timestamp, fromMe } = event.detail;
+        const { messageText, chatId, timestamp, fromMe, chatPhoto: eventChatPhoto } = event.detail;
         console.log('[PrinChat] Message detected:', messageText, 'from:', chatId, 'fromMe:', fromMe);
 
         // Send to service worker to check triggers (ONLY for incoming messages)
@@ -690,6 +1131,11 @@
         // AUTO-ADD TO KANBAN / UPDATE KANBAN LEADS
         // Check if this contact should be added to Kanban or updated
         try {
+          if (this.shouldIgnoreKanbanChat(chatId)) {
+            console.log('[PrinChat Kanban] Skipping system chat:', chatId);
+            return;
+          }
+
           // Skip group chats
           if (chatId.includes('@g.us')) {
             console.log('[PrinChat Kanban] Skipping group chat');
@@ -697,24 +1143,58 @@
           }
 
           // Get all leads to check if contact already exists
-          const leadsResponse = await chrome.runtime.sendMessage({ type: 'GET_ALL_KANBAN_LEADS' });
+          const leadsResponse = await this.sendRuntimeMessage({ type: 'GET_ALL_KANBAN_LEADS' });
+          if (!leadsResponse?.success) {
+            throw new Error(leadsResponse?.error || 'Failed to fetch Kanban leads');
+          }
           const allLeads = leadsResponse?.data || [];
 
-          // Normalize ID helper for consistent matching
-          const normalizeId = (id: string) => {
-            if (!id) return '';
-            return id.replace(/@c\.us|@lid|@g\.us|@s\.whatsapp\.net/g, '');
-          };
-          const normalizedChatId = normalizeId(chatId);
+          const chatIdVariants = this.buildChatIdVariants(chatId);
+          const chatVariantSet = new Set(chatIdVariants);
+          const canonicalChatId = this.normalizeChatIdentifier(chatId);
+          const canonicalChatIdentity = this.getCanonicalChatIdentity(chatId);
 
-          // Check if contact already in Kanban (check both id and chatId)
+          const resolveBestChatInfo = async () => {
+            let bestData: any = null;
+            let bestScore = -1;
+
+            for (const variant of chatIdVariants) {
+              const info = await this.getChatInfo(variant);
+              if (!info?.success || !info?.data) continue;
+
+              const hasName = typeof info.data.chatName === 'string' && info.data.chatName.trim().length > 0;
+              const hasPhoto = this.isRenderablePhotoUrl(info.data.chatPhoto);
+              const hasTags = Array.isArray(info.data.tags) && info.data.tags.length > 0;
+              const score = (hasPhoto ? 4 : 0) + (hasName ? 2 : 0) + (hasTags ? 1 : 0);
+
+              if (score > bestScore) {
+                bestScore = score;
+                bestData = info.data;
+              }
+
+              if (score >= 7) {
+                break;
+              }
+            }
+
+            return bestData;
+          };
+
+          // Check if contact already in Kanban (canonical variant matching)
           const existingLead = allLeads.find((l: any) => {
-            const leadId = l.id || '';
-            const leadChatId = l.chatId || '';
-            return normalizeId(leadId) === normalizedChatId ||
-              normalizeId(leadChatId) === normalizedChatId ||
-              leadId === chatId ||
-              leadChatId === chatId;
+            const leadCandidates = [l?.id, l?.chatId, l?.phone];
+            for (const candidate of leadCandidates) {
+              const leadVariants = this.buildChatIdVariants(candidate);
+              if (leadVariants.some((variant) => chatVariantSet.has(variant))) {
+                return true;
+              }
+
+              const leadIdentity = this.getCanonicalChatIdentity(candidate);
+              if (leadIdentity && canonicalChatIdentity && leadIdentity === canonicalChatIdentity) {
+                return true;
+              }
+            }
+            return false;
           });
 
           if (existingLead) {
@@ -725,6 +1205,17 @@
               // TRICK: Use negative timestamp to always force to top (smallest number)
               order: -Date.now()
             };
+
+            // Self-heal hidden leads: if their column is missing/invalid, move back to default column.
+            const fallbackColumnId = await this.resolveFallbackColumnIdForLead(existingLead);
+            if (fallbackColumnId) {
+              console.warn('[PrinChat Kanban] Lead with invalid/missing column detected. Moving to default column:', {
+                leadId: existingLead.id,
+                previousColumnId: existingLead.columnId,
+                newColumnId: fallbackColumnId
+              });
+              updates.columnId = fallbackColumnId;
+            }
 
             // Only update lastMessage if this message is newer than what we have
             // This prevents old messages (ghosts) from overwriting newer ones
@@ -752,20 +1243,45 @@
             }
 
             // Sync latest contact info to keep it fresh
-            const chatInfo = await this.getChatInfo(chatId);
-            if (chatInfo.success && chatInfo.data) {
-              if (chatInfo.data.chatName) updates.name = chatInfo.data.chatName;
-              if (chatInfo.data.chatPhoto) updates.photo = chatInfo.data.chatPhoto;
-              if (chatInfo.data.tags) updates.tags = chatInfo.data.tags;
+            const chatInfo = await resolveBestChatInfo();
+            if (chatInfo) {
+              if (chatInfo.chatName) updates.name = chatInfo.chatName;
+              if (this.isRenderablePhotoUrl(chatInfo.chatPhoto)) {
+                updates.photo = chatInfo.chatPhoto;
+                this.logPhotoResolution(chatId, 'update', 'chatInfo', updates.photo);
+              }
+              if (chatInfo.tags) updates.tags = chatInfo.tags;
+
+              const resolvedChatId = this.normalizeChatIdentifier(chatInfo.chatId || canonicalChatId || chatId);
+              if (resolvedChatId && resolvedChatId !== existingLead.chatId) {
+                updates.chatId = resolvedChatId;
+              }
             }
 
-            await chrome.runtime.sendMessage({
+            // Use message-level photo as immediate fallback for incoming events.
+            // Outgoing events can resolve to self context on some WA builds.
+            if (!updates.photo && !fromMe && this.isRenderablePhotoUrl(eventChatPhoto)) {
+              updates.photo = eventChatPhoto;
+              this.logPhotoResolution(chatId, 'update', 'event', updates.photo);
+            }
+
+            if (!updates.photo && !existingLead.photo) {
+              const sidebarPhoto = this.findSidebarPhotoByChat(canonicalChatId || chatId, updates.name || existingLead.name);
+              if (sidebarPhoto) {
+                updates.photo = sidebarPhoto;
+              }
+            }
+
+            const updateResult = await this.sendRuntimeMessage({
               type: 'UPDATE_KANBAN_LEAD',
               payload: {
                 leadId: existingLead.id,
                 updates: updates
               }
             });
+            if (!updateResult?.success) {
+              throw new Error(updateResult?.error || 'Failed to update existing Kanban lead');
+            }
 
             // Dispatch event for real-time UI update
             document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
@@ -774,6 +1290,11 @@
                 updates: updates
               }
             }));
+
+            const hasRenderableExistingPhoto = this.isRenderablePhotoUrl(updates.photo || existingLead.photo || '');
+            if (!hasRenderableExistingPhoto && existingLead.id) {
+              this.refreshLeadPhotoFromChat(existingLead.id, chatId, updates.name || existingLead.name).catch(() => null);
+            }
 
             return;
           }
@@ -787,25 +1308,50 @@
 
           // Get contact info using getChatInfo (works for LIDs too)
           console.log('[PrinChat Kanban] Fetching contact info for new lead:', chatId);
-          const chatInfoResponse = await this.getChatInfo(chatId);
+          const chatInfo = await resolveBestChatInfo();
 
           let chatName = '';
           let chatPhoto = '';
-          let phoneNumber = chatId.split('@')[0]; // Default to chatId
+          let resolvedChatId = this.normalizeChatIdentifier(canonicalChatId || chatId);
+          let phoneNumber = this.getCanonicalChatIdentity(chatId); // Default to canonical identity
 
-          if (chatInfoResponse.success && chatInfoResponse.data) {
-            chatName = chatInfoResponse.data.chatName || '';
-            chatPhoto = chatInfoResponse.data.chatPhoto || '';
+          if (chatInfo) {
+            chatName = chatInfo.chatName || '';
+            if (this.isRenderablePhotoUrl(chatInfo.chatPhoto)) {
+              chatPhoto = chatInfo.chatPhoto;
+              this.logPhotoResolution(chatId, 'create', 'chatInfo', chatPhoto);
+            }
+
+            resolvedChatId = this.normalizeChatIdentifier(chatInfo.chatId || resolvedChatId || chatId);
+
             // Use the real phone number from API (not Instagram/Facebook ID)
-            if (chatInfoResponse.data.phoneNumber) {
-              phoneNumber = chatInfoResponse.data.phoneNumber;
+            if (chatInfo.phoneNumber) {
+              const normalizedPhone = this.getCanonicalChatIdentity(chatInfo.phoneNumber) || String(chatInfo.phoneNumber).replace(/\D/g, '');
+              if (normalizedPhone) {
+                phoneNumber = normalizedPhone;
+              }
             }
           } else {
             console.warn('[PrinChat Kanban] Could not get chat info, using chatId as name');
           }
 
+          if (!chatPhoto && this.isRenderablePhotoUrl(eventChatPhoto)) {
+            chatPhoto = eventChatPhoto;
+            this.logPhotoResolution(chatId, 'create', 'event', chatPhoto);
+          }
+
+          if (!chatPhoto) {
+            const sidebarPhoto = this.findSidebarPhotoByChat(resolvedChatId || chatId, chatName);
+            if (sidebarPhoto) {
+              chatPhoto = sidebarPhoto;
+            }
+          }
+
           // Get Recentes column ID
-          const columnsResponse = await chrome.runtime.sendMessage({ type: 'GET_KANBAN_COLUMNS' });
+          const columnsResponse = await this.sendRuntimeMessage({ type: 'GET_KANBAN_COLUMNS' });
+          if (!columnsResponse?.success) {
+            throw new Error(columnsResponse?.error || 'Failed to fetch Kanban columns');
+          }
           const columns = columnsResponse?.data || [];
           const recentesColumn = columns.find((c: any) => c.isDefault === true);
 
@@ -816,11 +1362,12 @@
 
           // Format phone number for display if no name
           const formattedName = chatName || this.formatPhoneNumber(phoneNumber);
+          const normalizedLeadChatId = resolvedChatId || (phoneNumber ? `${phoneNumber}@c.us` : this.normalizeChatIdentifier(chatId));
 
           // Create new lead with unread count
           const newLead = {
             phone: phoneNumber,
-            chatId: chatId,
+            chatId: normalizedLeadChatId,
             name: formattedName,
             photo: chatPhoto || '',
             columnId: recentesColumn.id,
@@ -829,20 +1376,28 @@
             lastMessage: messageText,
             lastMessageTime: timestamp || Date.now(),
             unreadCount: 1,  // New message just arrived
-            tags: chatInfoResponse.data?.tags || [] // Add tags from WA Business
+            tags: chatInfo?.tags || [] // Add tags from WA Business
           };
 
           console.log('[PrinChat Kanban] Auto-adding contact to Recentes:', newLead.name);
 
           // Save to database
-          await chrome.runtime.sendMessage({
+          const createResult = await this.sendRuntimeMessage({
             type: 'CREATE_KANBAN_LEAD',
             payload: newLead
           });
+          if (!createResult?.success) {
+            throw new Error(createResult?.error || 'Failed to create Kanban lead');
+          }
+
+          const createdLeadId = createResult?.data?.id;
+          if (createdLeadId) {
+            this.refreshLeadPhotoFromChat(createdLeadId, normalizedLeadChatId || chatId, formattedName).catch(() => null);
+          }
 
           // Notify UI to re-render
           document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadCreated', {
-            detail: { lead: newLead }
+            detail: { lead: createResult.data || newLead }
           }));
 
         } catch (kanbanError: any) {
@@ -861,17 +1416,26 @@
           return;
         }
 
+        if (this.shouldIgnoreKanbanChat(chatId)) {
+          console.log('[PrinChat DEBUG] 🛑 Skipping label sync for system chat:', chatId);
+          return;
+        }
+
         try {
-          // CRITICAL: Normalize chatId to match database format (without @lid, @c.us, etc.)
-          const normalizedChatId = chatId.replace(/@lid$|@c\.us$|@s\.whatsapp\.net$|@g\.us$/g, '');
-          console.log(`[PrinChat DEBUG] 5. Normalized chatId: "${chatId}" → "${normalizedChatId}"`);
+          const normalizedChatId = this.normalizeChatIdentifier(chatId);
+          const canonicalIdentity = this.getCanonicalChatIdentity(chatId);
+          console.log('[PrinChat DEBUG] 5. Normalized chatId', {
+            rawChatId: chatId,
+            canonicalChatId: normalizedChatId,
+            canonicalIdentity
+          });
 
           console.log('[PrinChat DEBUG] 5. Sending UPDATE_KANBAN_LEAD to Background...');
           // Update database directly
-          const updateResult = await chrome.runtime.sendMessage({
+          const updateResult = await this.sendRuntimeMessage({
             type: 'UPDATE_KANBAN_LEAD',
             payload: {
-              leadId: normalizedChatId, // Use normalized ID
+              leadId: chatId,
               updates: { tags: tags }
             }
           });
@@ -899,19 +1463,29 @@
               return;
             }
 
+            const columnsResponse = await this.sendRuntimeMessage({ type: 'GET_KANBAN_COLUMNS' });
+            const columns = columnsResponse?.data || [];
+            const defaultColumn = columns.find((c: any) => c.isDefault === true);
+
+            if (!defaultColumn) {
+              console.warn('[PrinChat DEBUG] 🛑 No default column found for CREATE fallback.');
+              return;
+            }
+
             const newLead = {
-              id: chatId,
+              chatId: normalizedChatId || chatId,
               name: name || 'Novo Contato',
-              number: chatId.split('@')[0],
+              phone: canonicalIdentity || normalizedChatId || '',
               photo: photo || '',
-              columnId: 'column-1', // Default to "Recentes" (assuming column-1 exists, or backend handles it)
+              columnId: defaultColumn.id,
+              order: -Date.now(),
               tags: tags,
               unreadCount: 0,
               lastMessage: '',
               lastMessageTime: Date.now()
             };
 
-            const createResult = await chrome.runtime.sendMessage({
+            const createResult = await this.sendRuntimeMessage({
               type: 'CREATE_KANBAN_LEAD',
               payload: newLead
             });
@@ -940,10 +1514,27 @@
       this.isReady = true;
       console.log('[PrinChat] WhatsApp Web injector ready');
 
+      // Warm up instance scope cache early to avoid missing first Kanban writes.
+      this.getCurrentInstanceId(false)
+        .then((instanceId) => console.log('[PrinChat] Current WhatsApp instance resolved:', instanceId))
+        .catch((error) => console.warn('[PrinChat] Could not pre-resolve instance scope yet:', error?.message || error));
+
       // Listen for messages from popup
       try {
         chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           console.log('[PrinChat] Message received from popup:', message.type);
+
+          if (message.type === 'SESSION_CONFLICT_LOGOUT') {
+            chrome.storage.sync.remove(['auth_session'], () => {
+              document.dispatchEvent(new CustomEvent('PrinChatSessionConflict', {
+                detail: { reason: 'SESSION_CONFLICT' }
+              }));
+              setTimeout(() => window.location.reload(), 150);
+            });
+            sendResponse({ success: true });
+            return true;
+          }
+
           this.handleAction(message)
             .then(response => {
               console.log('[PrinChat] Sending response:', response);
@@ -992,7 +1583,7 @@
             }
 
             // Forward to background service worker
-            response = await chrome.runtime.sendMessage(message);
+            response = await this.sendRuntimeMessage(message);
             console.log('[PrinChat] Got response from background:', response);
 
             // Restore large media data from temp storage (for GET_SCRIPTS_AND_MESSAGES)
@@ -1438,12 +2029,14 @@
           console.log('[PrinChat] Navigation detected!', 'Old:', lastUrl, 'New:', currentUrl);
           lastUrl = currentUrl;
           lastInjectionTime = Date.now();
+          this.currentInstanceCache = null;
 
           // Reinject scripts after navigation
           setTimeout(async () => {
             console.log('[PrinChat] Reinjecting scripts after navigation...');
             try {
               await this.injectScripts();
+              this.getCurrentInstanceId(false).catch(() => { });
               console.log('[PrinChat] ✅ Scripts reinjected successfully');
             } catch (error) {
               console.error('[PrinChat] ❌ Error reinjecting scripts:', error);
@@ -1651,27 +2244,34 @@
 
         case 'SAVE_SCHEDULE':
         case 'GET_SCHEDULES_BY_CHAT':
+        case 'GET_ALL_SCHEDULES':
         case 'DELETE_SCHEDULE':
         case 'UPDATE_SCHEDULE_STATUS':
           // Forward schedule operations to background service worker
           console.log('[PrinChat] Forwarding schedule operation to background:', action.type);
-          return await chrome.runtime.sendMessage(action);
+          return await this.sendRuntimeMessage(action);
 
         case 'CREATE_NOTE':
         case 'UPDATE_NOTE':
         case 'GET_NOTES_BY_CHAT':
         case 'GET_NOTE':
         case 'DELETE_NOTE':
+        case 'GET_ALL_NOTES':
         case 'FORCE_INIT':
+        case 'TRIGGER_MANUAL_SYNC':
         case 'GET_KANBAN_COLUMNS':
-        case 'SAVE_KANBAN_COLUMN':
+        case 'CREATE_KANBAN_COLUMN':
+        case 'UPDATE_KANBAN_COLUMN':
         case 'DELETE_KANBAN_COLUMN':
+        case 'UPDATE_COLUMN_ORDER':
+        case 'GET_ALL_KANBAN_LEADS':
+        case 'CREATE_KANBAN_LEAD':
         case 'MOVE_KANBAN_LEAD': // Whitelist lead movement
         case 'UPDATE_KANBAN_LEAD': // Whitelist lead update
         case 'DELETE_KANBAN_LEAD': // Whitelist lead deletion
           // Forward note operations to background service worker
           console.log('[PrinChat] Forwarding note/kanban operation to background:', action.type);
-          return await chrome.runtime.sendMessage(action);
+          return await this.sendRuntimeMessage(action);
 
         case 'SET_ACTIVE_SIGNATURE':
         case 'TOGGLE_SIGNATURE_ACTIVE':
@@ -2304,8 +2904,9 @@
       return new Promise((resolve) => {
         const requestId = `chat-info-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
         const timeout = setTimeout(() => {
+          document.removeEventListener('PrinChatChatInfoResult', handler);
           resolve({ success: false, error: 'Timeout' });
-        }, 3000);
+        }, 7000);
 
         const handler = (event: any) => {
           if (event.detail?.requestId === requestId) {
@@ -2321,6 +2922,7 @@
                   chatName: event.detail.chatName,
                   chatId: event.detail.chatId,
                   chatPhoto,
+                  phoneNumber: event.detail.phoneNumber,
                   tags: event.detail.tags,
                   labels: event.detail.labels
                 }
