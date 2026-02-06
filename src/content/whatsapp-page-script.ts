@@ -207,10 +207,10 @@
     if (!normalized || !normalized.includes('@lid')) return '';
 
     try {
-      const WPP = (window as any).WPP;
-      const Store = (window as any).Store;
-      const widFactory = WPP?.whatsapp?.WidFactory || Store?.WidFactory;
-      const lidPnCache = WPP?.whatsapp?.lidPnCache;
+      const WPP = safeRead(() => (window as any).WPP);
+      const Store = safeRead(() => (window as any).Store);
+      const widFactory = safeRead(() => WPP?.whatsapp?.WidFactory) || safeRead(() => Store?.WidFactory);
+      const lidPnCache = safeRead(() => WPP?.whatsapp?.lidPnCache);
       if (widFactory?.createWid && lidPnCache?.getPhoneNumber) {
         const lidWid = widFactory.createWid(normalized);
         const phoneWid = lidPnCache.getPhoneNumber(lidWid);
@@ -310,11 +310,11 @@
   };
 
   const fetchWppProfilePhotoByIds = async (candidateIds: string[]): Promise<string | undefined> => {
-    const WPP = (window as any).WPP;
+    const WPP = safeRead(() => (window as any).WPP);
     if (!WPP?.contact?.getProfilePictureUrl) return undefined;
 
-    const Store = (window as any).Store;
-    const widFactory = WPP?.whatsapp?.WidFactory || Store?.WidFactory;
+    const Store = safeRead(() => (window as any).Store);
+    const widFactory = safeRead(() => WPP?.whatsapp?.WidFactory) || safeRead(() => Store?.WidFactory);
     const seen = new Set<string>();
 
     for (const raw of candidateIds) {
@@ -341,6 +341,25 @@
     }
 
     return undefined;
+  };
+
+  const extractMessageChatId = (msg: any): string => {
+    const candidates = [
+      safeRead(() => msg?.id?.remote?._serialized),
+      safeRead(() => msg?.id?.remote?.toString?.()),
+      safeRead(() => msg?.from?._serialized),
+      safeRead(() => msg?.from?.toString?.()),
+      safeRead(() => msg?.chatId),
+      safeRead(() => msg?.id?.participant?._serialized),
+      safeRead(() => msg?.id?.participant?.toString?.()),
+    ];
+
+    for (const candidate of candidates) {
+      const normalized = normalizeChatIdWithDomain(candidate) || sanitizeScopedChatId(candidate);
+      if (normalized) return normalized;
+    }
+
+    return '';
   };
 
   const isRenderableImageUrl = (value: any): boolean => {
@@ -2578,6 +2597,7 @@
           // Relaxed check to include media types
           if (msg && (msg.type === 'chat' || msg.type === 'image' || msg.type === 'video' || msg.type === 'audio' || msg.type === 'ptt' || msg.type === 'document' || msg.type === 'sticker' || msg.type === 'location' || msg.type === 'vcard')) {
             (async () => {
+              try {
               // STRICT VALIDATION: Ignore if no timestamp (don't default to now)
               if (!msg.t) {
                 return;
@@ -2642,9 +2662,13 @@
               console.log('[PrinChat] New message received:', messageText, `(age: ${messageAge}ms)`);
 
               // Get chatId from message (can be LID, getChatInfo will handle it)
-              const rawChatId = msg.id?.remote?.toString() || msg.from?.toString() || '';
-              const chatId = normalizeChatIdWithDomain(rawChatId) || sanitizeScopedChatId(rawChatId);
-              const chatIdVariants = buildChatIdLookupVariants(rawChatId || chatId);
+              const rawChatId = safeRead(() => msg?.id?.remote?.toString?.()) || safeRead(() => msg?.from?.toString?.()) || '';
+              const chatId = extractMessageChatId(msg);
+              if (!chatId) {
+                console.warn('[PrinChat] Skipping message without resolvable chatId');
+                return;
+              }
+              const chatIdVariants = buildChatIdLookupVariants(chatId);
               console.log('[PrinChat] Chat ID from message:', { rawChatId, chatId });
 
               // Best-effort chat photo extraction at message-time.
@@ -2733,15 +2757,23 @@
 
               // Notify content script about new message
               // getChatInfo in the injector will fetch name/photo
+              const fromMe = !!(
+                safeRead(() => msg?.id?.fromMe)
+                ?? safeRead(() => msg?.fromMe)
+              );
+
               document.dispatchEvent(new CustomEvent('PrinChatIncomingMessage', {
                 detail: {
                   messageText: messageText, // Use formatted text
                   chatId: chatId,
                   timestamp: msgTimestamp,
-                  fromMe: msg.id.fromMe || msg.fromMe || false, // Add fromMe flag
+                  fromMe,
                   chatPhoto: messageChatPhoto
                 }
               }));
+              } catch (messageProcessingError: any) {
+                console.error('[PrinChat] Error processing incoming message hook:', messageProcessingError?.message || messageProcessingError);
+              }
             })();
           }
         });
