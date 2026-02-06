@@ -6299,10 +6299,9 @@ body.princhat-kanban-active div.x1n2onr6>span {
 .princhat-kanban-tag {
   color: #161818 !important;
   /* Dark text to contrast with colored tag */
-  font-size: 12px !important;
-  /* MATCH INLINE STYLE: 12px */
-  font-weight: 700 !important;
-  /* Make it bolder */
+  font-size: 11px !important;
+  /* Match card tag style used before regression */
+  font-weight: 500 !important;
   padding: 2px 8px !important;
   /* MATCH INLINE STYLE: 2px 8px */
   border-radius: 4px;

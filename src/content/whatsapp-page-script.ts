@@ -118,6 +118,11 @@
     }
   };
 
+  const isKnownWppInteropError = (error: any): boolean => {
+    const message = String(error?.message || error || '').toLowerCase();
+    return message.includes("reading 'm'") || message.includes('reading "m"');
+  };
+
   const extractPhotoUrl = (source: any): string | undefined => {
     if (!source) return undefined;
 
@@ -1669,7 +1674,11 @@
             }
           }
         } catch (wppError) {
-          console.warn('[PrinChat Page] ⚠️ WPP strategy failed, falling back to Store:', wppError);
+          if (isKnownWppInteropError(wppError)) {
+            console.debug('[PrinChat Page] WPP strategy unavailable on this WA build, using Store fallback.');
+          } else {
+            console.warn('[PrinChat Page] ⚠️ WPP strategy failed, falling back to Store:', wppError);
+          }
         }
 
         // Fallback Strategy: Store (Legacy)
@@ -2147,7 +2156,11 @@
           });
         } catch (e: any) {
           const errorMessage = e?.message || String(e);
-          console.error('[PrinChat Page] Error getting chat photo:', errorMessage, e);
+          if (isKnownWppInteropError(e)) {
+            console.debug('[PrinChat Page] Chat photo strategy hit known WPP interop issue. Continuing with fallback flow.');
+          } else {
+            console.error('[PrinChat Page] Error getting chat photo:', errorMessage, e);
+          }
         }
 
         // Final Name Fallback: DOM Scraping
@@ -2282,7 +2295,11 @@
                 if (labels && Array.isArray(labels)) {
                   labels.forEach((l: any) => addLabel(l.id, l.name, l.color, l));
                 }
-              } catch (e) { console.error('WPP.label.getLabels failed', e); }
+              } catch (e) {
+                if (!isKnownWppInteropError(e)) {
+                  console.warn('[PrinChat Page] WPP.label.getLabels failed', e);
+                }
+              }
             }
 
             // Strategy 3: WPP.chat.get inspection (Final Fallback) - Only run if likely Business
@@ -2310,7 +2327,9 @@
                   });
                 }
               } catch (e: any) {
-                console.warn('[PrinChat Page] ℹ️ Strategy 3 (WPP.chat.get) warning:', e?.message || 'unknown');
+                if (!isKnownWppInteropError(e)) {
+                  console.warn('[PrinChat Page] ℹ️ Strategy 3 (WPP.chat.get) warning:', e?.message || 'unknown');
+                }
               }
             } // Close Strategy 3 if
           } // Close Store.Label if
