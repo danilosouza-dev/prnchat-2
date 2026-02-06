@@ -5806,17 +5806,6 @@ body.princhat-kanban-active div.x1n2onr6>span {
   /* Pink icon on hover */
 }
 
-/* Card menu button - add hover area */
-.princhat-kanban-card-menu-btn {
-  padding: 6px 8px;
-  /* Rectangular like column menu */
-}
-
-.princhat-kanban-card-menu-btn:hover {
-  background: rgba(255, 255, 255, 0.05);
-  cursor: pointer !important;
-}
-
 .princhat-kanban-menu-item:hover {
   background: rgba(255, 255, 255, 0.05);
   color: #fff;
@@ -5826,15 +5815,6 @@ body.princhat-kanban-active div.x1n2onr6>span {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
-}
-
-.princhat-kanban-menu-item-danger {
-  color: #ef4444;
-}
-
-.princhat-kanban-menu-item-danger:hover {
-  background: rgba(239, 68, 68, 0.1);
-  color: #ff6b6b;
 }
 
 /* ==================== KANBAN MODALS ==================== */
@@ -6516,15 +6496,13 @@ body.princhat-kanban-active div.x1n2onr6>span {
  * ======================================== */
 
 .princhat-kanban-card-dropdown {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
+  position: fixed;
   background: #161818 !important;
   border: 1px solid #2a2a2a;
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
-  z-index: 10000;
-  min-width: 200px;
+  z-index: 10003;
+  min-width: 220px;
   overflow: hidden;
   padding: 8px 0;
   animation: fadeIn 0.15s ease;

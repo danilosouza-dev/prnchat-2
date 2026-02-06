@@ -8,6 +8,7 @@ import type { Message, Script, Trigger, Tag, Folder, Settings, Signature, Schedu
 import type { KanbanColumn, LeadContact } from '../types/kanban';
 import { DEFAULT_KANBAN_COLUMNS } from '../types/kanban';
 import { syncService } from '../services/sync-service';
+import { buildScopedLeadId, normalizeChatIdentity, normalizeInstanceId } from '../utils/instance-scope';
 
 interface PrinChatDB extends DBSchema {
   messages: {
@@ -89,6 +90,8 @@ class DatabaseService {
   private db: IDBPDatabase<PrinChatDB> | null = null;
   private readonly DB_NAME = 'princhat-db';
   private readonly DB_VERSION = 8; // Updated to version 8 for Kanban support
+  private kanbanInitLocks = new Map<string, Promise<void>>();
+  private leadNormalizationLocks = new Map<string, Promise<void>>();
 
   async init(): Promise<IDBPDatabase<PrinChatDB>> {
     console.log(`[PrinChat DB] Init called. DB: ${this.DB_NAME} v${this.DB_VERSION}`);
@@ -204,6 +207,282 @@ class DatabaseService {
     return this.db;
   }
 
+  private normalizeScope(instanceId?: string): string {
+    return normalizeInstanceId(instanceId);
+  }
+
+  private normalizeRecordScope(record: any): string {
+    return normalizeInstanceId(record?.instanceId);
+  }
+
+  private matchesScope(record: any, instanceId?: string): boolean {
+    if (!instanceId) return true;
+    return this.normalizeRecordScope(record) === this.normalizeScope(instanceId);
+  }
+
+  private normalizeLeadIdentity(value?: string): string {
+    return normalizeChatIdentity(value);
+  }
+
+  private normalizeLeadChatId(value?: string): string {
+    const raw = typeof value === 'string' ? value.trim() : '';
+    if (!raw) return '';
+
+    let normalized = raw;
+    const scopedSeparator = normalized.lastIndexOf('::');
+    if (scopedSeparator >= 0) {
+      normalized = normalized.slice(scopedSeparator + 2);
+    }
+
+    normalized = normalized.replace(/^waid?:/i, '');
+
+    const atIndex = normalized.indexOf('@');
+    const domain = atIndex >= 0 ? normalized.slice(atIndex).toLowerCase() : '';
+    const identity = this.normalizeLeadIdentity(normalized);
+    if (!identity) return '';
+
+    if (domain) return `${identity}${domain}`;
+    if (/^\d+$/.test(identity)) return `${identity}@c.us`;
+    return identity;
+  }
+
+  private hasRenderablePhoto(photo?: string): boolean {
+    if (typeof photo !== 'string') return false;
+    const src = photo.trim();
+    if (!src) return false;
+    if (src === 'data:' || src.startsWith('data:image/svg')) return false;
+    return src.startsWith('http') || src.startsWith('blob:') || src.startsWith('data:image/');
+  }
+
+  private hasValidLeadName(value?: string): boolean {
+    if (typeof value !== 'string') return false;
+    const normalized = value.trim();
+    if (!normalized) return false;
+    if (normalized.includes('::') || normalized.startsWith('wa:') || normalized.startsWith('waid:')) {
+      return false;
+    }
+    return normalized.toLowerCase() !== 'desconhecido';
+  }
+
+  private getLeadQualityScore(lead: LeadContact): number {
+    let score = 0;
+    if (this.hasRenderablePhoto(lead.photo)) score += 40;
+    if (this.hasValidLeadName(lead.name)) score += 25;
+    if (typeof lead.lastMessageTime === 'number' && lead.lastMessageTime > 0) score += 15;
+    if (typeof lead.lastMessage === 'string' && lead.lastMessage.trim()) score += 10;
+    if ((lead.unreadCount || 0) > 0) score += 5;
+    score += Math.min(Math.max(lead.updatedAt || 0, 0), Number.MAX_SAFE_INTEGER) / 1e13;
+    return score;
+  }
+
+  private buildCanonicalChatIdForLead(identity: string, candidates: LeadContact[]): string {
+    const preferredDomains = ['@c.us', '@s.whatsapp.net', '@lid', '@g.us'];
+
+    for (const domain of preferredDomains) {
+      const matching = candidates.find((lead) => {
+        const normalized = this.normalizeLeadChatId(lead.chatId || lead.phone || lead.id);
+        return normalized.endsWith(domain);
+      });
+      if (matching) return `${identity}${domain}`;
+    }
+
+    if (/^\d+$/.test(identity)) {
+      return `${identity}@c.us`;
+    }
+
+    return identity;
+  }
+
+  private async normalizeAndMergeLeads(instanceId?: string): Promise<void> {
+    const scope = this.normalizeScope(instanceId);
+    const lockKey = scope || '__all__';
+
+    const pending = this.leadNormalizationLocks.get(lockKey);
+    if (pending) {
+      await pending;
+      return;
+    }
+
+    const run = (async () => {
+      const db = await this.init();
+      const allLeads = await db.getAll('kanban_leads');
+      const scopedLeads = allLeads.filter((lead) => this.matchesScope(lead, scope));
+      if (scopedLeads.length <= 1) return;
+
+      const groups = new Map<string, LeadContact[]>();
+      for (const lead of scopedLeads) {
+        const identity = this.normalizeLeadIdentity(lead.chatId || lead.phone || lead.id);
+        if (!identity) continue;
+        const group = groups.get(identity) || [];
+        group.push(lead);
+        groups.set(identity, group);
+      }
+
+      let changed = false;
+      for (const [identity, leads] of groups.entries()) {
+        const canonicalId = buildScopedLeadId(scope, identity);
+        const mustNormalize =
+          leads.length > 1 ||
+          leads.some((lead) => lead.id !== canonicalId) ||
+          leads.some((lead) => {
+            const normalizedChatId = this.normalizeLeadChatId(lead.chatId || lead.phone || lead.id);
+            return !!normalizedChatId && normalizedChatId !== lead.chatId;
+          }) ||
+          leads.some((lead) => {
+            const normalizedPhone = this.normalizeLeadIdentity(lead.phone || lead.chatId || lead.id);
+            return !!normalizedPhone && normalizedPhone !== lead.phone;
+          });
+        if (!mustNormalize) continue;
+
+        const sortedByQuality = [...leads].sort((a, b) => {
+          const scoreDiff = this.getLeadQualityScore(b) - this.getLeadQualityScore(a);
+          if (scoreDiff !== 0) return scoreDiff;
+          return (b.lastMessageTime || b.updatedAt || 0) - (a.lastMessageTime || a.updatedAt || 0);
+        });
+        const primary = sortedByQuality[0];
+        if (!primary) continue;
+
+        const newestMessageLead = [...leads]
+          .filter((lead) => typeof lead.lastMessageTime === 'number' && lead.lastMessageTime! > 0)
+          .sort((a, b) => (b.lastMessageTime || 0) - (a.lastMessageTime || 0))[0];
+        const bestNamedLead = sortedByQuality.find((lead) => this.hasValidLeadName(lead.name));
+        const bestPhotoLead = sortedByQuality.find((lead) => this.hasRenderablePhoto(lead.photo));
+
+        const mergedTags = Array.from(
+          new Set(
+            leads.flatMap((lead) => (Array.isArray(lead.tags) ? lead.tags : []))
+          )
+        );
+
+        const mergedLead: LeadContact = {
+          ...primary,
+          id: canonicalId,
+          instanceId: scope,
+          chatId: this.buildCanonicalChatIdForLead(identity, leads),
+          phone: identity,
+          name: bestNamedLead?.name || primary.name || identity,
+          photo: bestPhotoLead?.photo || primary.photo,
+          tags: mergedTags.length > 0 ? mergedTags : primary.tags,
+          unreadCount: Math.max(...leads.map((lead) => lead.unreadCount || 0)),
+          notesCount: Math.max(...leads.map((lead) => lead.notesCount || 0)),
+          schedulesCount: Math.max(...leads.map((lead) => lead.schedulesCount || 0)),
+          scriptsCount: Math.max(...leads.map((lead) => lead.scriptsCount || 0)),
+          lastMessage: newestMessageLead?.lastMessage || primary.lastMessage,
+          lastMessageTime: newestMessageLead?.lastMessageTime || primary.lastMessageTime,
+          order: Math.min(...leads.map((lead) => lead.order ?? Number.MAX_SAFE_INTEGER)),
+          createdAt: Math.min(...leads.map((lead) => lead.createdAt || Date.now())),
+          updatedAt: Date.now()
+        };
+
+        await db.put('kanban_leads', mergedLead);
+
+        const duplicateKeys = new Set<string>();
+        for (const lead of leads) {
+          if (lead.id !== canonicalId) {
+            duplicateKeys.add(lead.id);
+          }
+        }
+
+        for (const duplicateKey of duplicateKeys) {
+          await db.delete('kanban_leads', duplicateKey);
+        }
+
+        changed = true;
+
+        // Best-effort cloud consistency.
+        syncService.syncLead(mergedLead).catch(console.warn);
+        for (const duplicateLead of leads) {
+          if (!duplicateKeys.has(duplicateLead.id)) continue;
+          syncService
+            .deleteLead(duplicateLead.id, scope, duplicateLead.chatId || duplicateLead.phone || duplicateLead.id)
+            .catch(console.warn);
+        }
+      }
+
+      if (changed && typeof chrome !== 'undefined' && chrome.storage) {
+        await chrome.storage.local.set({
+          kanban_leads: Date.now()
+        });
+      }
+    })();
+
+    this.leadNormalizationLocks.set(lockKey, run);
+
+    try {
+      await run;
+    } finally {
+      this.leadNormalizationLocks.delete(lockKey);
+    }
+  }
+
+  private async resolveLeadStorageKey(dbHandle: IDBPDatabase<PrinChatDB>, leadId: string, instanceId?: string): Promise<string | null> {
+    if (!leadId) return null;
+
+    const leads = await dbHandle.getAll('kanban_leads');
+    const scope = this.normalizeScope(instanceId);
+    const normalizedInput = this.normalizeLeadIdentity(leadId) || leadId;
+    const scopedCandidate = buildScopedLeadId(scope, normalizedInput);
+
+    const directMatch = leads.find((lead) => {
+      if (instanceId && !this.matchesScope(lead, instanceId)) return false;
+      return lead.id === leadId || lead.id === scopedCandidate;
+    });
+    if (directMatch) return directMatch.id;
+
+    const byIdentity = leads.find((lead) => {
+      if (instanceId && !this.matchesScope(lead, instanceId)) return false;
+      const leadIdentity = this.normalizeLeadIdentity(lead.chatId || lead.phone || lead.id);
+      return leadIdentity === normalizedInput;
+    });
+    if (byIdentity) return byIdentity.id;
+
+    return null;
+  }
+
+  private async resolveScopedLeadAliases(
+    dbHandle: IDBPDatabase<PrinChatDB>,
+    leadId: string,
+    instanceId?: string
+  ): Promise<{
+    scope: string;
+    canonicalIdentity: string;
+    canonicalLeadId: string;
+    canonicalChatId: string;
+    aliases: LeadContact[];
+  } | null> {
+    if (!leadId) return null;
+
+    const scope = this.normalizeScope(instanceId);
+    const storageKey = await this.resolveLeadStorageKey(dbHandle, leadId, scope);
+    if (!storageKey) return null;
+
+    const allLeads = await dbHandle.getAll('kanban_leads');
+    const targetLead = allLeads.find((lead) => lead.id === storageKey);
+    if (!targetLead) return null;
+
+    const canonicalIdentity = this.normalizeLeadIdentity(
+      targetLead.chatId || targetLead.phone || targetLead.id
+    );
+    if (!canonicalIdentity) return null;
+
+    const aliases = allLeads.filter((lead) => {
+      if (!this.matchesScope(lead, scope)) return false;
+      const identity = this.normalizeLeadIdentity(lead.chatId || lead.phone || lead.id);
+      return identity === canonicalIdentity;
+    });
+
+    const canonicalLeadId = buildScopedLeadId(scope, canonicalIdentity);
+    const canonicalChatId = this.buildCanonicalChatIdForLead(canonicalIdentity, aliases.length > 0 ? aliases : [targetLead]);
+
+    return {
+      scope,
+      canonicalIdentity,
+      canonicalLeadId,
+      canonicalChatId,
+      aliases: aliases.length > 0 ? aliases : [targetLead]
+    };
+  }
+
   private async initializeDefaults(): Promise<void> {
     const settings = await this.getSettings();
     if (!settings) {
@@ -217,43 +496,7 @@ class DatabaseService {
       });
     }
 
-    // Initialize default Kanban columns if none exist
-    await this.initializeDefaultKanbanColumns();
-
-    // Cleanup duplicates (Migration for previously corrupted DBs)
-    await this.cleanupDuplicateKanbanColumns();
-  }
-
-  /**
-   * Remove duplicate columns created by race conditions
-   */
-  private async cleanupDuplicateKanbanColumns(): Promise<void> {
-    const db = await this.init();
-    const allColumns = await db.getAll('kanban_columns');
-    const uniqueNames = new Set<string>();
-    const duplicates: KanbanColumn[] = [];
-
-    // Identify duplicates
-    for (const col of allColumns) {
-      if (uniqueNames.has(col.name)) {
-        duplicates.push(col);
-      } else {
-        uniqueNames.add(col.name);
-      }
-    }
-
-    if (duplicates.length > 0) {
-      console.log(`[PrinChat DB] 🧹 Found ${duplicates.length} duplicate columns. Cleaning up...`);
-      for (const dup of duplicates) {
-        // Check if it has leads before deleting? 
-        // For safety, let's just delete the empty ones if possible, or move leads?
-        // Simple approach: Delete duplicate. UI will handle orphaned leads (or they just won't show)
-        // Better: Move leads to the "original" column?
-        // For now, let's just delete the duplicate column record to fix the UI glitch.
-        await db.delete('kanban_columns', dup.id);
-      }
-      console.log('[PrinChat DB] ✨ Duplicates cleanup complete.');
-    }
+    // Kanban defaults are now initialized lazily per WhatsApp instance.
   }
 
   // ==================== MESSAGES ====================
@@ -802,7 +1045,11 @@ class DatabaseService {
   // ==================== SCHEDULES ====================
   async saveSchedule(schedule: Schedule): Promise<void> {
     const db = await this.init();
-    await db.put('schedules', schedule);
+    const scopedSchedule: Schedule = {
+      ...schedule,
+      instanceId: this.normalizeScope(schedule.instanceId),
+    };
+    await db.put('schedules', scopedSchedule);
 
     // Trigger chrome.storage change event
     if (typeof chrome !== 'undefined' && chrome.storage) {
@@ -812,40 +1059,47 @@ class DatabaseService {
     }
 
     // Trigger sync
-    syncService.syncSchedule(schedule).catch(console.error);
+    syncService.syncSchedule(scopedSchedule).catch(console.error);
   }
 
-  async getSchedule(id: string): Promise<Schedule | undefined> {
+  async getSchedule(id: string, instanceId?: string): Promise<Schedule | undefined> {
     const db = await this.init();
-    return db.get('schedules', id);
+    const schedule = await db.get('schedules', id);
+    if (!schedule) return undefined;
+    return this.matchesScope(schedule, instanceId) ? schedule : undefined;
   }
 
-  async getSchedulesByChatId(chatId: string): Promise<Schedule[]> {
+  async getSchedulesByChatId(chatId: string, instanceId?: string): Promise<Schedule[]> {
     const db = await this.init();
     const schedules = await db.getAllFromIndex('schedules', 'by-chatId', chatId);
-    return schedules.sort((a, b) => a.scheduledTime - b.scheduledTime);
+    return schedules
+      .filter((s) => this.matchesScope(s, instanceId))
+      .sort((a, b) => a.scheduledTime - b.scheduledTime);
   }
 
-  async getPendingSchedules(): Promise<Schedule[]> {
+  async getPendingSchedules(instanceId?: string): Promise<Schedule[]> {
     const db = await this.init();
     const now = Date.now();
     const pendingSchedules = await db.getAllFromIndex('schedules', 'by-status', 'pending');
 
     // Filter to only return schedules that are due
-    return pendingSchedules.filter(schedule => schedule.scheduledTime <= now)
+    return pendingSchedules
+      .filter((schedule) => this.matchesScope(schedule, instanceId))
+      .filter(schedule => schedule.scheduledTime <= now)
       .sort((a, b) => a.scheduledTime - b.scheduledTime);
   }
 
-  async getAllPendingSchedules(): Promise<Schedule[]> {
+  async getAllPendingSchedules(instanceId?: string): Promise<Schedule[]> {
     const db = await this.init();
-    return db.getAllFromIndex('schedules', 'by-status', 'pending');
+    const pending = await db.getAllFromIndex('schedules', 'by-status', 'pending');
+    return pending.filter((schedule) => this.matchesScope(schedule, instanceId));
   }
 
-  async updateScheduleStatus(id: string, status: 'pending' | 'paused' | 'completed' | 'cancelled' | 'failed'): Promise<void> {
+  async updateScheduleStatus(id: string, status: 'pending' | 'paused' | 'completed' | 'cancelled' | 'failed', instanceId?: string): Promise<void> {
     const db = await this.init();
     const schedule = await db.get('schedules', id);
 
-    if (schedule) {
+    if (schedule && this.matchesScope(schedule, instanceId)) {
       await db.put('schedules', {
         ...schedule,
         status,
@@ -861,20 +1115,27 @@ class DatabaseService {
     }
   }
 
-  async getPausedSchedules(): Promise<Schedule[]> {
+  async getPausedSchedules(instanceId?: string): Promise<Schedule[]> {
     const db = await this.init();
-    return db.getAllFromIndex('schedules', 'by-status', 'paused');
+    const paused = await db.getAllFromIndex('schedules', 'by-status', 'paused');
+    return paused.filter((schedule) => this.matchesScope(schedule, instanceId));
   }
 
-  async getAllSchedules(): Promise<Schedule[]> {
+  async getAllSchedules(instanceId?: string): Promise<Schedule[]> {
     const db = await this.init();
     const schedules = await db.getAll('schedules');
     // Sort by scheduled time
-    return schedules.sort((a, b) => a.scheduledTime - b.scheduledTime);
+    return schedules
+      .filter((s) => this.matchesScope(s, instanceId))
+      .sort((a, b) => a.scheduledTime - b.scheduledTime);
   }
 
-  async deleteSchedule(id: string): Promise<void> {
+  async deleteSchedule(id: string, instanceId?: string): Promise<void> {
     const db = await this.init();
+    const schedule = await db.get('schedules', id);
+    if (!schedule || !this.matchesScope(schedule, instanceId)) {
+      return;
+    }
     await db.delete('schedules', id);
 
     // Trigger chrome.storage change event
@@ -885,7 +1146,7 @@ class DatabaseService {
     }
 
     // Trigger sync
-    syncService.deleteSchedule(id).catch(console.error);
+    syncService.deleteSchedule(id, schedule.instanceId).catch(console.error);
   }
 
   // ==================== NOTES ====================
@@ -895,6 +1156,7 @@ class DatabaseService {
 
     const newNote: Note = {
       ...note,
+      instanceId: this.normalizeScope(note.instanceId),
       id: `note_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
       createdAt: now,
       updatedAt: now,
@@ -916,31 +1178,36 @@ class DatabaseService {
     return newNote;
   }
 
-  async getNotesByChatId(chatId: string): Promise<Note[]> {
+  async getNotesByChatId(chatId: string, instanceId?: string): Promise<Note[]> {
     console.log('[DB] getNotesByChatId called with chatId:', chatId);
     const db = await this.init();
     const notes = await db.getAllFromIndex('notes', 'by-chatId', chatId);
     console.log('[DB] getNotesByChatId found', notes.length, 'notes:', notes);
     // Sort by creation date descending (newest first)
-    return notes.sort((a, b) => b.createdAt - a.createdAt);
+    return notes
+      .filter((n) => this.matchesScope(n, instanceId))
+      .sort((a, b) => b.createdAt - a.createdAt);
   }
 
-  async getNote(id: string): Promise<Note | undefined> {
+  async getNote(id: string, instanceId?: string): Promise<Note | undefined> {
     const db = await this.init();
-    return db.get('notes', id);
+    const note = await db.get('notes', id);
+    if (!note) return undefined;
+    return this.matchesScope(note, instanceId) ? note : undefined;
   }
 
-  async updateNote(id: string, updates: Partial<Omit<Note, 'id' | 'createdAt'>>): Promise<void> {
+  async updateNote(id: string, updates: Partial<Omit<Note, 'id' | 'createdAt'>>, instanceId?: string): Promise<void> {
     const db = await this.init();
     const existingNote = await db.get('notes', id);
 
-    if (!existingNote) {
+    if (!existingNote || !this.matchesScope(existingNote, instanceId)) {
       throw new Error(`Note with id ${id} not found`);
     }
 
     const updatedNote: Note = {
       ...existingNote,
       ...updates,
+      instanceId: this.normalizeScope((updates as any)?.instanceId || existingNote.instanceId),
       updatedAt: Date.now(),
     };
 
@@ -958,8 +1225,12 @@ class DatabaseService {
     syncService.syncNote(updatedNote).catch(console.error);
   }
 
-  async deleteNote(id: string): Promise<void> {
+  async deleteNote(id: string, instanceId?: string): Promise<void> {
     const db = await this.init();
+    const note = await db.get('notes', id);
+    if (!note || !this.matchesScope(note, instanceId)) {
+      return;
+    }
     await db.delete('notes', id);
     console.log('[PrinChat DB] Note deleted:', id);
 
@@ -971,43 +1242,70 @@ class DatabaseService {
     }
 
     // Trigger sync
-    syncService.deleteNote(id).catch(console.error);
+    syncService.deleteNote(id, note.instanceId).catch(console.error);
   }
 
-  async getAllNotes(): Promise<Note[]> {
+  async getAllNotes(instanceId?: string): Promise<Note[]> {
     const db = await this.init();
     const notes = await db.getAll('notes');
     // Sort by creation date descending (newest first)
-    return notes.sort((a, b) => b.createdAt - a.createdAt);
+    return notes
+      .filter((n) => this.matchesScope(n, instanceId))
+      .sort((a, b) => b.createdAt - a.createdAt);
   }
 
   // ==================== KANBAN COLUMNS ====================
   /**
-   * Initialize default Kanban columns if none exist
+   * Initialize default Kanban columns if none exist for a given instance
    */
-  private async initializeDefaultKanbanColumns(): Promise<void> {
-    const db = await this.init();
-    const existingColumns = await db.getAll('kanban_columns');
+  private async initializeDefaultKanbanColumns(instanceId: string): Promise<void> {
+    const scopedInstanceId = this.normalizeScope(instanceId);
+    const inFlight = this.kanbanInitLocks.get(scopedInstanceId);
+    if (inFlight) {
+      await inFlight;
+      return;
+    }
 
-    if (existingColumns.length === 0) {
-      console.log('[PrinChat DB] Initializing default Kanban columns...');
+    const initPromise = (async () => {
+      const db = await this.init();
+      const allColumns = await db.getAll('kanban_columns');
+      const existingColumns = allColumns.filter((col) => this.matchesScope(col, scopedInstanceId));
 
-      const now = Date.now();
+      if (existingColumns.length === 0) {
+        console.log('[PrinChat DB] Initializing default Kanban columns for instance:', scopedInstanceId);
 
-      for (const column of DEFAULT_KANBAN_COLUMNS) {
-        const kanbanColumn: KanbanColumn = {
-          ...column,
-          id: `kanban_col_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
-          createdAt: now,
-          updatedAt: now,
-        };
-        await db.put('kanban_columns', kanbanColumn);
-        console.log('[PrinChat DB] Created default column:', kanbanColumn.name);
+        const now = Date.now();
+        const instanceToken = scopedInstanceId.replace(/[^a-zA-Z0-9]/g, '_');
 
-        // No need to sync defaults immediately as they are initializing
+        for (const column of DEFAULT_KANBAN_COLUMNS) {
+          const slug = column.name
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9]+/g, '_')
+            .replace(/^_+|_+$/g, '') || 'default';
+
+          const kanbanColumn: KanbanColumn = {
+            ...column,
+            // Deterministic default IDs avoid race-created duplicates.
+            id: `kanban_col_${instanceToken}_${slug}`,
+            instanceId: scopedInstanceId,
+            createdAt: now,
+            updatedAt: now,
+          };
+          await db.put('kanban_columns', kanbanColumn);
+          console.log('[PrinChat DB] Created default column:', kanbanColumn.name);
+        }
+
+        console.log('[PrinChat DB] ✅ Default Kanban columns initialized');
       }
+    })();
 
-      console.log('[PrinChat DB] ✅ Default Kanban columns initialized');
+    this.kanbanInitLocks.set(scopedInstanceId, initPromise);
+    try {
+      await initPromise;
+    } finally {
+      this.kanbanInitLocks.delete(scopedInstanceId);
     }
   }
 
@@ -1016,7 +1314,11 @@ class DatabaseService {
    */
   async saveKanbanColumn(column: KanbanColumn): Promise<void> {
     const db = await this.init();
-    await db.put('kanban_columns', column);
+    const scopedColumn: KanbanColumn = {
+      ...column,
+      instanceId: this.normalizeScope(column.instanceId),
+    };
+    await db.put('kanban_columns', scopedColumn);
 
     // Trigger chrome.storage change event for real-time updates
     if (typeof chrome !== 'undefined' && chrome.storage) {
@@ -1026,24 +1328,39 @@ class DatabaseService {
     }
 
     // Trigger sync
-    syncService.syncKanbanColumn(column).catch(console.error);
+    syncService.syncKanbanColumn(scopedColumn).catch(console.error);
   }
 
   /**
    * Get a Kanban column by ID
    */
-  async getKanbanColumn(id: string): Promise<KanbanColumn | undefined> {
+  async getKanbanColumn(id: string, instanceId?: string): Promise<KanbanColumn | undefined> {
     const db = await this.init();
-    return db.get('kanban_columns', id);
+    const column = await db.get('kanban_columns', id);
+    if (!column) return undefined;
+    return this.matchesScope(column, instanceId) ? column : undefined;
   }
 
   /**
    * Get all Kanban columns sorted by order
    */
-  async getAllKanbanColumns(): Promise<KanbanColumn[]> {
+  async getAllKanbanColumns(instanceId?: string): Promise<KanbanColumn[]> {
     const db = await this.init();
+    if (instanceId) {
+      await this.initializeDefaultKanbanColumns(instanceId);
+    }
+
     const columns = await db.getAllFromIndex('kanban_columns', 'by-order');
-    return columns;
+    const scoped = columns.filter((column) => this.matchesScope(column, instanceId));
+
+    // Keep first column per normalized name to avoid duplicated defaults from legacy race conditions.
+    const byName = new Map<string, KanbanColumn>();
+    for (const column of scoped) {
+      const key = column.name.trim().toLowerCase();
+      if (!byName.has(key)) byName.set(key, column);
+    }
+
+    return Array.from(byName.values()).sort((a, b) => a.order - b.order);
   }
 
   /**
@@ -1051,11 +1368,11 @@ class DatabaseService {
    * @param id Column ID to delete
    * @throws Error if column is not deletable or has leads
    */
-  async deleteKanbanColumn(id: string): Promise<void> {
+  async deleteKanbanColumn(id: string, instanceId?: string): Promise<void> {
     const db = await this.init();
     const column = await db.get('kanban_columns', id);
 
-    if (!column) {
+    if (!column || !this.matchesScope(column, instanceId)) {
       throw new Error('Column not found');
     }
 
@@ -1065,7 +1382,8 @@ class DatabaseService {
 
     // Check if column has any leads
     const leads = await db.getAllFromIndex('kanban_leads', 'by-columnId', id);
-    if (leads.length > 0) {
+    const scopedLeads = leads.filter((lead) => this.matchesScope(lead, instanceId));
+    if (scopedLeads.length > 0) {
       throw new Error('Cannot delete column with leads. Move leads first.');
     }
 
@@ -1079,7 +1397,7 @@ class DatabaseService {
     }
 
     // Trigger sync
-    syncService.deleteKanbanColumn(id).catch(console.error);
+    syncService.deleteKanbanColumn(id, column.instanceId).catch(console.error);
   }
 
   /**
@@ -1087,9 +1405,9 @@ class DatabaseService {
    * @param columnId Column to move
    * @param newOrder New order position (0-based)
    */
-  async updateColumnOrder(columnId: string, newOrder: number): Promise<void> {
+  async updateColumnOrder(columnId: string, newOrder: number, instanceId?: string): Promise<void> {
     const db = await this.init();
-    const allColumns = await this.getAllKanbanColumns();
+    const allColumns = await this.getAllKanbanColumns(instanceId);
 
     // Find the column to move
     const columnToMove = allColumns.find(c => c.id === columnId);
@@ -1145,10 +1463,12 @@ class DatabaseService {
   async createKanbanColumn(
     name: string,
     color: string,
-    description?: string
+    description?: string,
+    instanceId?: string
   ): Promise<KanbanColumn> {
     const db = await this.init();
-    const existingColumns = await this.getAllKanbanColumns();
+    const scopedInstanceId = this.normalizeScope(instanceId);
+    const existingColumns = await this.getAllKanbanColumns(scopedInstanceId);
 
     // Check for duplicate names
     if (existingColumns.some(col => col.name.toLowerCase() === name.toLowerCase())) {
@@ -1156,8 +1476,10 @@ class DatabaseService {
     }
 
     const now = Date.now();
+    const instanceToken = scopedInstanceId.replace(/[^a-zA-Z0-9]/g, '_');
     const newColumn: KanbanColumn = {
-      id: `kanban_col_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+      id: `kanban_col_${instanceToken}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+      instanceId: scopedInstanceId,
       name,
       color,
       description,
@@ -1189,12 +1511,13 @@ class DatabaseService {
    */
   async updateKanbanColumn(
     id: string,
-    updates: { name?: string; color?: string }
+    updates: { name?: string; color?: string },
+    instanceId?: string
   ): Promise<void> {
     const db = await this.init();
     const column = await db.get('kanban_columns', id);
 
-    if (!column) {
+    if (!column || !this.matchesScope(column, instanceId)) {
       throw new Error('Column not found');
     }
 
@@ -1204,7 +1527,7 @@ class DatabaseService {
 
     // Check for duplicate names if name is being updated
     if (updates.name && updates.name !== column.name) {
-      const existingColumns = await this.getAllKanbanColumns();
+      const existingColumns = await this.getAllKanbanColumns(instanceId);
       if (existingColumns.some(col => col.id !== id && col.name.toLowerCase() === updates.name!.toLowerCase())) {
         throw new Error('Column name already exists');
       }
@@ -1213,6 +1536,7 @@ class DatabaseService {
     const updatedColumn: KanbanColumn = {
       ...column,
       ...updates,
+      instanceId: this.normalizeScope(column.instanceId),
       updatedAt: Date.now(),
     };
 
@@ -1236,10 +1560,16 @@ class DatabaseService {
   async createLead(lead: Omit<LeadContact, 'id' | 'createdAt' | 'updatedAt'>): Promise<LeadContact> {
     const db = await this.init();
     const now = Date.now();
+    const scopedInstanceId = this.normalizeScope(lead.instanceId);
+    const identity = this.normalizeLeadIdentity(lead.chatId || lead.phone) || lead.phone;
+    const normalizedChatId = this.normalizeLeadChatId(lead.chatId || lead.phone || identity) || (lead.chatId || lead.phone);
 
     const newLead: LeadContact = {
       ...lead,
-      id: lead.phone, // Use phone as ID (WhatsApp chat ID format)
+      instanceId: scopedInstanceId,
+      chatId: normalizedChatId,
+      phone: this.normalizeLeadIdentity(lead.phone || lead.chatId || identity) || lead.phone,
+      id: buildScopedLeadId(scopedInstanceId, identity), // Scope lead key by WhatsApp instance
       order: lead.order ?? -now, // Default to top of list if order is missing
       createdAt: now,
       updatedAt: now,
@@ -1266,7 +1596,16 @@ class DatabaseService {
    */
   async saveLead(lead: LeadContact): Promise<void> {
     const db = await this.init();
-    const updatedLead = { ...lead, updatedAt: Date.now() };
+    const scopedInstanceId = this.normalizeScope(lead.instanceId);
+    const identity = this.normalizeLeadIdentity(lead.chatId || lead.phone || lead.id) || lead.id;
+    const updatedLead = {
+      ...lead,
+      instanceId: scopedInstanceId,
+      chatId: this.normalizeLeadChatId(lead.chatId || lead.phone || identity) || lead.chatId,
+      phone: this.normalizeLeadIdentity(lead.phone || lead.chatId || identity) || lead.phone,
+      id: lead.id?.includes('::') ? lead.id : buildScopedLeadId(scopedInstanceId, identity),
+      updatedAt: Date.now()
+    };
     await db.put('kanban_leads', updatedLead);
 
     // Trigger chrome.storage change event
@@ -1283,17 +1622,30 @@ class DatabaseService {
   /**
    * Update a lead partially
    */
-  async updateLead(id: string, updates: Partial<LeadContact>): Promise<void> {
+  async updateLead(id: string, updates: Partial<LeadContact>, instanceId?: string): Promise<void> {
     const db = await this.init();
-    const lead = await db.get('kanban_leads', id);
+    const storageKey = await this.resolveLeadStorageKey(db, id, instanceId);
+    if (!storageKey) {
+      throw new Error(`Lead with id ${id} not found`);
+    }
+    const lead = await db.get('kanban_leads', storageKey);
 
     if (!lead) {
       throw new Error(`Lead with id ${id} not found`);
     }
 
+    const scopedInstanceId = this.normalizeScope((updates as any).instanceId || lead.instanceId || instanceId);
+    const targetIdentity = this.normalizeLeadIdentity(
+      updates.chatId || updates.phone || lead.chatId || lead.phone || lead.id
+    ) || (updates.chatId || updates.phone || lead.chatId || lead.phone || lead.id);
+
     const updatedLead: LeadContact = {
       ...lead,
       ...updates,
+      instanceId: scopedInstanceId,
+      chatId: this.normalizeLeadChatId(updates.chatId || updates.phone || lead.chatId || lead.phone || targetIdentity) || (updates.chatId || lead.chatId),
+      phone: this.normalizeLeadIdentity(updates.phone || updates.chatId || lead.phone || lead.chatId || targetIdentity) || (updates.phone || lead.phone),
+      id: storageKey.includes('::') ? storageKey : buildScopedLeadId(scopedInstanceId, targetIdentity),
       updatedAt: Date.now(),
     };
 
@@ -1313,26 +1665,33 @@ class DatabaseService {
   /**
    * Get a single lead by ID
    */
-  async getLead(id: string): Promise<LeadContact | undefined> {
+  async getLead(id: string, instanceId?: string): Promise<LeadContact | undefined> {
     const db = await this.init();
-    return db.get('kanban_leads', id);
+    const storageKey = await this.resolveLeadStorageKey(db, id, instanceId);
+    if (!storageKey) return undefined;
+    return db.get('kanban_leads', storageKey);
   }
 
   /**
    * Get all leads
    */
-  async getAllLeads(): Promise<LeadContact[]> {
+  async getAllLeads(instanceId?: string): Promise<LeadContact[]> {
+    await this.normalizeAndMergeLeads(instanceId);
     const db = await this.init();
-    return db.getAll('kanban_leads');
+    const leads = await db.getAll('kanban_leads');
+    return leads.filter((lead) => this.matchesScope(lead, instanceId));
   }
 
   /**
    * Get leads for a specific column
    */
-  async getLeadsByColumn(columnId: string): Promise<LeadContact[]> {
+  async getLeadsByColumn(columnId: string, instanceId?: string): Promise<LeadContact[]> {
+    await this.normalizeAndMergeLeads(instanceId);
     const db = await this.init();
     const leads = await db.getAllFromIndex('kanban_leads', 'by-columnId', columnId);
-    const sorted = leads.sort((a, b) => a.order - b.order);
+    const sorted = leads
+      .filter((lead) => this.matchesScope(lead, instanceId))
+      .sort((a, b) => a.order - b.order);
 
     // Debug: Log first 3 leads to verify order
     if (sorted.length > 0) {
@@ -1345,9 +1704,14 @@ class DatabaseService {
   /**
    * Move a lead to a different column
    */
-  async moveLead(leadId: string, newColumnId: string, newOrder: number): Promise<void> {
+  async moveLead(leadId: string, newColumnId: string, newOrder: number, instanceId?: string): Promise<void> {
     const db = await this.init();
-    const lead = await db.get('kanban_leads', leadId);
+    const storageKey = await this.resolveLeadStorageKey(db, leadId, instanceId);
+    if (!storageKey) {
+      console.warn('[PrinChat DB] Lead not found:', leadId);
+      return;
+    }
+    const lead = await db.get('kanban_leads', storageKey);
 
     if (!lead) {
       console.warn('[PrinChat DB] Lead not found:', leadId);
@@ -1378,9 +1742,24 @@ class DatabaseService {
   /**
    * Delete a lead
    */
-  async deleteLead(id: string): Promise<void> {
+  async deleteLead(id: string, instanceId?: string): Promise<void> {
     const db = await this.init();
-    await db.delete('kanban_leads', id);
+    const resolved = await this.resolveScopedLeadAliases(db, id, instanceId);
+    if (!resolved) return;
+
+    const { aliases, canonicalLeadId, canonicalChatId, scope } = resolved;
+
+    for (const alias of aliases) {
+      await db.delete('kanban_leads', alias.id);
+    }
+
+    console.log('[PrinChat DB] Lead delete completed', {
+      phase: 'delete',
+      rawLeadId: id,
+      canonicalLeadId,
+      canonicalChatId,
+      aliasesDeletedCount: aliases.length
+    });
 
     // Trigger chrome.storage change event
     if (typeof chrome !== 'undefined' && chrome.storage) {
@@ -1390,7 +1769,11 @@ class DatabaseService {
     }
 
     // Trigger sync
-    syncService.deleteLead(id).catch(console.error);
+    for (const alias of aliases) {
+      syncService
+        .deleteLead(alias.id, scope, canonicalChatId)
+        .catch(console.error);
+    }
   }
 
   // ==================== UTILITY ====================
@@ -1513,4 +1896,3 @@ class DatabaseService {
 
 // Export singleton instance
 export const db = new DatabaseService();
-

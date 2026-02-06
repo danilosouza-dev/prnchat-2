@@ -105,6 +105,7 @@ export interface Signature {
 
 export interface Note {
   id: string;
+  instanceId: string; // WhatsApp instance identifier (wa:<number>)
   chatId: string;
   chatName: string;
   chatPhoto?: string;
@@ -116,6 +117,7 @@ export interface Note {
 
 export interface Schedule {
   id: string;
+  instanceId: string; // WhatsApp instance identifier (wa:<number>)
   chatId: string;
   chatName: string;
   type: 'message' | 'script';
