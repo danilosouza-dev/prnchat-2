@@ -2,8 +2,24 @@
 /* Injected into WhatsApp Web to add custom UI components */
 
 /* Custom Header - Integrated above WhatsApp interface */
+/* Robust Header Positioning */
+@keyframes princhatHeaderSlideDown {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
 .princhat-custom-header {
-  position: relative;
+  position: fixed !important;
+  top: 0;
+  left: 0;
+  width: 100% !important;
   height: 70px;
   background: #1a1a1a;
   border-bottom: 1px solid #3a3a3a;
@@ -11,10 +27,22 @@
   align-items: center;
   justify-content: space-between;
   padding: 0 20px;
-  padding-right: 24px;
-  z-index: 9999;
+  /* FIX: Box-sizing ensures padding is included in width */
+  box-sizing: border-box !important;
+  /* FIX: High Z-Index but allow popups above it (2147483647 is max) */
+  z-index: 2147483600 !important;
   flex-shrink: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, sans-serif;
+  animation: princhatHeaderSlideDown 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Make #app adjust to header height safely */
+body.princhat-header-active #app {
+  /* Using top instead of margin is safer for absolute-positioned WhatsApp containers */
+  top: 70px !important;
+  height: calc(100% - 70px) !important;
+  width: 100% !important;
+  position: absolute !important;
 }
 
 .princhat-header-left {
@@ -90,6 +118,42 @@
   /* Allow clicks to pass through to button */
 }
 
+/* Login button in header (when not authenticated) */
+.princhat-header-login-btn {
+  height: 36px;
+  padding: 0 16px;
+  background: transparent;
+  border: 1px solid #3a3a3a;
+  color: #e0e0e0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 18px;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  font-size: 14px;
+  font-weight: 500;
+  font-family: inherit;
+}
+
+.princhat-header-login-btn:hover {
+  background: #2a2a2a;
+  border-color: #e91e63;
+  color: #e91e63;
+}
+
+.princhat-header-login-btn svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.princhat-header-login-btn span {
+  line-height: 1;
+}
+
 /* Notifications dropdown */
 .princhat-notifications-dropdown {
   position: fixed;
@@ -102,7 +166,7 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  z-index: 10001;
+  z-index: 2147483601;
 }
 
 .princhat-notifications-header {
@@ -279,7 +343,8 @@
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   overflow: visible;
-  z-index: 10001;
+  /* Ensure it's above the header (2147483600) */
+  z-index: 2147483601 !important;
 }
 
 .princhat-direct-chat-header {
@@ -373,7 +438,7 @@
   border-radius: 6px;
   max-height: 280px;
   overflow-y: auto;
-  z-index: 100000;
+  z-index: 2147483602;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
@@ -476,7 +541,7 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  z-index: 10001;
+  z-index: 2147483601;
 }
 
 .princhat-executions-header {
@@ -583,27 +648,27 @@
 }
 
 .princhat-executions-actions button {
-  background: none;
+  background: transparent;
   border: none;
-  color: #666666;
-  /* --text-muted */
+  color: #888;
   cursor: pointer;
-  padding: 4px;
+  padding: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: color 0.2s;
+  border-radius: 6px;
+  transition: all 0.2s;
 }
 
 .princhat-executions-actions button:hover,
 .princhat-executions-actions button.active {
-  color: #e91e63;
-  /* --accent-pink */
+  background: #2a2a2a;
+  color: #fff;
 }
 
 .princhat-executions-actions button svg {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
 }
 
 /* Better spacing for cards */
@@ -717,7 +782,7 @@
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   overflow: hidden;
-  z-index: 100000;
+  z-index: 2147483601;
   padding: 8px 0;
 }
 
@@ -849,21 +914,20 @@
 .princhat-popup-close-btn {
   background: transparent;
   border: none;
-  color: #666666;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border-radius: 4px;
+  color: #888;
   cursor: pointer;
+  padding: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: color 0.2s;
+  border-radius: 6px;
+  transition: all 0.2s;
   flex-shrink: 0;
 }
 
 .princhat-popup-close-btn:hover {
-  color: #e91e63;
+  background: #2a2a2a;
+  color: #fff;
 }
 
 .princhat-popup-close-btn svg {
@@ -1409,17 +1473,22 @@
 }
 
 /* Make #app flex column to stack header above WhatsApp */
+/* Make #app adjust to header height when header is in body */
 body.princhat-header-active #app {
-  display: flex !important;
-  flex-direction: column !important;
-  height: 100vh !important;
+  height: calc(100vh - 70px) !important;
+  margin-top: 70px !important;
+  width: 100% !important;
+  position: absolute !important;
+  top: 0 !important;
 }
 
-/* Ensure WhatsApp's main container takes remaining space */
-body.princhat-header-active #app>div:not(.princhat-custom-header) {
-  flex: 1 !important;
-  min-height: 0 !important;
-  overflow: hidden !important;
+/* Ensure header stays fixed at top */
+body.princhat-header-active>.princhat-custom-header {
+  position: fixed !important;
+  top: 0;
+  left: 0;
+  width: 100%;
+  z-index: 99999;
 }
 
 /* Bottom Shortcut Bar - Inside WhatsApp Footer */
@@ -1692,28 +1761,22 @@ body[data-princhat-chat-active="true"] .princhat-shortcut-bar {
   position: fixed;
   top: calc(var(--popup-top, 100px) - 8px);
   right: calc(100vw - var(--popup-right, 584px) - 8px);
-  width: 32px;
-  height: 32px;
-  background: #1a1a1a;
-  border: 2px solid #2a2a2a;
-  color: #666666;
+  background: transparent;
+  border: none;
+  color: #888;
   cursor: pointer;
+  padding: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
-  font-size: 18px;
-  font-weight: 600;
-  transition: all 0.2s ease;
+  border-radius: 6px;
+  transition: all 0.2s;
   z-index: 9999;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .princhat-script-popup-close:hover {
-  background: #e91e63;
-  border-color: #e91e63;
-  color: #ffffff;
-  transform: scale(1.1);
+  background: #2a2a2a;
+  color: #fff;
 }
 
 /* Script Sections */
@@ -1910,6 +1973,176 @@ body[data-princhat-chat-active="true"] .princhat-shortcut-bar {
   text-align: center;
 }
 
+/* Blue timer for pending schedules */
+.princhat-script-card-timer.pending {
+  color: #64b5f6;
+  background: rgba(100, 181, 246, 0.1);
+}
+
+/* Orange timer for paused schedules */
+.princhat-script-card-timer.paused {
+  color: #ff9800;
+  background: rgba(255, 152, 0, 0.1);
+}
+
+/* Green timer with check for completed */
+.princhat-script-card-timer.completed {
+  color: #4caf50;
+  background: rgba(76, 175, 80, 0.1);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.princhat-script-card-timer.completed svg {
+  stroke: #4caf50;
+}
+
+/* Red timer for failed */
+.princhat-script-card-timer.failed {
+  color: #f44336;
+  background: rgba(244, 67, 54, 0.15);
+  font-weight: 600;
+}
+
+/* Schedule card specific styles */
+.princhat-schedule-item-preview {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #9e9e9e;
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.princhat-schedule-item-icon {
+  display: flex;
+  align-items: center;
+  color: #9e9e9e;
+  flex-shrink: 0;
+}
+
+.princhat-schedule-item-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #9e9e9e !important;
+  font-size: 13px !important;
+  display: inline !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+.princhat-schedule-item-datetime {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  color: #888;
+  margin-top: 5px;
+  line-height: 1.4;
+}
+
+/* Increase contact name size and make it lighter */
+.princhat-schedule-card .princhat-script-card-name {
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  color: #e0e0e0 !important;
+  display: block !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+/* Larger photo for schedule cards */
+.princhat-schedule-card .princhat-script-card-photo,
+.princhat-schedule-card .princhat-script-card-photo-placeholder {
+  width: 44px;
+  height: 44px;
+  font-size: 18px;
+}
+
+/* Make edit button match pause button exactly */
+.princhat-schedule-card .princhat-script-btn-icon[data-action="edit"] {
+  width: 24px;
+  height: 24px;
+  padding: 2px;
+}
+
+/* Delete button size */
+.princhat-schedule-card .princhat-script-btn-icon[data-action="delete"] {
+  width: 24px;
+  height: 24px;
+  padding: 2px;
+}
+
+.princhat-schedule-card .princhat-script-btn-icon[data-action="edit"] svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Delete button icon size */
+.princhat-schedule-card .princhat-script-btn-icon[data-action="delete"] svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Remove ALL hover effects from edit and delete buttons - keep only color change */
+.princhat-schedule-card .princhat-script-btn-icon[data-action="edit"]:hover,
+.princhat-script-card.princhat-schedule-card .princhat-script-btn-icon[data-action="edit"]:hover,
+button.princhat-script-btn-icon[data-action="edit"]:hover,
+.princhat-schedule-card .princhat-script-btn-icon[data-action="delete"]:hover,
+.princhat-script-card.princhat-schedule-card .princhat-script-btn-icon[data-action="delete"]:hover,
+button.princhat-script-btn-icon[data-action="delete"]:hover {
+  background: transparent !important;
+  background-color: transparent !important;
+  border-color: transparent !important;
+  opacity: 0.7;
+}
+
+/* Ensure edit and delete buttons never have background */
+.princhat-schedule-card .princhat-script-btn-icon[data-action="edit"],
+button.princhat-script-btn-icon[data-action="edit"],
+.princhat-schedule-card .princhat-script-btn-icon[data-action="delete"],
+button.princhat-script-btn-icon[data-action="delete"] {
+  background: transparent !important;
+  border-color: transparent !important;
+}
+
+/* MATCH GLOBAL SCHEDULE CARDS TO CHAT POPUP STYLES */
+/* Remove most overrides to let base schedule card styles apply */
+.princhat-global-schedules-popup .princhat-script-card-info {
+  gap: 2px !important;
+  /* Tighter spacing like chat popup */
+}
+
+.princhat-global-schedules-popup .princhat-script-card-name {
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  color: #e0e0e0 !important;
+}
+
+/* Let base schedule-item-preview styles apply (already correct) */
+/* Let base schedule-item-icon styles apply (already correct) */
+/* Let base schedule-item-text styles apply (already correct) */
+/* Let base schedule-item-datetime styles apply (already correct) */
+
+.princhat-schedule-card-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.princhat-schedule-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  margin-left: 16px;
+}
+
 .princhat-script-card-status {
   display: flex;
   align-items: center;
@@ -1943,6 +2176,13 @@ body[data-princhat-chat-active="true"] .princhat-shortcut-bar {
   z-index: 1;
   width: 12px;
   height: 12px;
+  pointer-events: none;
+}
+
+/* Larger icon for resume/play button */
+.princhat-script-btn-icon[data-action="resume"] svg {
+  width: 14px;
+  height: 14px;
 }
 
 /* Running state - green with spinning border */
@@ -1985,8 +2225,15 @@ body[data-princhat-chat-active="true"] .princhat-shortcut-bar {
   opacity: 0.8;
 }
 
-/* Default hover only for icons without state class */
-.princhat-script-btn-icon:not(.running):not(.paused):hover {
+/* Resume hover - green like running (default color is gray) */
+.princhat-script-btn-icon[data-action="resume"]:hover {
+  background: rgba(0, 168, 132, 0.15);
+  color: #00a884;
+  opacity: 0.8;
+}
+
+/* Default hover only for icons without state class or specific action */
+.princhat-script-btn-icon:not(.running):not(.paused):not([data-action="resume"]):hover {
   background: rgba(233, 30, 99, 0.1);
   color: #e91e63;
   border-color: rgba(233, 30, 99, 0.3);
@@ -2175,7 +2422,8 @@ body[data-princhat-chat-active="true"] .princhat-shortcut-bar {
   border: 1px solid #3a3a3a;
   border-radius: 12px;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
-  z-index: 10001;
+  /* Ensure it's above the header (2147483640) */
+  z-index: 2147483645 !important;
   /* Above almost everything */
   display: flex;
   flex-direction: column;
@@ -2368,6 +2616,11 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
   width: 20px;
   height: 20px;
   color: #8696a0;
+  transition: color 0.2s ease;
+}
+
+.princhat-schedule-button.has-schedules:hover svg {
+  color: #e91e63;
 }
 
 /* Schedule badge */
@@ -2391,18 +2644,1150 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
-/* ==================== SCHEDULE LIST POPUP ==================== */
-.princhat-schedule-list-popup {
+/* Notes button - icon only with pink color */
+.princhat-notes-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  height: auto;
+  padding: 8px;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  margin-right: 12px;
+}
+
+.princhat-notes-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.princhat-notes-button svg {
+  width: 20px;
+  height: 20px;
+  color: #8696a0;
+  stroke: #8696a0;
+  flex-shrink: 0;
+  transition: color 0.2s ease, stroke 0.2s ease;
+}
+
+.princhat-notes-button:hover svg {
+  color: #e91e63;
+  stroke: #e91e63;
+}
+
+/* ==================== NOTES POPUP ==================== */
+.princhat-notes-popup {
   position: fixed;
-  width: 400px;
+  width: 450px;
   background: #1a1a1a;
   border: 1px solid #333;
   border-radius: 12px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-  z-index: 10001;
+  z-index: 2147483601 !important;
+  display: flex;
+  flex-direction: column;
+  max-height: 500px;
+}
+
+.princhat-notes-popup .princhat-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.princhat-notes-popup .princhat-popup-header-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.princhat-notes-popup .princhat-popup-chat-photo {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.princhat-notes-popup .princhat-popup-chat-photo-placeholder {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #e91e63 0%, #f06292 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 600;
+  color: #ffffff;
+  flex-shrink: 0;
+}
+
+.princhat-notes-popup .princhat-popup-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+  margin: 0 0 4px 0;
+}
+
+.princhat-notes-popup .princhat-popup-subtitle {
+  font-size: 13px;
+  color: #888;
+  margin: 0;
+}
+
+
+
+.princhat-notes-content {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 250px;
+  padding: 20px;
+}
+
+.princhat-notes-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  text-align: center;
+  padding: 40px 20px;
+}
+
+.princhat-notes-empty svg {
+  width: 60px;
+  height: 60px;
+  color: #e91e63;
+  margin-bottom: 16px;
+}
+
+.princhat-notes-empty p {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.princhat-notes-empty span {
+  font-size: 14px;
+  color: #888;
+}
+
+.princhat-notes-footer {
+  padding: 20px;
+  border-top: 1px solid #2a2a2a;
+}
+
+.princhat-notes-new-btn {
+  width: 100%;
+  padding: 12px;
+  background: #e91e63;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.princhat-notes-new-btn:hover {
+  background: #c2185b;
+}
+
+.princhat-notes-new-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ==================== NOTE CARDS (Schedule-like style) ==================== */
+.princhat-notes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0;
+}
+
+.princhat-note-card {
+  background: #2a2a2a;
+  border-radius: 8px;
+  border-left: 3px solid #e91e63;
+  /* Pink border to differentiate from schedules */
+  padding: 16px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.princhat-note-card:hover {
+  background: #333;
+}
+
+/* Note icon (left side) */
+.princhat-note-card-icon {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  background: #3a3a3a;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #e91e63;
+}
+
+.princhat-note-card-icon svg {
+  width: 20px;
+  height: 20px;
+  stroke: currentColor;
+}
+
+/* Note content area */
+.princhat-note-card-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.princhat-note-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.princhat-note-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.princhat-note-card-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.princhat-note-edit-btn,
+.princhat-note-delete-btn {
+  background: transparent;
+  border: none;
+  padding: 6px;
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  color: #666;
+}
+
+.princhat-note-edit-btn svg,
+.princhat-note-delete-btn svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+}
+
+.princhat-note-edit-btn:hover {
+  background: #3a3a3a;
+  color: #2196f3;
+}
+
+.princhat-note-delete-btn:hover {
+  background: #3a3a3a;
+  color: #f44336;
+}
+
+/* Note preview (middle) */
+.princhat-note-card-preview {
+  font-size: 13px;
+  color: #999;
+  margin-bottom: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.4;
+}
+
+/* Note footer (date) */
+.princhat-note-card-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.princhat-note-card-date {
+  font-size: 12px;
+  color: #666;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.princhat-note-card-date svg {
+  width: 12px;
+  height: 12px;
+  stroke: currentColor;
+}
+
+/* Match button sizes to schedule cards */
+.princhat-note-card .princhat-script-btn-icon {
+  width: 24px;
+  height: 24px;
+  padding: 2px;
+}
+
+.princhat-note-card .princhat-script-btn-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Empty state */
+.princhat-notes-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  text-align: center;
+  color: #888;
+}
+
+.princhat-notes-empty svg {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 16px;
+  stroke: #e91e63;
+}
+
+.princhat-notes-empty p {
+  font-size: 16px;
+  font-weight: 600;
+  color: #ddd;
+  margin: 0 0 8px 0;
+}
+
+.princhat-notes-empty span {
+  font-size: 14px;
+  color: #ddd;
+}
+
+/* ==================== NOTE VIEW MODE (Read-only) ==================== */
+.princhat-note-view-content {
+  padding: 24px;
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.princhat-note-view-title {
+  font-size: 24px;
+  font-weight: 600;
+  color: #fff;
+  margin: 0 0 20px 0;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #3a3a3a;
+}
+
+.princhat-note-view-body {
+  font-size: 15px;
+  line-height: 1.6;
+  color: #ddd;
+}
+
+.princhat-note-view-body h1,
+.princhat-note-view-body h2,
+.princhat-note-view-body h3 {
+  color: #fff;
+  margin: 16px 0 8px 0;
+}
+
+.princhat-note-view-body h1 {
+  font-size: 20px;
+}
+
+.princhat-note-view-body h2 {
+  font-size: 18px;
+}
+
+.princhat-note-view-body h3 {
+  font-size: 16px;
+}
+
+.princhat-note-view-body ul,
+.princhat-note-view-body ol {
+  margin: 12px 0;
+  padding-left: 24px;
+  color: #ddd;
+}
+
+.princhat-note-view-body li {
+  margin: 4px 0;
+}
+
+.princhat-note-view-body a {
+  color: #4fc3f7;
+  text-decoration: underline;
+}
+
+.princhat-note-view-body code {
+  background: #1a1a1a;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+}
+
+.princhat-note-view-body strong {
+  font-weight: 600;
+  color: #fff;
+}
+
+/* Custom checkbox styling for task lists in VIEW mode */
+.princhat-note-view-body li input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #666;
+  border-radius: 4px;
+  background: transparent;
+  position: relative;
+  transition: all 0.2s;
+  flex-shrink: 0;
+  pointer-events: none;
+  cursor: default;
+}
+
+.princhat-note-view-body li input[type="checkbox"]:checked {
+  background: #e91e63;
+  border-color: #e91e63;
+}
+
+.princhat-note-view-body li input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  width: 4px;
+  height: 8px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* Task list item styling for VIEW mode */
+.princhat-note-view-body li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+/* ==================== NOTE EDITOR MODAL ==================== */
+.princhat-note-editor-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 10002;
+  /* Above notes popup */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.princhat-note-modal-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+}
+
+.princhat-note-modal-container {
+  position: relative;
+  width: 700px;
+  max-width: 90vw;
+  max-height: 80vh;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  animation: modalSlideIn 0.2s ease-out;
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.princhat-note-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.princhat-note-modal-chat-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.princhat-note-modal-chat-photo {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.princhat-note-modal-chat-photo-placeholder {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #e91e63 0%, #f06292 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 600;
+  color: #ffffff;
+  flex-shrink: 0;
+}
+
+.princhat-note-modal-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+  margin: 0 0 4px 0;
+}
+
+.princhat-note-modal-subtitle {
+  font-size: 13px;
+  color: #888;
+  margin: 0;
+}
+
+.princhat-note-modal-title-input {
+  padding: 20px 20px 20px 20px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.princhat-note-title-field {
+  width: 100%;
+  background: #0d0d0d;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  padding: 12px 16px;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.princhat-note-title-field:focus {
+  border-color: #e91e63;
+}
+
+.princhat-note-title-field::placeholder {
+  color: #666;
+  font-weight: 400;
+}
+
+.princhat-note-modal-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.princhat-note-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 20px;
+  border-bottom: 1px solid #2a2a2a;
+  background: #0d0d0d;
+  flex-shrink: 0;
+}
+
+.toolbar-btn {
+  background: transparent;
+  border: none;
+  color: #888;
+  width: 32px;
+  height: 32px;
+  padding: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.toolbar-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.toolbar-btn:hover {
+  background: #2a2a2a;
+  color: #fff;
+}
+
+.toolbar-btn.is-active {
+  background: #e91e63;
+  color: #fff;
+}
+
+.toolbar-separator {
+  width: 1px;
+  height: 24px;
+  background: #2a2a2a;
+  margin: 0 4px;
+}
+
+.princhat-note-editor-content {
+  flex: 1;
+  padding: 16px;
+  overflow-y: auto;
+  color: #fff;
+  font-size: 15px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
+  line-height: 1.6;
+  outline: none;
+  background: #0d0d0d;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  margin: 20px;
+  min-height: 300px;
+}
+
+.princhat-note-editor-content:focus {
+  border-color: #e91e63;
+}
+
+.princhat-note-editor-content:empty:before {
+  content: attr(data-placeholder);
+  color: #666;
+  pointer-events: none;
+}
+
+/* TipTap content styles */
+.princhat-note-editor-content h1 {
+  font-size: 24px;
+  font-weight: 700;
+  margin: 16px 0 12px 0;
+  color: #fff;
+}
+
+.princhat-note-editor-content h2 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 14px 0 10px 0;
+  color: #fff;
+}
+
+.princhat-note-editor-content p {
+  margin: 8px 0;
+}
+
+.princhat-note-editor-content strong {
+  font-weight: 600;
+}
+
+.princhat-note-editor-content a {
+  color: #e91e63;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.princhat-note-editor-content ul,
+.princhat-note-editor-content ol {
+  padding-left: 24px;
+  margin: 8px 0;
+  color: #fff;
+}
+
+/* Ordered lists show numbers */
+.princhat-note-editor-content ol {
+  list-style: decimal;
+}
+
+/* Unordered lists show bullets */
+.princhat-note-editor-content ul {
+  list-style: disc;
+}
+
+/* Task lists (no bullets, has checkboxes) */
+.princhat-note-editor-content ul[style*="list-style: none"] {
+  list-style: none;
+  padding-left: 0;
+}
+
+.princhat-note-editor-content li {
+  margin: 4px 0;
+  color: #fff;
+}
+
+/* Custom checkbox styling for task lists */
+.princhat-note-editor-content li input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #666;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.princhat-note-editor-content li input[type="checkbox"]:hover {
+  border-color: #e91e63;
+}
+
+.princhat-note-editor-content li input[type="checkbox"]:checked {
+  background: #e91e63;
+  border-color: #e91e63;
+}
+
+.princhat-note-editor-content li input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  width: 4px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.princhat-note-editor-content code {
+  background: #2a2a2a;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'Monaco', 'Menlo', monospace;
+  font-size: 14px;
+  color: #e91e63;
+}
+
+.princhat-note-modal-footer {
+  display: flex;
+  gap: 12px;
+  padding: 20px;
+  border-top: 1px solid #2a2a2a;
+  justify-content: flex-end;
+}
+
+.princhat-note-modal-cancel-btn,
+.princhat-note-modal-save-btn {
+  padding: 10px 24px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.princhat-note-modal-cancel-btn {
+  background: transparent;
+  color: #888;
+  border: 1px solid #2a2a2a;
+}
+
+.princhat-note-modal-cancel-btn:hover {
+  background: #2a2a2a;
+  color: #fff;
+}
+
+.princhat-note-modal-save-btn {
+  background: #e91e63;
+  color: #fff;
+}
+
+.princhat-note-modal-save-btn:hover {
+  background: #c2185b;
+}
+
+/* ==================== LINK INSERTION MODAL ==================== */
+.princhat-link-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 10003;
+  /* Above note editor modal */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.princhat-link-modal-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+}
+
+.princhat-link-modal-container {
+  position: relative;
+  width: 450px;
+  max-width: 90vw;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  animation: modalSlideIn 0.2s ease-out;
+}
+
+.princhat-link-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.princhat-link-modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.princhat-link-modal-close {
+  background: transparent;
+  border: none;
+  color: #888;
+  width: 32px;
+  height: 32px;
+  padding: 6px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.princhat-link-modal-close:hover {
+  background: #2a2a2a;
+  color: #fff;
+}
+
+.princhat-link-modal-close svg {
+  width: 18px;
+  height: 18px;
+}
+
+.princhat-link-modal-body {
+  padding: 20px;
+}
+
+.princhat-link-field-group {
+  margin-bottom: 16px;
+}
+
+.princhat-link-field-group label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #fff;
+}
+
+.princhat-link-text-input,
+.princhat-link-url-input {
+  width: 100%;
+  background: #0d0d0d;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #fff;
+  font-size: 14px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.princhat-link-text-input:focus,
+.princhat-link-url-input:focus {
+  border-color: #e91e63;
+}
+
+.princhat-link-checkbox-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+/* Hide default checkbox */
+.princhat-link-checkbox {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+/* Toggle switch container */
+.princhat-toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 42px;
+  height: 24px;
+  cursor: pointer;
+  margin: 0;
+}
+
+/* Toggle slider */
+.princhat-toggle-slider {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #3a3a3a;
+  border-radius: 24px;
+  transition: background-color 0.3s;
+}
+
+/* Toggle slider circle */
+.princhat-toggle-slider:before {
+  content: "";
+  position: absolute;
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: #999;
+  border-radius: 50%;
+  transition: all 0.3s;
+}
+
+/* Checked state - background pink */
+.princhat-link-checkbox:checked+.princhat-toggle-slider {
+  background-color: #e91e63;
+}
+
+/* Checked state - circle moves and turns white */
+.princhat-link-checkbox:checked+.princhat-toggle-slider:before {
+  transform: translateX(18px);
+  background-color: #fff;
+}
+
+/* Toggle label */
+.princhat-toggle-label {
+  margin: 0;
+  font-size: 14px;
+  color: #ddd;
+  cursor: pointer;
+  user-select: none;
+}
+
+.princhat-link-modal-footer {
+  display: flex;
+  gap: 12px;
+  padding: 20px;
+  border-top: 1px solid #2a2a2a;
+  justify-content: flex-end;
+}
+
+.princhat-link-modal-cancel,
+.princhat-link-modal-insert {
+  padding: 10px 24px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.princhat-link-modal-cancel {
+  background: transparent;
+  color: #888;
+  border: 1px solid #2a2a2a;
+}
+
+.princhat-link-modal-cancel:hover {
+  background: #2a2a2a;
+  color: #fff;
+}
+
+.princhat-link-modal-insert {
+  background: #e91e63;
+  color: #fff;
+}
+
+.princhat-link-modal-insert:hover {
+  background: #c2185b;
+}
+
+/* ==================== COLOR PALETTE ==================== */
+.princhat-color-palette {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  z-index: 10004;
+  animation: modalSlideIn 0.2s ease-out;
+}
+
+.princhat-color-palette-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.princhat-color-swatch {
+  width: 32px;
+  height: 32px;
+  border: 2px solid #333;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  padding: 0;
+}
+
+.princhat-color-swatch:hover {
+  transform: scale(1.1);
+  border-color: #e91e63;
+  box-shadow: 0 2px 8px rgba(233, 30, 99, 0.3);
+}
+
+.princhat-color-custom {
+  width: 100%;
+  padding: 8px;
+  background: transparent;
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: #ddd;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.princhat-color-custom:hover {
+  background: #2a2a2a;
+  border-color: #e91e63;
+  color: #fff;
+}
+
+
+/* ==================== SCHEDULE LIST POPUP ==================== */
+.princhat-schedule-list-popup {
+  position: fixed;
+  width: 500px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 2147483601 !important;
   display: flex;
   flex-direction: column;
   max-height: 600px;
+}
+
+/* Schedule popup uses same header style as Notes popup */
+.princhat-schedule-list-popup .princhat-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.princhat-schedule-list-popup .princhat-popup-header-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.princhat-schedule-list-popup .princhat-popup-chat-photo {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.princhat-schedule-list-popup .princhat-popup-chat-photo-placeholder {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #e91e63 0%, #f06292 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 600;
+  color: #ffffff;
+  flex-shrink: 0;
+}
+
+.princhat-schedule-list-popup .princhat-popup-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+  margin: 0 0 4px 0;
+}
+
+.princhat-schedule-list-popup .princhat-popup-subtitle {
+  font-size: 13px;
+  color: #888;
+  margin: 0;
 }
 
 .princhat-schedule-list-header {
@@ -2511,17 +3896,6 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
   border-bottom: none;
 }
 
-.princhat-schedule-item-icon {
-  flex-shrink: 0;
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  background: rgba(233, 30, 99, 0.1);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #e91e63;
-}
 
 .princhat-schedule-item-content {
   flex: 1;
@@ -2543,29 +3917,144 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
   color: #888;
 }
 
-.princhat-schedule-item-delete {
+
+/* Enhanced Schedule Card Styles */
+.princhat-schedule-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #1f1f1f;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.princhat-schedule-card:hover {
+  background: #252525;
+}
+
+.princhat-schedule-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
   flex-shrink: 0;
+}
+
+.princhat-schedule-card-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.princhat-schedule-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.princhat-schedule-card-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: #e1e1e1;
+  font-weight: 500;
+}
+
+.princhat-schedule-type-icon {
+  display: inline-flex;
+  color: #e91e63;
+}
+
+.princhat-schedule-card-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #888;
+}
+
+.princhat-schedule-date {
+  color: #999;
+}
+
+.princhat-schedule-relative {
+  color: #e91e63;
+  font-weight: 500;
+}
+
+.princhat-schedule-menu-btn {
   width: 32px;
   height: 32px;
-  border-radius: 6px;
   background: transparent;
   border: none;
-  color: #888;
+  color: #666;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
-  opacity: 0;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
 }
 
-.princhat-schedule-item:hover .princhat-schedule-item-delete {
-  opacity: 1;
+.princhat-schedule-menu-btn:hover {
+  background: #2a2a2a;
+  color: #e91e63;
 }
 
-.princhat-schedule-item-delete:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #ff4444;
+/* Schedule Sections */
+.princhat-schedule-section {
+  margin-bottom: 16px;
+  padding: 0 20px;
+}
+
+.princhat-schedule-section:last-child {
+  margin-bottom: 0;
+}
+
+.princhat-schedule-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  margin-bottom: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.princhat-schedule-count {
+  color: #666;
+  font-weight: 500;
+  margin-left: 6px;
+}
+
+.princhat-clear-completed-btn {
+  background: transparent;
+  border: none;
+  color: #e91e63;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.princhat-clear-completed-btn:hover {
+  background: rgba(233, 30, 99, 0.1);
+}
+
+.princhat-schedule-section-content {
+  /* Container for schedule cards */
 }
 
 /* ==================== SCHEDULE CREATION MODAL ==================== */
@@ -2851,6 +4340,26 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
   border-color: #e91e63;
 }
 
+/* Notes and Schedules badges (same styling) */
+.notes-badge,
+.princhat-notes-badge,
+.princhat-schedules-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: #ff0000;
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  min-width: 18px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .princhat-dropdown-trigger svg {
   color: #888;
   flex-shrink: 0;
@@ -2938,4 +4447,2147 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
   text-align: center;
   color: #666;
   font-size: 14px;
+}
+
+/* Global Schedules Popup (Header) */
+/* Position is controlled by JavaScript for responsive behavior */
+.princhat-global-schedules-popup {
+  /* position, top, left, width set via JS */
+  max-height: 600px;
+  background: #1f1f1f;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  z-index: 2147483601 !important;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.princhat-global-schedules-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #3a3a3a;
+}
+
+.princhat-global-schedules-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.princhat-global-schedules-tabs {
+  display: flex;
+  padding: 0 20px;
+  border-bottom: 1px solid #3a3a3a;
+}
+
+.princhat-schedule-tab {
+  flex: 1;
+  padding: 12px 0;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #9e9e9e;
+  font-size: 14px;
+  font-weight: 400;
+  cursor: pointer;
+  transition: color 0.2s;
+  position: relative;
+  text-align: center;
+}
+
+.princhat-schedule-tab:hover {
+  color: #ccc;
+}
+
+.princhat-schedule-tab.active {
+  color: #fff;
+  border-bottom-color: #e91e63;
+  border-bottom-width: 1.5px;
+  font-weight: 500;
+}
+
+.princhat-global-schedules-search {
+  position: relative;
+  padding: 16px 20px;
+  border-bottom: 1px solid #3a3a3a;
+}
+
+.princhat-search-icon {
+  position: absolute;
+  left: 32px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #666;
+  pointer-events: none;
+}
+
+.princhat-schedules-search-input {
+  width: calc(100% - 8px);
+  padding: 10px 12px 10px 36px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.princhat-schedules-search-input:focus {
+  border-color: #e91e63;
+}
+
+.princhat-schedules-search-input::placeholder {
+  color: #6e6e6e;
+}
+
+.princhat-global-schedules-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  max-height: 400px;
+}
+
+.princhat-global-schedules-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.princhat-global-schedules-content::-webkit-scrollbar-track {
+  background: #1f1f1f;
+}
+
+.princhat-global-schedules-content::-webkit-scrollbar-thumb {
+  background: #3a3a3a;
+  border-radius: 3px;
+}
+
+.princhat-global-schedules-content::-webkit-scrollbar-thumb:hover {
+  background: #4a4a4a;
+}
+
+.princhat-global-schedules-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.princhat-global-schedules-empty .princhat-empty-icon {
+  margin-bottom: 16px;
+  color: #666;
+  opacity: 0.5;
+}
+
+.princhat-global-schedules-empty p {
+  margin: 0;
+  color: #999;
+  font-size: 14px;
+}
+
+.princhat-global-schedule-card {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  background: #2a2a2a;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.princhat-global-schedule-card:hover {
+  background: #333;
+}
+
+.princhat-schedule-card-photo {
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  overflow: hidden;
+}
+
+.princhat-schedule-card-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.princhat-schedule-card-photo-placeholder SVG {
+  width: 18px;
+  height: 18px;
+}
+
+/* Calendar Modal */
+.princhat-calendar-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 100000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.princhat-calendar-modal {
+  width: 90%;
+  max-width: 900px;
+  height: 650px;
+  background: #1f1f1f;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.princhat-calendar-header {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid #3a3a3a;
+}
+
+.princhat-calendar-header-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 16px 24px;
+}
+
+.princhat-calendar-title-section {
+  flex: 1;
+}
+
+.princhat-calendar-title {
+  margin: 0 0 4px 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.princhat-calendar-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: #888;
+}
+
+.princhat-calendar-header h2 {
+  margin: 0 0 4px 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.princhat-calendar-main-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: #888;
+}
+
+.princhat-calendar-search-bar {
+  display: flex;
+  gap: 12px;
+  padding: 16px 24px;
+  border-bottom: 1px solid #3a3a3a;
+}
+
+.princhat-calendar-search-input {
+  flex: 1;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  transition: all 0.2s;
+}
+
+.princhat-calendar-search-input:focus {
+  outline: none;
+  border-color: #e91e63;
+  background: #252525;
+}
+
+.princhat-calendar-search-input::placeholder {
+  color: #666;
+}
+
+.princhat-calendar-close-btn {
+  background: transparent;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.princhat-calendar-close-btn:hover {
+  background: #2a2a2a;
+  color: #fff;
+}
+
+.princhat-calendar-close-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+.princhat-calendar-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.princhat-calendar-left {
+  flex: 1;
+  padding: 24px;
+  border-right: 1px solid #3a3a3a;
+  display: flex;
+  flex-direction: column;
+}
+
+.princhat-calendar-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.princhat-calendar-current-month {
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.princhat-calendar-prev-month,
+.princhat-calendar-next-month {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.princhat-calendar-prev-month:hover,
+.princhat-calendar-next-month:hover {
+  background: #252525;
+  color: #e91e63;
+}
+
+.princhat-calendar-grid {
+  flex: 1;
+}
+
+.princhat-calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.princhat-calendar-weekdays div {
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #888;
+  padding: 8px 0;
+}
+
+.princhat-calendar-days {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+}
+
+.princhat-calendar-day {
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.2s;
+  background: #2a2a2a;
+}
+
+.princhat-calendar-day.other-month {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.princhat-calendar-day:not(.other-month):hover {
+  background: #252525;
+}
+
+.princhat-calendar-day.today {
+  border: 2px solid #e91e63;
+}
+
+.princhat-calendar-day.selected {
+  background: rgba(233, 30, 99, 0.2);
+  border: 2px solid #e91e63;
+}
+
+.princhat-calendar-day-number {
+  font-size: 14px;
+  font-weight: 500;
+  color: #fff;
+}
+
+.princhat-calendar-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: #e91e63;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 0 4px;
+  border-radius: 99px;
+  min-width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.princhat-calendar-right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.princhat-calendar-day-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid #3a3a3a;
+}
+
+.princhat-calendar-day-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.princhat-calendar-cancel-day-btn {
+  background: none;
+  border: 1px solid #e91e63;
+  color: #e91e63;
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.princhat-calendar-cancel-day-btn:hover {
+  background: rgba(233, 30, 99, 0.1);
+}
+
+.princhat-calendar-schedules-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.princhat-calendar-schedules-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.princhat-calendar-schedules-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.princhat-calendar-schedules-list::-webkit-scrollbar-thumb {
+  background: #e91e63;
+  border-radius: 3px;
+}
+
+.princhat-calendar-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #666;
+}
+
+.princhat-calendar-empty svg {
+  margin-bottom: 16px;
+  stroke: #444;
+}
+
+.princhat-calendar-empty p {
+  margin: 0;
+  font-size: 14px;
+  color: #888;
+}
+
+/* Calendar Sections */
+.princhat-calendar-section {
+  margin-bottom: 20px;
+}
+
+.princhat-calendar-section:last-child {
+  margin-bottom: 0;
+}
+
+.princhat-calendar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: #252525;
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+
+.princhat-calendar-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #ffffff;
+}
+
+.princhat-calendar-section-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: #888;
+  background: #2a2a2a;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.princhat-schedule-card-photo-placeholder {
+  width: 100%;
+  height: 100%;
+  background: #3a3a3a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+}
+
+.princhat-schedule-card-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.princhat-schedule-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.princhat-schedule-card-name {
+  font-size: 15px;
+  font-weight: 500;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.princhat-schedule-card-menu {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: #666;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.princhat-schedule-card-menu:hover {
+  background: #3a3a3a;
+  color: #9e9e9e;
+}
+
+.princhat-schedule-card-preview {
+  font-size: 13px;
+  color: #999;
+  margin-bottom: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.princhat-schedule-card-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #666;
+}
+
+.princhat-schedule-card-time {
+  color: #999;
+}
+
+.princhat-schedule-card-relative {
+  color: #00a884;
+  font-weight: 500;
+}
+
+.princhat-global-schedules-footer {
+  padding: 12px 20px;
+  border-top: 1px solid #3a3a3a;
+}
+
+.princhat-view-calendar-btn {
+  width: 100%;
+  padding: 10px 16px;
+  background: transparent;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #9e9e9e;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s;
+}
+
+.princhat-view-calendar-btn:hover {
+  background: #2a2a2a;
+  border-color: #4a4a4a;
+  color: #fff;
+}
+
+.princhat-view-calendar-btn svg {
+  flex-shrink: 0;
+}
+
+/* ==================== GLOBAL NOTES POPUP ==================== */
+
+/* Global Notes Popup Container */
+.princhat-global-notes-popup {
+  position: fixed;
+  top: 60px;
+  right: 20px;
+  width: 600px;
+  max-height: 70vh;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: slideDown 0.3s ease;
+  z-index: 10000;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Header */
+.princhat-global-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: #1a1a1a;
+  border-bottom: 1px solid #3a3a3a;
+  flex-shrink: 0;
+}
+
+.princhat-global-popup-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.princhat-global-popup-title svg {
+  width: 20px;
+  height: 20px;
+  color: #e91e63;
+}
+
+.princhat-global-popup-close {
+  background: transparent;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.princhat-global-popup-close:hover {
+  background: #333;
+  color: #fff;
+}
+
+.princhat-global-popup-close svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Content */
+.princhat-global-popup-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  min-height: 200px;
+}
+
+.princhat-global-popup-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.princhat-global-popup-content::-webkit-scrollbar-track {
+  background: #2a2a2a;
+}
+
+.princhat-global-popup-content::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 4px;
+}
+
+.princhat-global-popup-content::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Empty State */
+.princhat-global-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: #9e9e9e;
+  text-align: center;
+}
+
+.princhat-global-empty-state svg {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 16px;
+  opacity: 0.3;
+  color: #e91e63;
+}
+
+.princhat-global-empty-state p {
+  font-size: 16px;
+  font-weight: 600;
+  color: #ffffff;
+  margin-bottom: 8px;
+}
+
+.princhat-global-empty-state span {
+  font-size: 13px;
+  color: #9e9e9e;
+}
+
+/* Notes Grid */
+.princhat-global-notes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+/* Note Card */
+.princhat-global-note-card {
+  background: #1a1a1a;
+  border-radius: 8px;
+  border-left: 4px solid #e91e63;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: all 0.2s;
+  animation: fadeIn 0.3s ease;
+}
+
+.princhat-global-note-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(233, 30, 99, 0.2);
+  background: #222;
+}
+
+/* Card Header */
+.princhat-global-note-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.princhat-global-note-header svg {
+  width: 18px;
+  height: 18px;
+  color: #e91e63;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.princhat-global-note-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.princhat-global-note-contact {
+  font-size: 11px;
+  font-weight: 600;
+  color: #e91e63;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.princhat-global-note-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #ffffff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Preview */
+.princhat-global-note-preview {
+  font-size: 12px;
+  color: #9e9e9e;
+  line-height: 1.5;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+/* Actions */
+.princhat-global-note-actions {
+  display: flex;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid #3a3a3a;
+}
+
+.princhat-global-note-action-btn {
+  background: transparent;
+  border: 1px solid #3a3a3a;
+  color: #9e9e9e;
+  padding: 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  transition: all 0.2s;
+  flex: 1;
+}
+
+.princhat-global-note-action-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.princhat-global-note-action-btn:hover {
+  background: #2a2a2a;
+  border-color: #e91e63;
+  color: #e91e63;
+}
+
+.princhat-global-note-action-btn:last-child:hover {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+/* Footer */
+.princhat-global-note-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.princhat-global-note-date {
+  font-size: 11px;
+  color: #666;
+}
+
+/* Avatar for note cards in global popup */
+.princhat-note-card-avatar {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  z-index: 1;
+}
+
+.princhat-note-card-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Adjust icon margin when avatar is present */
+.princhat-note-card:has(.princhat-note-card-avatar) .princhat-note-card-icon {
+  margin-left: 48px;
+}
+
+/* Contact name in footer for global notes */
+.princhat-note-card-contact {
+  font-size: 11px;
+  color: #e91e63;
+  font-weight: 500;
+  margin-right: auto;
+}
+
+/* Update avatar to display initial letter instead of image */
+.princhat-note-card-avatar span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, #e91e63 0%, #ff4081 100%);
+  color: white;
+  font-weight: 600;
+  font-size: 16px;
+}
+
+/* Note card photo wrapper (similar to schedule cards) */
+.princhat-note-card-photo-wrapper {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  margin-right: 12px;
+}
+
+/* Photo placeholder with initial letter */
+.princhat-note-card-photo-placeholder {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #00000020 0%, #00000040 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+/* Actual contact photo (replaces placeholder when loaded) */
+.princhat-note-card-photo {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+/* Icon badge overlaid on bottom-right of photo */
+.princhat-note-card-icon-badge {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 20px;
+  height: 20px;
+  background: #e91e63;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #111b21;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.princhat-note-card-icon-badge svg {
+  width: 12px;
+  height: 12px;
+  color: #fff;
+}
+
+/* Update note card layout to accommodate photo */
+.princhat-note-card {
+  display: flex;
+  align-items: flex-start;
+}
+
+/* Hide the old standalone icon */
+.princhat-note-card-icon {
+  display: none;
+}
+
+/* ==================== KANBAN OVERLAY ==================== */
+
+/* Helper class to hide header icons when Kanban is open */
+.princhat-hidden {
+  display: none !important;
+}
+
+/* Kanban button in header (when Kanban is open) */
+.princhat-header-kanban-btn {
+  background: #e91e63;
+  border: none;
+  color: white;
+  padding: 10px 20px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.2s;
+  margin-right: 24px;
+}
+
+.princhat-header-kanban-btn:hover {
+  background: #f06292;
+}
+
+.princhat-header-kanban-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Overlay that covers WhatsApp content area exactly */
+.princhat-kanban-overlay {
+  position: fixed;
+  top: 70px;
+  /* Below extension header */
+  left: 72px;
+  /* After WhatsApp sidebar */
+  width: calc(100vw - 72px);
+  height: calc(100vh - 70px);
+  background: #161818;
+  /* Dark background to hide gap */
+  z-index: 999;
+  /* Lower than header (9999) */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+body.princhat-kanban-active {
+  overflow: hidden;
+}
+
+/* Ensure WhatsApp sidebar tooltips appear above Kanban overlay */
+body.princhat-kanban-active [role="tooltip"],
+body.princhat-kanban-active div[data-testid*="tooltip"],
+body.princhat-kanban-active span[data-testid*="tooltip"],
+body.princhat-kanban-active ._ak8l,
+body.princhat-kanban-active ._ak8i,
+body.princhat-kanban-active div[data-tab="2"] span[style*="position"],
+body.princhat-kanban-active header[data-tab="2"] span[style*="position"],
+body.princhat-kanban-active span.x1c4vz4f.x1qlqyl8,
+body.princhat-kanban-active span[data-lexical-text],
+body.princhat-kanban-active div.x1n2onr6>span {
+  z-index: 10000 !important;
+}
+
+.princhat-kanban-board {
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 24px 0;
+  /* Vertical padding only */
+  width: 100%;
+  height: 100%;
+}
+
+.princhat-kanban-board::-webkit-scrollbar {
+  height: 8px;
+}
+
+.princhat-kanban-board::-webkit-scrollbar-track {
+  background: #1a1a1a;
+  border-radius: 4px;
+}
+
+.princhat-kanban-board::-webkit-scrollbar-thumb {
+  background: #3a3a3a;
+  border-radius: 4px;
+}
+
+.princhat-kanban-board::-webkit-scrollbar-thumb:hover {
+  background: #4a4a4a;
+}
+
+.princhat-kanban-columns-container {
+  display: inline-flex;
+  /* inline-flex to respect padding */
+  gap: 20px;
+  height: 100%;
+  padding-inline: 24px;
+  /* Horizontal padding that's part of the scrollable area */
+}
+
+.princhat-kanban-column {
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  min-width: 280px;
+  /* Never smaller than this */
+  max-width: 350px;
+  /* Never larger than this */
+  width: 320px;
+  /* Preferred width */
+  flex-shrink: 0;
+  /* Don't shrink below min-width */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.princhat-kanban-column-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid #2a2a2a;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+}
+
+/* Drag handle button */
+.princhat-kanban-column-drag {
+  background: transparent;
+  border: none;
+  color: #6e6e6e;
+  cursor: grab;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.princhat-kanban-column-drag:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #9e9e9e;
+}
+
+.princhat-kanban-column-drag:active {
+  cursor: grabbing;
+}
+
+.princhat-kanban-column-header h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #e0e0e0;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Inbox tag in Recentes column */
+.princhat-kanban-inbox-tag {
+  background: rgba(76, 175, 80, 0.15);
+  /* Green background */
+  color: #4caf50;
+  /* Green text */
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.princhat-kanban-column-count {
+  background: #2a2a2a;
+  color: #9e9e9e;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+/* Column menu button (3 dots) */
+.princhat-kanban-column-menu-btn {
+  background: transparent;
+  border: none;
+  color: #6e6e6e;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.princhat-kanban-column-menu-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #e91e63;
+}
+
+/* Thicker dots for column menu */
+.princhat-kanban-column-menu-btn svg circle {
+  r: 1.5;
+}
+
+/* Main container for column content */
+.princhat-kanban-column-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Fix horizontal scroll */
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* Space between cards */
+  position: relative;
+  min-height: 100px;
+  /* Ensure drop target exists */
+}
+
+/* CSS-only Empty State */
+.princhat-kanban-column-body:not(:has(.princhat-kanban-lead-card))::after {
+  content: 'Nenhum lead ainda';
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #6e6e6e;
+  font-size: 13px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* Kanban button in WhatsApp sidebar */
+.princhat-kanban-sidebar-btn:hover {
+  background: rgba(233, 30, 99, 0.1) !important;
+  color: #e91e63 !important;
+}
+
+/* Kanban button active/selected state */
+.princhat-kanban-sidebar-btn[data-navbar-item-selected="true"] {
+  background: rgba(233, 30, 99, 0.1) !important;
+  color: #e91e63 !important;
+}
+
+/* ==================== KANBAN DRAG & DROP ==================== */
+
+/* Column being dragged */
+.princhat-kanban-column.dragging {
+  opacity: 0.5;
+  transform: rotate(2deg);
+}
+
+/* Column being dragged over */
+.princhat-kanban-column.drag-over {
+  background: rgba(233, 30, 99, 0.1);
+  border-color: #e91e63;
+  transform: scale(1.02);
+  box-shadow: 0 0 20px rgba(233, 30, 99, 0.3);
+}
+
+/* ==================== KANBAN COLUMN MENU ==================== */
+
+.princhat-kanban-column-menu {
+  position: fixed;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  padding: 6px;
+  min-width: 180px;
+  z-index: 10001;
+  animation: fadeIn 0.15s ease;
+}
+
+.princhat-kanban-menu-item {
+  background: transparent;
+  border: none;
+  color: #e0e0e0;
+  padding: 10px 12px;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border-radius: 6px;
+  transition: all 0.2s;
+  text-align: left;
+}
+
+.princhat-kanban-meta-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.2s;
+  cursor: pointer !important;
+}
+
+.princhat-kanban-meta-item:hover {
+  background: rgba(233, 30, 99, 0.1);
+  /* Pink background on hover */
+  color: #e91e63;
+  /* Pink text on hover */
+}
+
+/* Special styling for the "view" action icon */
+.princhat-kanban-meta-action:hover {
+  background: rgba(233, 30, 99, 0.15);
+}
+
+.princhat-kanban-meta-item:hover svg {
+  color: #e91e63;
+  /* Pink icon on hover */
+}
+
+/* Card menu button - add hover area */
+.princhat-kanban-card-menu-btn {
+  padding: 6px 8px;
+  /* Rectangular like column menu */
+}
+
+.princhat-kanban-card-menu-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  cursor: pointer !important;
+}
+
+.princhat-kanban-menu-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+
+.princhat-kanban-menu-item svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.princhat-kanban-menu-item-danger {
+  color: #ef4444;
+}
+
+.princhat-kanban-menu-item-danger:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ff6b6b;
+}
+
+/* ==================== KANBAN MODALS ==================== */
+
+.princhat-kanban-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10002;
+  animation: fadeIn 0.2s ease;
+}
+
+.princhat-kanban-edit-modal {
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 450px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  animation: slideUp 0.25s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.princhat-kanban-edit-modal h2 {
+  margin: 0;
+  padding: 20px 24px;
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+  border-bottom: 1px solid #3a3a3a;
+}
+
+.princhat-kanban-modal-body {
+  padding: 24px;
+}
+
+.princhat-kanban-form-group {
+  margin-bottom: 20px;
+}
+
+.princhat-kanban-form-group:last-child {
+  margin-bottom: 0;
+}
+
+.princhat-kanban-form-group label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #9e9e9e;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.princhat-kanban-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: #1a1a1a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #fff;
+  padding: 12px 14px;
+  font-size: 14px;
+  transition: all 0.2s;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.princhat-kanban-input:focus {
+  outline: none;
+  border-color: #e91e63;
+  background: #222;
+}
+
+.princhat-kanban-input::placeholder {
+  color: #666;
+}
+
+/* Modern compact color picker */
+.princhat-kanban-color-picker-wrapper {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.princhat-kanban-color-input {
+  width: 60px;
+  height: 38px;
+  box-sizing: border-box;
+  background: #1a1a1a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 4px;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.princhat-kanban-color-input:hover {
+  border-color: #e91e63;
+  transform: scale(1.05);
+}
+
+.princhat-kanban-color-input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.princhat-kanban-color-input::-webkit-color-swatch {
+  border: none;
+  border-radius: 4px;
+}
+
+/* Color preview/display */
+.princhat-kanban-color-preview {
+  flex: 1;
+  background: #1a1a1a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 10px;
+}
+
+.princhat-kanban-color-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  flex-shrink: 0;
+}
+
+.princhat-kanban-color-value {
+  font-size: 13px;
+  color: #9e9e9e;
+  font-family: 'Courier New', monospace;
+  font-weight: 600;
+}
+
+.princhat-kanban-modal-footer {
+  padding: 16px 24px;
+  border-top: 1px solid #3a3a3a;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.princhat-kanban-btn {
+  padding: 10px 20px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.princhat-kanban-btn-primary {
+  background: #e91e63;
+  color: white;
+}
+
+.princhat-kanban-btn-primary:hover {
+  background: #f06292;
+}
+
+.princhat-kanban-btn-secondary {
+  background: transparent;
+  border: 1px solid #3a3a3a;
+  color: #9e9e9e;
+}
+
+.princhat-kanban-btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+
+.princhat-kanban-btn-danger {
+  background: #ef4444;
+  color: white;
+}
+
+.princhat-kanban-btn-danger:hover {
+  background: #ff6b6b;
+}
+
+/* ==================== KANBAN COLUMN DESCRIPTION ==================== */
+
+/* Description textarea in modals */
+.princhat-kanban-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: #1a1a1a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #fff;
+  padding: 12px 14px;
+  font-size: 14px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  resize: vertical;
+  min-height: 80px;
+  transition: all 0.2s;
+}
+
+.princhat-kanban-textarea:focus {
+  outline: none;
+  border-color: #e91e63;
+  background: #222;
+}
+
+.princhat-kanban-textarea::placeholder {
+  color: #666;
+}
+
+/* Info icon button in column header */
+.princhat-kanban-info-btn {
+  background: transparent;
+  border: none;
+  color: #6e6e6e;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+
+.princhat-kanban-info-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #2196f3;
+}
+
+.princhat-kanban-info-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Description tooltip */
+.princhat-kanban-description-tooltip {
+  position: fixed;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  padding: 12px 16px;
+  max-width: 300px;
+  color: #e0e0e0;
+  font-size: 13px;
+  line-height: 1.5;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 10003;
+  animation: fadeIn 0.15s ease;
+  word-wrap: break-word;
+}
+
+.princhat-kanban-description-tooltip::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 12px;
+  height: 12px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-bottom: none;
+  border-right: none;
+  transform: translateX(-50%) rotate(45deg);
+}
+
+/* ==================== KANBAN LEAD CARDS ==================== */
+
+/* Lead card container */
+.princhat-kanban-lead-card {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  background: #1a1a1a;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  transition: all 0.2s;
+  cursor: grab;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  pointer-events: auto;
+  /* CRITICAL: Enable drag */
+  user-select: none;
+  /* Prevent text selection from blocking drag */
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+.princhat-kanban-lead-card:hover {
+  background: #1f1f1f;
+  border-color: rgba(233, 30, 99, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  transform: translateY(-1px);
+}
+
+.princhat-kanban-lead-card {
+  position: relative;
+}
+
+.princhat-kanban-lead-card:last-child {
+  margin-bottom: 0;
+}
+
+/* Contact photo */
+.princhat-kanban-lead-photo {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  pointer-events: none;
+  /* Photo shouldn't block drag */
+}
+
+.princhat-kanban-lead-photo-placeholder {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #e91e63 0%, #f06292 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+/* Lead info section */
+.princhat-kanban-lead-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+  /* Don't block drag */
+}
+
+/* Header with name, time and unread badge */
+.princhat-kanban-lead-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: none;
+  /* Don't block drag */
+}
+
+/* Time and badge group */
+.princhat-kanban-lead-time-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  pointer-events: none;
+  /* Don't block drag */
+}
+
+.princhat-kanban-lead-name {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  pointer-events: none;
+  /* Don't block drag */
+}
+
+/* Unread messages badge */
+.princhat-kanban-lead-unread {
+  background: #25D366;
+  /* WhatsApp green */
+  color: #111b21;
+  /* WhatsApp dark text */
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 3px;
+  /* Minimal padding, 0 for single digit makes it circular */
+  border-radius: 9px;
+  min-width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  flex-shrink: 0;
+  pointer-events: none;
+  /* Don't block drag */
+}
+
+.princhat-kanban-lead-time {
+  font-size: 11px;
+  color: #666;
+  font-weight: 500;
+  pointer-events: none;
+  /* Don't block drag */
+}
+
+/* Message preview */
+.princhat-kanban-lead-preview {
+  margin: 0;
+  font-size: 13px;
+  color: #9e9e9e;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  /* Don't block drag */
+}
+
+/* Footer with time */
+.princhat-kanban-lead-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: none;
+  /* Don't block drag */
+}
+
+.princhat-kanban-lead-time {
+  font-size: 11px;
+  color: #666;
+  font-weight: 500;
+  pointer-events: none;
+  /* Don't block drag */
+}
+
+/* ==================== KANBAN LEAD CARD ENHANCEMENTS ==================== */
+
+/* Tags section */
+.princhat-kanban-lead-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  position: relative;
+  pointer-events: none;
+  /* Don't block drag */
+}
+
+.princhat-kanban-tag {
+  color: #161818 !important;
+  /* Dark text to contrast with colored tag */
+  font-size: 12px !important;
+  /* MATCH INLINE STYLE: 12px */
+  font-weight: 700 !important;
+  /* Make it bolder */
+  padding: 2px 8px !important;
+  /* MATCH INLINE STYLE: 2px 8px */
+  border-radius: 4px;
+  text-transform: none !important;
+  /* USER REQ: As written */
+  letter-spacing: 0.3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+  /* Don't block drag */
+}
+
+.princhat-kanban-tag svg {
+  flex-shrink: 0;
+  pointer-events: none;
+  /* Don't block drag */
+}
+
+/* Metadata indicators row */
+.princhat-kanban-lead-meta {
+  display: flex;
+  gap: 0;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  pointer-events: none;
+  /* Don't block drag */
+}
+
+.princhat-kanban-meta-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #9e9e9e;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.2s;
+  cursor: default;
+  /* Seta (arrow) para itens informativos */
+  pointer-events: auto;
+  /* Re-enable for hover effects */
+}
+
+.princhat-kanban-meta-item:hover {
+  color: #e91e63;
+  background: rgba(233, 30, 99, 0.1);
+  /* Pink background on hover */
+}
+
+.princhat-kanban-meta-item:hover svg {
+  color: #e91e63;
+  /* Pink icon on hover */
+}
+
+/* Action items (view icon) - special styling */
+.princhat-kanban-meta-action {
+  margin-left: auto;
+  /* Push to the right */
+  cursor: pointer;
+  /* APENAS o olhinho tem dedo (pointer) */
+}
+
+/* Delete button - shows on hover */
+.princhat-kanban-delete-btn {
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.2s ease;
+  color: #6e6e6e;
+}
+
+.princhat-kanban-lead-card:hover .princhat-kanban-delete-btn {
+  opacity: 1;
+}
+
+.princhat-kanban-delete-btn:hover {
+  background: rgba(244, 67, 54, 0.15) !important;
+  color: #f44336 !important;
+  transform: scale(1.1);
+}
+
+.princhat-kanban-meta-action:hover {
+  background: rgba(233, 30, 99, 0.15);
+  /* Slightly stronger pink */
+}
+
+.princhat-kanban-meta-item svg {
+  flex-shrink: 0;
+  pointer-events: none;
+  /* Don't block drag */
+}
+
+.princhat-kanban-meta-item span {
+  min-width: 12px;
+  text-align: center;
+  pointer-events: none;
+  /* Don't block drag */
+}
+
+/* ==================== KANBAN CARD DRAG STATE ==================== */
+
+.princhat-kanban-lead-card[draggable="true"] {
+  cursor: grab;
+}
+
+.princhat-kanban-lead-card.dragging {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+
+.princhat-kanban-column-body.drag-over-card {
+  background: rgba(233, 30, 99, 0.05);
+  border-radius: 4px;
+}
+
+/* Parent card of an active dropdown - Needs High Z-Index to avoid clipping */
+.princhat-kanban-lead-card.active-menu {
+  z-index: 1000 !important;
+  position: relative !important;
+}
+
+/* Tag overflow counter */
+.princhat-kanban-tag-more {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: rgba(158, 158, 158, 0.15);
+  color: #9e9e9e;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.princhat-kanban-tag-more:hover {
+  background: rgba(233, 30, 99, 0.15);
+  color: #e91e63;
+}
+
+/* Tag expansion tooltip */
+.princhat-kanban-tags-tooltip {
+  position: fixed;
+  /* Fixed to escape column stacking context */
+  background: #161818;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  padding: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  z-index: 100000;
+  /* Very high to appear above everything */
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 200px;
+  max-width: 300px;
+}
+
+.princhat-kanban-tags-tooltip.active {
+  display: flex;
+}
+
+/* ==================== SORTABLE JS STATES ==================== */
+
+/* Ghost element (placeholder where item will drop) */
+.princhat-kanban-ghost {
+  opacity: 0.4 !important;
+  background: rgba(233, 30, 99, 0.05) !important;
+  border: 2px dashed #e91e63 !important;
+  border-radius: 8px;
+}
+
+/* Reset any visibility hacks on children */
+.princhat-kanban-ghost>* {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+/* Dragging element */
+.princhat-kanban-drag {
+  opacity: 1 !important;
+  background: #2a2a2a !important;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4) !important;
+  transform: scale(1.02);
+  z-index: 10000;
+}
+
+/* ========================================
+ * CARD ACTIONS DROPDOWN MENU
+ * ======================================== */
+
+.princhat-kanban-card-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  background: #161818 !important;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  z-index: 10000;
+  min-width: 200px;
+  overflow: hidden;
+  padding: 8px 0;
+  animation: fadeIn 0.15s ease;
+  pointer-events: auto;
+}
+
+.princhat-kanban-card-dropdown-item {
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  color: #e0e0e0 !important;
+  background: transparent !important;
+  font-size: 14px;
+  transition: background 0.2s, color 0.2s;
+}
+
+.princhat-kanban-card-dropdown-item:hover {
+  background: #2a2a2a !important;
+}
+
+.princhat-kanban-card-dropdown-item svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: #9e9e9e !important;
+  transition: color 0.2s;
+}
+
+.princhat-kanban-card-dropdown-item:hover svg {
+  color: #e91e63 !important;
+}
+
+.princhat-kanban-card-dropdown-item span {
+  flex: 1;
+  font-weight: 500;
+  text-align: left;
+}
+
+/* ==================== REMAINING POPUP Z-INDEX FIXES ==================== */
+
+.princhat-subscription-popup {
+  position: fixed;
+  width: 480px;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  z-index: 2147483601 !important;
+}
+
+.princhat-help-popup {
+  position: fixed;
+  width: 320px;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  z-index: 2147483601 !important;
+  padding: 8px 0;
 }

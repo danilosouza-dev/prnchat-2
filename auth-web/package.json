@@ -1,0 +1,27 @@
+{
+    "name": "princhat-auth",
+    "version": "0.1.0",
+    "private": true,
+    "scripts": {
+        "dev": "next dev -p 3000",
+        "build": "next build",
+        "start": "next start",
+        "lint": "next lint"
+    },
+    "dependencies": {
+        "@supabase/ssr": "^0.5.2",
+        "@supabase/supabase-js": "^2.45.7",
+        "next": "14.2.21",
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1"
+    },
+    "devDependencies": {
+        "@types/node": "^20",
+        "@types/react": "^18",
+        "@types/react-dom": "^18",
+        "autoprefixer": "^10.4.20",
+        "postcss": "^8",
+        "tailwindcss": "^3.4.17",
+        "typescript": "^5"
+    }
+}

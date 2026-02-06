@@ -21,6 +21,7 @@ import { getActiveTab, sendMessageToContentScript } from '@/utils/helpers';
 import { needsMigration, migrateTagsToFolders } from '@/utils/migration';
 import ScriptExecutionModal from './components/ScriptExecutionModal';
 
+
 type Tab = 'messages' | 'scripts';
 type MediaFilter = 'all' | 'folders' | 'audio' | 'text' | 'image' | 'video' | 'file';
 
@@ -53,6 +54,8 @@ const App: React.FC = () => {
   const [executionState, setExecutionState] = useState<ScriptExecutionState | null>(null);
   const [expandedScripts, setExpandedScripts] = useState<Set<string>>(new Set());
   const [isPinned, setIsPinned] = useState(false);
+
+
   const filterInputRef = useRef<HTMLInputElement>(null);
   const isInitialized = useRef(false); // Prevent auto-save before restoration
 
@@ -157,6 +160,7 @@ const App: React.FC = () => {
       loadData();
       loadActiveChat();
       loadSettings();
+
     };
 
     initializeApp();
@@ -169,11 +173,14 @@ const App: React.FC = () => {
     // Listen for storage changes to reload data in real-time
     // This is especially important for FAB popup iframe
     const handleStorageChange = (changes: any, areaName: string) => {
-      // Check if messages, scripts, or folders changed
+      // Check if messages, scripts, folders, or notes changed
       if (areaName === 'local' && (changes.messages || changes.scripts || changes.folders)) {
         console.log('[PrinChat] Storage changed, reloading data...');
         loadData();
       }
+
+
+
 
       // Sync popup state from other popup instance (Header ↔ FAB)
       if (areaName === 'local' && changes.popup_state) {
@@ -280,6 +287,8 @@ const App: React.FC = () => {
       setDataError(`Erro ao carregar dados: ${msg}`);
     }
   };
+
+
 
   const checkIsWhatsAppWeb = async (): Promise<boolean> => {
     try {
@@ -527,6 +536,10 @@ const App: React.FC = () => {
     chrome.runtime.openOptionsPage();
   };
 
+
+
+
+
   // Toggle folder expansion
   const toggleFolderExpansion = (folderId: string) => {
     setExpandedFolders(prev => {
@@ -648,16 +661,18 @@ const App: React.FC = () => {
             <Move size={18} />
           </button>
 
+
+
           {!isFloating && (
             <button
-              className="icon-btn"
+              className="princhat-popup-close-btn"
               onClick={() => {
                 // Close popup by sending message to parent
                 window.parent.postMessage({ type: 'PRINCHAT_CLOSE_POPUP' }, '*');
               }}
               title="Fechar"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M18 6L6 18M6 6l12 12" />
               </svg>
             </button>
@@ -1022,6 +1037,9 @@ const App: React.FC = () => {
       />
       {/* DEBUG FOOTER - Remove after fixing */}
       {/* Footer removed */}
+
+      {/* Global Notes Popup */}
+
 
     </div>
   );

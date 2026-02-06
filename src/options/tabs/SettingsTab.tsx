@@ -429,6 +429,39 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ setHeaderActions }) => {
                 <Trash2 className="h-4 w-4 mr-2" />
                 Limpar Todos os Dados
               </Button>
+              <Button
+                variant="secondary"
+                onClick={async () => {
+                  if (confirm('Deseja forçar o envio de todos os dados locais para a nuvem? Isso pode demorar alguns segundos.')) {
+                    try {
+                      const { syncService } = await import('@/services/sync-service');
+                      toast.loading('Enviando dados para a nuvem...');
+                      const stats = await syncService.pushAllLocalData();
+                      toast.dismiss();
+
+                      const msg = `Sincronização concluída!\n` +
+                        `Colunas: ${stats.columns}\n` +
+                        `Leads: ${stats.leads}\n` +
+                        `Notas: ${stats.notes}\n` +
+                        `Agendamentos: ${stats.schedules}\n` +
+                        `Roteiros: ${stats.scripts}\n` +
+                        `Assinaturas: ${stats.signatures}\n` +
+                        `Gatilhos: ${stats.triggers}\n` +
+                        `Tags: ${stats.tags}`;
+
+                      toast.success(msg, { duration: 5000 });
+                    } catch (e: any) {
+                      toast.dismiss();
+                      console.error(e);
+                      toast.error(`Erro ao sincronizar: ${e.message || 'Verifique o console'}`);
+                    }
+                  }
+                }}
+                className="w-full sm:w-auto ml-0 sm:ml-2 mt-2 sm:mt-0"
+              >
+                <Cloud className="h-4 w-4 mr-2" />
+                Forçar Upload (Local → Nuvem)
+              </Button>
               <p className="text-xs text-[var(--text-secondary)]">
                 Remove permanentemente todas as mensagens, scripts, gatilhos e tags.
                 Esta ação não pode ser desfeita!

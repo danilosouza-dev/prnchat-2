@@ -53,9 +53,13 @@ export interface ScriptStep {
 
 export interface Script {
   id: string;
-  name: string;
+  title: string; // Database field
+  name?: string; // Legacy field (mapped to title)
+  content?: string; // Database field (JSON string of steps?)
   description?: string;
   steps: ScriptStep[];
+  tags?: string[];
+  usageCount?: number;
   totalDuration: number; // Total estimated duration in milliseconds
   createdAt: number;
   updatedAt: number;
@@ -84,7 +88,9 @@ export interface Trigger {
 
 export interface Signature {
   id: string;
+  title: string; // Required for Sync
   text: string;
+  content?: string; // Mapped to text for Sync
   formatting: {
     bold: boolean;
     italic: boolean;
@@ -97,14 +103,26 @@ export interface Signature {
   updatedAt: number;
 }
 
+export interface Note {
+  id: string;
+  chatId: string;
+  chatName: string;
+  chatPhoto?: string;
+  title: string; // Required title for the note
+  content: string; // HTML content from TipTap editor
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface Schedule {
   id: string;
   chatId: string;
   chatName: string;
   type: 'message' | 'script';
   itemId: string; // messageId or scriptId
+  itemName: string; // Name of message or script
   scheduledTime: number; // timestamp
-  status: 'pending' | 'completed' | 'failed';
+  status: 'pending' | 'paused' | 'completed' | 'cancelled' | 'failed';
   createdAt: number;
   updatedAt: number;
 }

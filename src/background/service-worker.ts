@@ -9,9 +9,16 @@
  */
 
 import { db } from '../storage/db';
+import { syncService } from '../services/sync-service';
+
+// Polyfill window for libraries that expect it (e.g. Supabase internals)
+if (typeof self !== 'undefined' && typeof window === 'undefined') {
+  (self as any).window = self;
+}
 
 class BackgroundService {
   private injectedTabs = new Set<number>();
+  private executingSchedules = new Set<string>(); // Track schedules currently executing
 
   constructor() {
     this.init();
@@ -45,6 +52,9 @@ class BackgroundService {
 
     // Initialize database
     await db.init();
+
+    // Trigger initial sync (non-blocking)
+    syncService.fetchAndSyncInitialData().catch(console.error);
 
     // Set up schedule checker alarm (every minute)
     await this.setupScheduleChecker();
@@ -89,6 +99,20 @@ class BackgroundService {
         sendResponse({ success: true, data: 'PONG' });
         break;
 
+      case 'TRIGGER_MANUAL_SYNC':
+        console.log('[PrinChat] Manual Sync requested by UI/Content Script');
+        syncService.fetchAndSyncInitialData()
+          .then((result) => sendResponse({ success: true, result }))
+          .catch((error) => sendResponse({ success: false, error: error.message }));
+        return true;
+
+      case 'FORCE_INIT':
+        console.log('[PrinChat] Force Init requested by UI');
+        syncService.fetchAndSyncInitialData()
+          .then((result) => sendResponse({ success: true, result })) // Pass result object
+          .catch((error) => sendResponse({ success: false, error: error.message }));
+        return true;
+
       case 'INJECT_PAGE_SCRIPTS':
         // Content script is asking us to inject the page scripts
         if (sender.tab?.id) {
@@ -98,6 +122,22 @@ class BackgroundService {
           return true; // Keep channel open for async response
         } else {
           sendResponse({ success: false, error: 'No tab ID available' });
+        }
+        break;
+
+      case 'FETCH_MEDIA_BLOB':
+        // Bypass CSP by fetching from background context
+        if (message.payload && message.payload.url) {
+          console.log('[PrinChat] Fetching media blob for CSP bypass:', message.payload.url);
+          this.fetchMediaBlob(message.payload.url)
+            .then((base64) => sendResponse({ success: true, base64 }))
+            .catch((err) => {
+              console.error('[PrinChat] Failed to fetch media blob:', err);
+              sendResponse({ success: false, error: err.toString() });
+            });
+          return true; // Valid async response
+        } else {
+          sendResponse({ success: false, error: 'No URL provided' });
         }
         break;
 
@@ -223,6 +263,14 @@ class BackgroundService {
           .catch((error) => sendResponse({ success: false, error: error.message }));
         return true;
 
+      case 'GET_ALL_SCHEDULES':
+        db.getAllSchedules()
+          .then((schedules) => {
+            sendResponse({ success: true, data: schedules });
+          })
+          .catch((error) => sendResponse({ success: false, error: error.message }));
+        return true;
+
       case 'DELETE_SCHEDULE':
         db.deleteSchedule(message.payload.id)
           .then(async () => {
@@ -235,11 +283,356 @@ class BackgroundService {
           .catch((error) => sendResponse({ success: false, error: error.message }));
         return true;
 
+      // ==================== TAGS ====================
+      case 'SAVE_TAG':
+        db.saveTag(message.payload)
+          .then(() => sendResponse({ success: true }))
+          .catch((error) => sendResponse({ success: false, error: error.message }));
+        return true;
+
+      case 'DELETE_TAG':
+        db.deleteTag(message.payload.id)
+          .then(() => sendResponse({ success: true }))
+          .catch((error) => sendResponse({ success: false, error: error.message }));
+        return true;
+
+      case 'UPDATE_SCHEDULE_STATUS':
+        (async () => {
+          try {
+            const { id, status } = message.payload;
+            await db.updateScheduleStatus(id, status);
+
+            // If changing to paused, clear the alarm
+            if (status === 'paused') {
+              const alarmName = `schedule-${id}`;
+              await chrome.alarms.clear(alarmName);
+              console.log('[PrinChat] Paused schedule, cleared alarm:', alarmName);
+            }
+
+            // If changing from paused to pending, check if we need to send immediately or create new alarm
+            if (status === 'pending') {
+              const schedule = await db.getSchedule(id);
+              if (schedule) {
+                const now = Date.now();
+                if (schedule.scheduledTime <= now) {
+                  // Time already passed - execute immediately
+                  console.log('[PrinChat] Resuming expired schedule, executing immediately:', id);
+                  await this.executeSchedule(id);
+                } else {
+                  // Time in future - create new alarm
+                  console.log('[PrinChat] Resuming schedule, creating new alarm:', id);
+                  await this.createScheduleAlarm(schedule);
+                }
+              }
+            }
+
+            sendResponse({ success: true });
+          } catch (error: any) {
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+
+      case 'CREATE_NOTE':
+        (async () => {
+          try {
+            const note = await db.createNote(message.payload);
+            sendResponse({ success: true, data: note });
+          } catch (error: any) {
+            console.error('[Background] Error creating note:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'UPDATE_NOTE':
+        (async () => {
+          try {
+            await db.updateNote(message.payload.id, message.payload);
+            sendResponse({ success: true });
+          } catch (error: any) {
+            console.error('[Background] Error updating note:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'GET_NOTES_BY_CHAT':
+        (async () => {
+          try {
+            console.log('[Background] GET_NOTES_BY_CHAT handler called');
+            console.log('[Background] Payload:', message.payload);
+            console.log('[Background] ChatId:', message.payload.chatId);
+
+            const notes = await db.getNotesByChatId(message.payload.chatId);
+
+            console.log('[Background] Notes retrieved:', notes);
+            console.log('[Background] Notes count:', notes.length);
+
+            sendResponse({ success: true, data: notes });
+          } catch (error: any) {
+            console.error('[Background] Error getting notes by chat:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'GET_NOTE':
+        (async () => {
+          try {
+            const note = await db.getNote(message.payload.id);
+            sendResponse({ success: true, data: note });
+          } catch (error: any) {
+            console.error('[Background] Error getting note:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'DELETE_NOTE':
+        (async () => {
+          try {
+            await db.deleteNote(message.payload.id);
+            sendResponse({ success: true });
+          } catch (error: any) {
+            console.error('[Background] Error deleting note:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'GET_ALL_NOTES':
+        (async () => {
+          try {
+            console.log('[Background] GET_ALL_NOTES request received');
+            const notes = await db.getAllNotes();
+            console.log('[Background] Fetched', notes.length, 'notes:', notes);
+            sendResponse({ success: true, data: notes });
+          } catch (error: any) {
+            console.error('[Background] Error getting all notes:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      // ==================== KANBAN COLUMNS ====================
+      case 'GET_KANBAN_COLUMNS':
+        (async () => {
+          try {
+            console.log('[Background] GET_KANBAN_COLUMNS request received');
+            const columns = await db.getAllKanbanColumns();
+            console.log('[Background] Fetched', columns.length, 'columns');
+            sendResponse({ success: true, data: columns });
+          } catch (error: any) {
+            console.error('[Background] Error getting Kanban columns:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'CREATE_KANBAN_COLUMN':
+        (async () => {
+          try {
+            console.log('[Background] CREATE_KANBAN_COLUMN request received:', message.payload);
+            const { name, color, description } = message.payload;
+            const column = await db.createKanbanColumn(name, color, description);
+            console.log('[Background] Column created:', column.id);
+            sendResponse({ success: true, data: column });
+          } catch (error: any) {
+            console.error('[Background] Error creating Kanban column:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'UPDATE_KANBAN_COLUMN':
+        (async () => {
+          try {
+            console.log('[Background] UPDATE_KANBAN_COLUMN request received:', message.payload);
+            const { id, updates } = message.payload;
+            await db.updateKanbanColumn(id, updates);
+            console.log('[Background] Column updated:', id);
+            sendResponse({ success: true });
+          } catch (error: any) {
+            console.error('[Background] Error updating Kanban column:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'DELETE_KANBAN_COLUMN':
+        (async () => {
+          try {
+            console.log('[Background] DELETE_KANBAN_COLUMN request received:', message.payload);
+            const { id } = message.payload;
+            await db.deleteKanbanColumn(id);
+            console.log('[Background] Column deleted:', id);
+            sendResponse({ success: true });
+          } catch (error: any) {
+            console.error('[Background] Error deleting Kanban column:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'UPDATE_COLUMN_ORDER':
+        (async () => {
+          try {
+            console.log('[Background] UPDATE_COLUMN_ORDER request received:', message.payload);
+            const { columnId, newOrder } = message.payload;
+            await db.updateColumnOrder(columnId, newOrder);
+            console.log('[Background] Column order updated:', columnId, 'to', newOrder);
+            sendResponse({ success: true });
+          } catch (error: any) {
+            console.error('[Background] Error updating column order:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'GET_ALL_KANBAN_LEADS':
+        (async () => {
+          try {
+            console.log('[Background] GET_ALL_KANBAN_LEADS request received');
+            const leads = await db.getAllLeads();
+            console.log('[Background] Fetched', leads.length, 'leads');
+            sendResponse({ success: true, data: leads });
+          } catch (error: any) {
+            console.error('[Background] Error getting Kanban leads:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'CREATE_KANBAN_LEAD':
+        (async () => {
+          try {
+            console.log('[Background] CREATE_KANBAN_LEAD request received:', message.payload);
+            const lead = await db.createLead(message.payload);
+            console.log('[Background] Lead created:', lead.id);
+            sendResponse({ success: true, data: lead });
+          } catch (error: any) {
+            console.error('[Background] Error creating Kanban lead:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'UPDATE_KANBAN_LEAD':
+        (async () => {
+          try {
+            console.log('[Background] UPDATE_KANBAN_LEAD request received:', message.payload);
+            const { leadId, updates } = message.payload;
+
+            try {
+              // Try exact match first
+              await db.updateLead(leadId, updates);
+              console.log('[Background] Lead updated (exact match):', leadId);
+              sendResponse({ success: true, data: { id: leadId } });
+            } catch (err: any) {
+              console.log('[Background] Exact update failed, trying ID variations...');
+
+              // Try alternatives
+              let altId = '';
+              if (leadId.includes('@c.us')) {
+                altId = leadId.replace('@c.us', '');
+              } else if (leadId.includes('@g.us')) {
+                altId = leadId.replace('@g.us', ''); // Unlikely for leads but possible
+              } else {
+                // If pure number, try adding suffix
+                altId = `${leadId}@c.us`;
+              }
+
+              if (altId && altId !== leadId) {
+                try {
+                  await db.updateLead(altId, updates);
+                  console.log('[Background] Lead updated (alternative match):', altId);
+                  sendResponse({ success: true, data: { id: altId } });
+                  return;
+                } catch (e2) {
+                  // Both failed
+                  throw err; // Throw original error
+                }
+              } else {
+                throw err;
+              }
+            }
+          } catch (error: any) {
+            console.error('[Background] Error updating Kanban lead:',
+              error?.name,
+              error?.message
+            );
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'MOVE_KANBAN_LEAD':
+        (async () => {
+          try {
+            console.log('[Background] MOVE_KANBAN_LEAD request received:', message.payload);
+            const { leadId, newColumnId, newOrder } = message.payload;
+            await db.moveLead(leadId, newColumnId, newOrder);
+            console.log('[Background] Lead moved:', leadId);
+            sendResponse({ success: true });
+          } catch (error: any) {
+            console.error('[Background] Error moving Kanban lead:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
+      case 'DELETE_KANBAN_LEAD':
+        (async () => {
+          try {
+            console.log('[Background] DELETE_KANBAN_LEAD request received:', message.payload);
+            const { leadId } = message.payload;
+            await db.deleteLead(leadId);
+            console.log('[Background] Lead deleted:', leadId);
+            sendResponse({ success: true });
+          } catch (error: any) {
+            console.error('[Background] Error deleting Kanban lead:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+
       case 'OPEN_OPTIONS':
         // Open options page (from profile dropdown)
         chrome.runtime.openOptionsPage();
         sendResponse({ success: true });
         break;
+
+      case 'AUTH_SUCCESS':
+        // Handle authentication success from callback
+        (async () => {
+          try {
+            console.log('[PrinChat SW] AUTH_SUCCESS received');
+            const { accessToken, refreshToken } = message.data;
+
+            // Save to storage
+            await chrome.storage.sync.set({
+              auth_session: {
+                isAuthenticated: true,
+                accessToken,
+                refreshToken,
+                timestamp: Date.now()
+              }
+            });
+
+            console.log('[PrinChat SW] Session saved successfully');
+
+            // Trigger initial sync
+            syncService.fetchAndSyncInitialData().catch(console.error);
+
+            sendResponse({ success: true });
+          } catch (error: any) {
+            console.error('[PrinChat SW] Error saving session:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
 
       default:
         sendResponse({ success: false, error: 'Unknown message type' });
@@ -253,26 +646,22 @@ class BackgroundService {
    * The loader will then inject WPPConnect and page scripts via DOM
    */
   private async injectPageScripts(tabId: number) {
-    console.log('[PrinChat] Injecting loader script into tab:', tabId);
+    console.log('[PrinChat] 🔧 Injecting loader script into tab:', tabId);
 
-    // Prevent multiple injections
-    if (this.injectedTabs.has(tabId)) {
-      console.log('[PrinChat] Tab', tabId, 'already injected, skipping');
-      return;
-    }
+    // REMOVED: Prevention of multiple injections
+    // This was blocking reinjection after page navigation/reload
+    // The page script itself has guards to prevent duplicate execution
 
     try {
       // Inject the loader script which will load Store accessor and page script
-      console.log('[PrinChat] Injecting script loader...');
+      console.log('[PrinChat] 📥 Injecting script loader...');
       await chrome.scripting.executeScript({
         target: { tabId: tabId },
         world: 'MAIN',
         files: ['content/script-loader.js']
       });
 
-      // Mark tab as injected
-      this.injectedTabs.add(tabId);
-      console.log('[PrinChat] ✅ Loader script injected into tab', tabId);
+      console.log('[PrinChat] ✅ Loader script injected successfully into tab', tabId);
     } catch (error: any) {
       const errorMessage = error?.message || String(error);
       console.error('[PrinChat] ❌ Failed to inject loader into tab', tabId, ':', errorMessage, error);
@@ -618,12 +1007,17 @@ class BackgroundService {
   private async setupScheduleChecker() {
     console.log('[PrinChat] Setting up schedule alarms...');
 
-    // Create alarms for all existing pending schedules
+    // Create alarms for all existing pending schedules (skip paused ones)
     const pendingSchedules = await db.getAllPendingSchedules();
     console.log(`[PrinChat] Found ${pendingSchedules.length} pending schedules`);
 
     for (const schedule of pendingSchedules) {
-      await this.createScheduleAlarm(schedule);
+      // Only create alarm if schedule is truly pending (not paused)
+      if (schedule.status === 'pending') {
+        await this.createScheduleAlarm(schedule);
+      } else {
+        console.log(`[PrinChat] Skipping ${schedule.status} schedule:`, schedule.id);
+      }
     }
 
     console.log('[PrinChat] Schedule alarms created');
@@ -656,16 +1050,44 @@ class BackgroundService {
     try {
       console.log('[PrinChat] Executing schedule:', scheduleId);
 
-      // Get the schedule
-      const schedule = await db.getSchedule(scheduleId);
-      if (!schedule || schedule.status !== 'pending') {
-        console.log('[PrinChat] Schedule not found or already processed:', scheduleId);
+      // Check if already executing (prevent race condition)
+      if (this.executingSchedules.has(scheduleId)) {
+        console.log('[PrinChat] ⚠️ Schedule already executing, skipping duplicate:', scheduleId);
         return;
       }
 
-      // DELETE schedule instead of marking completed - triggers storage change event
-      await db.deleteSchedule(scheduleId);
-      console.log('[PrinChat] Schedule deleted (executed):', scheduleId);
+      // Mark as executing
+      this.executingSchedules.add(scheduleId);
+
+      // Get the schedule
+      const schedule = await db.getSchedule(scheduleId);
+      if (!schedule) {
+        console.log('[PrinChat] Schedule not found:', scheduleId);
+        this.executingSchedules.delete(scheduleId);
+        return;
+      }
+
+      // Don't execute if paused or already processed
+      if (schedule.status === 'paused') {
+        console.log('[PrinChat] Schedule is paused, skipping execution:', scheduleId);
+        this.executingSchedules.delete(scheduleId);
+        return;
+      }
+
+      if (schedule.status !== 'pending') {
+        console.log('[PrinChat] Schedule already processed:', scheduleId, 'status:', schedule.status);
+        this.executingSchedules.delete(scheduleId);
+        return;
+      }
+
+      // Mark as completed instead of deleting - so it appears in "Enviados" section
+      await db.updateScheduleStatus(scheduleId, 'completed');
+      console.log('[PrinChat] Schedule marked as completed:', scheduleId);
+
+      // Clear the alarm immediately after deleting schedule
+      const alarmName = `schedule-${scheduleId}`;
+      await chrome.alarms.clear(alarmName);
+      console.log('[PrinChat] Alarm cleared:', alarmName);
 
       // Find the WhatsApp tab
       const tabs = await chrome.tabs.query({ url: 'https://web.whatsapp.com/*' });
@@ -727,6 +1149,10 @@ class BackgroundService {
     } catch (error) {
       console.error('[PrinChat] Error executing schedule:', scheduleId, error);
       await db.updateScheduleStatus(scheduleId, 'failed');
+    } finally {
+      // Always remove from executing set
+      this.executingSchedules.delete(scheduleId);
+      console.log('[PrinChat] Execution lock released for:', scheduleId);
     }
   }
 
@@ -746,6 +1172,46 @@ class BackgroundService {
   //   // 4. User notification system
   //   console.log('[PrinChat] Triggers monitoring setup (feature in development)');
   // }
+  /**
+   * Fetch a URL and convert to Base64 Data URL
+   * Used to bypass CSP in content scripts
+   */
+  private async fetchMediaBlob(url: string): Promise<string> {
+    const WORKER_PROXY_URL = 'https://princhat-api.princhat.workers.dev/fetch-media';
+
+    // Commercial Grade Solution: Use backend proxy to bypass CDN origin restrictions
+    if (url.includes('.b-cdn.net')) {
+      console.log('[PrinChat SW] Using Worker Proxy for:', url);
+      const proxyUrl = `${WORKER_PROXY_URL}?url=${encodeURIComponent(url)}`;
+
+      const response = await fetch(proxyUrl);
+      if (!response.ok) {
+        console.error('[PrinChat SW] Proxy fetch failed:', response.status);
+        throw new Error(`Proxy fetch failed: ${response.status} ${response.statusText}`);
+      }
+
+      const blob = await response.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    // Direct fetch for other URLs (with no-referrer just in case)
+    const response = await fetch(url, { referrerPolicy: 'no-referrer' });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
+    }
+    const blob = await response.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader(); // FileReader works in SW in Chrome
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
 }
 
 // Initialize the background service

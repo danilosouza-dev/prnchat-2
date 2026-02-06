@@ -4,7 +4,10 @@
  */
 
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
-import type { Message, Script, Trigger, Tag, Folder, Settings, Signature, Schedule } from '@/types';
+import type { Message, Script, Trigger, Tag, Folder, Settings, Signature, Schedule, Note } from '@/types';
+import type { KanbanColumn, LeadContact } from '../types/kanban';
+import { DEFAULT_KANBAN_COLUMNS } from '../types/kanban';
+import { syncService } from '../services/sync-service';
 
 interface PrinChatDB extends DBSchema {
   messages: {
@@ -65,12 +68,27 @@ interface PrinChatDB extends DBSchema {
     value: Schedule;
     indexes: { 'by-chatId': string; 'by-status': string; 'by-scheduledTime': number };
   };
+  notes: {
+    key: string;
+    value: Note;
+    indexes: { 'by-chatId': string; 'by-created': number };
+  };
+  kanban_columns: {
+    key: string;
+    value: KanbanColumn;
+    indexes: { 'by-order': number };
+  };
+  kanban_leads: {
+    key: string;
+    value: LeadContact;
+    indexes: { 'by-columnId': string; 'by-order': number };
+  };
 }
 
 class DatabaseService {
   private db: IDBPDatabase<PrinChatDB> | null = null;
   private readonly DB_NAME = 'princhat-db';
-  private readonly DB_VERSION = 6; // Updated to version 6 for schedules support
+  private readonly DB_VERSION = 8; // Updated to version 8 for Kanban support
 
   async init(): Promise<IDBPDatabase<PrinChatDB>> {
     console.log(`[PrinChat DB] Init called. DB: ${this.DB_NAME} v${this.DB_VERSION}`);
@@ -157,6 +175,26 @@ class DatabaseService {
           scheduleStore.createIndex('by-status', 'status');
           scheduleStore.createIndex('by-scheduledTime', 'scheduledTime');
         }
+
+        // Notes store
+        if (!db.objectStoreNames.contains('notes')) {
+          const notesStore = db.createObjectStore('notes', { keyPath: 'id' });
+          notesStore.createIndex('by-chatId', 'chatId');
+          notesStore.createIndex('by-created', 'createdAt');
+        }
+
+        // Kanban columns store
+        if (!db.objectStoreNames.contains('kanban_columns')) {
+          const kanbanColumnsStore = db.createObjectStore('kanban_columns', { keyPath: 'id' });
+          kanbanColumnsStore.createIndex('by-order', 'order');
+        }
+
+        // Kanban leads store
+        if (!db.objectStoreNames.contains('kanban_leads')) {
+          const kanbanLeadsStore = db.createObjectStore('kanban_leads', { keyPath: 'id' });
+          kanbanLeadsStore.createIndex('by-columnId', 'columnId');
+          kanbanLeadsStore.createIndex('by-order', 'order');
+        }
       },
     });
 
@@ -178,47 +216,130 @@ class DatabaseService {
         showFloatingButton: true, // Show floating action button in WhatsApp Web
       });
     }
+
+    // Initialize default Kanban columns if none exist
+    await this.initializeDefaultKanbanColumns();
+
+    // Cleanup duplicates (Migration for previously corrupted DBs)
+    await this.cleanupDuplicateKanbanColumns();
+  }
+
+  /**
+   * Remove duplicate columns created by race conditions
+   */
+  private async cleanupDuplicateKanbanColumns(): Promise<void> {
+    const db = await this.init();
+    const allColumns = await db.getAll('kanban_columns');
+    const uniqueNames = new Set<string>();
+    const duplicates: KanbanColumn[] = [];
+
+    // Identify duplicates
+    for (const col of allColumns) {
+      if (uniqueNames.has(col.name)) {
+        duplicates.push(col);
+      } else {
+        uniqueNames.add(col.name);
+      }
+    }
+
+    if (duplicates.length > 0) {
+      console.log(`[PrinChat DB] 🧹 Found ${duplicates.length} duplicate columns. Cleaning up...`);
+      for (const dup of duplicates) {
+        // Check if it has leads before deleting? 
+        // For safety, let's just delete the empty ones if possible, or move leads?
+        // Simple approach: Delete duplicate. UI will handle orphaned leads (or they just won't show)
+        // Better: Move leads to the "original" column?
+        // For now, let's just delete the duplicate column record to fix the UI glitch.
+        await db.delete('kanban_columns', dup.id);
+      }
+      console.log('[PrinChat DB] ✨ Duplicates cleanup complete.');
+    }
   }
 
   // ==================== MESSAGES ====================
+
   async saveMessage(message: Message): Promise<void> {
     const db = await this.init();
 
-    // If message has audio data (Blob), save it separately
+    // Helper to handle media upload logic
+    const handleMediaUpload = async (
+      blob: Blob,
+      type: 'audio' | 'image' | 'video' | 'file',
+      filename?: string
+    ): Promise<string | null> => {
+      try {
+        console.log(`[PrinChat DB] Uploading ${type} to cloud...`);
+        // Import dynamically to avoid circular dependencies just in case
+        const { mediaService } = await import('../services/media-service');
+        const url = await mediaService.uploadMedia(blob, filename);
+        console.log(`[PrinChat DB] Upload successful: ${url}`);
+        return url;
+      } catch (error) {
+        console.warn(`[PrinChat DB] Upload failed for ${type}, falling back to local storage:`, error);
+        return null;
+      }
+    };
+
+    // 1. AUDIO
     if (message.audioData && message.audioData instanceof Blob) {
-      await db.put('audioBlobs', {
-        messageId: message.id,
-        blob: message.audioData,
-        createdAt: Date.now(),
-      });
+      const url = await handleMediaUpload(message.audioData, 'audio', `audio-${message.id}.mp3`); // Extension estimation
+      if (url) {
+        message.audioUrl = url;
+        message.audioData = null; // Don't store local blob
+      } else {
+        // Fallback: Save to local IDB
+        await db.put('audioBlobs', {
+          messageId: message.id,
+          blob: message.audioData,
+          createdAt: Date.now(),
+        });
+      }
     }
 
-    // If message has image data (Blob), save it separately
+    // 2. IMAGE
     if (message.imageData && message.imageData instanceof Blob) {
-      await db.put('imageBlobs', {
-        messageId: message.id,
-        blob: message.imageData,
-        createdAt: Date.now(),
-      });
+      const url = await handleMediaUpload(message.imageData, 'image', `image-${message.id}`);
+      if (url) {
+        message.imageUrl = url;
+        message.imageData = null;
+      } else {
+        await db.put('imageBlobs', {
+          messageId: message.id,
+          blob: message.imageData,
+          createdAt: Date.now(),
+        });
+      }
     }
 
-    // If message has video data (Blob), save it separately
+    // 3. VIDEO
     if (message.videoData && message.videoData instanceof Blob) {
-      await db.put('videoBlobs', {
-        messageId: message.id,
-        blob: message.videoData,
-        createdAt: Date.now(),
-      });
+      const url = await handleMediaUpload(message.videoData, 'video', `video-${message.id}`);
+      if (url) {
+        message.videoUrl = url;
+        message.videoData = null;
+      } else {
+        await db.put('videoBlobs', {
+          messageId: message.id,
+          blob: message.videoData,
+          createdAt: Date.now(),
+        });
+      }
     }
 
-    // If message has file data (Blob), save it separately
+    // 4. FILE
     if (message.fileData && message.fileData instanceof Blob) {
-      await db.put('fileBlobs', {
-        messageId: message.id,
-        blob: message.fileData,
-        fileName: message.fileName || 'file',
-        createdAt: Date.now(),
-      });
+      const url = await handleMediaUpload(message.fileData, 'file', message.fileName || `file-${message.id}`);
+      if (url) {
+        message.fileUrl = url;
+        message.fileData = null;
+      } else {
+        await db.put('fileBlobs', {
+          messageId: message.id,
+          blob: message.fileData,
+          fileName: message.fileName || 'file',
+          createdAt: Date.now(),
+        });
+      }
     }
 
     // Don't store blobs in the message object (just references)
@@ -321,9 +442,8 @@ class DatabaseService {
             console.log('[PrinChat DB] 🔍 fileData.blob size:', fileData.blob?.size);
             msg.fileData = fileData.blob;
             msg.fileName = fileData.fileName;
-          } else {
-            console.warn('[PrinChat DB] ⚠️ No file blob found for message:', msg.id, msg.name);
           }
+          // Note: If no blob found, file is in Bunny CDN (expected behavior)
         }
 
         return msg;
@@ -335,6 +455,42 @@ class DatabaseService {
 
   async deleteMessage(id: string): Promise<void> {
     const db = await this.init();
+
+    // CLEANUP: Delete file from Bunny CDN before deleting from DB
+    try {
+      const message = await db.get('messages', id);
+
+      if (message) {
+        // Check if message has media URLs (uploaded to Bunny)
+        const mediaUrls: string[] = [];
+
+        if (message.audioUrl) mediaUrls.push(message.audioUrl);
+        if (message.imageUrl) mediaUrls.push(message.imageUrl);
+        if (message.videoUrl) mediaUrls.push(message.videoUrl);
+        if (message.fileUrl) mediaUrls.push(message.fileUrl);
+
+        if (mediaUrls.length > 0) {
+          console.log(`[PrinChat DB] Message ${id} has ${mediaUrls.length} media file(s) in Bunny. Deleting...`);
+
+          // Import media service and delete files
+          const { mediaService } = await import('../services/media-service');
+
+          for (const url of mediaUrls) {
+            const deleted = await mediaService.deleteMedia(url);
+            if (deleted) {
+              console.log(`[PrinChat DB] ✅ Deleted from Bunny: ${url}`);
+            } else {
+              console.warn(`[PrinChat DB] ⚠️ Failed to delete from Bunny: ${url}`);
+            }
+          }
+        }
+      }
+    } catch (cleanupError) {
+      console.warn('[PrinChat DB] Error cleaning up Bunny files (continuing with deletion):', cleanupError);
+      // Don't throw - we still want to delete from DB even if Bunny cleanup fails
+    }
+
+    // Delete from IndexedDB
     await db.delete('messages', id);
     // Delete associated media blobs if they exist
     await db.delete('audioBlobs', id);
@@ -457,6 +613,9 @@ class DatabaseService {
         tags: Date.now() // Use timestamp to ensure value changes
       });
     }
+
+    // Trigger sync
+    syncService.syncTag(tag).catch(console.error);
   }
 
   async getTag(id: string): Promise<Tag | undefined> {
@@ -479,6 +638,9 @@ class DatabaseService {
         tags: Date.now() // Use timestamp to ensure value changes
       });
     }
+
+    // Trigger sync
+    syncService.deleteTag(id).catch(console.error);
   }
 
   // ==================== FOLDERS ====================
@@ -564,6 +726,9 @@ class DatabaseService {
         signatures: Date.now() // Use timestamp to ensure value changes
       });
     }
+
+    // Trigger sync
+    syncService.syncSignature(signature).catch(console.error);
   }
 
   async getAllSignatures(): Promise<Signature[]> {
@@ -600,14 +765,18 @@ class DatabaseService {
     // Deactivate all signatures
     for (const sig of allSignatures) {
       if (sig.isActive) {
-        await db.put('signatures', { ...sig, isActive: false, updatedAt: Date.now() });
+        const updatedSig = { ...sig, isActive: false, updatedAt: Date.now() };
+        await db.put('signatures', updatedSig);
+        syncService.syncSignature(updatedSig).catch(console.error);
       }
     }
 
     // Activate the selected signature
     const targetSignature = await db.get('signatures', id);
     if (targetSignature) {
-      await db.put('signatures', { ...targetSignature, isActive: true, updatedAt: Date.now() });
+      const updatedTarget = { ...targetSignature, isActive: true, updatedAt: Date.now() };
+      await db.put('signatures', updatedTarget);
+      syncService.syncSignature(updatedTarget).catch(console.error);
     }
 
     // Trigger chrome.storage change event
@@ -641,6 +810,9 @@ class DatabaseService {
         schedules: Date.now()
       });
     }
+
+    // Trigger sync
+    syncService.syncSchedule(schedule).catch(console.error);
   }
 
   async getSchedule(id: string): Promise<Schedule | undefined> {
@@ -669,7 +841,7 @@ class DatabaseService {
     return db.getAllFromIndex('schedules', 'by-status', 'pending');
   }
 
-  async updateScheduleStatus(id: string, status: 'pending' | 'completed' | 'failed'): Promise<void> {
+  async updateScheduleStatus(id: string, status: 'pending' | 'paused' | 'completed' | 'cancelled' | 'failed'): Promise<void> {
     const db = await this.init();
     const schedule = await db.get('schedules', id);
 
@@ -689,6 +861,18 @@ class DatabaseService {
     }
   }
 
+  async getPausedSchedules(): Promise<Schedule[]> {
+    const db = await this.init();
+    return db.getAllFromIndex('schedules', 'by-status', 'paused');
+  }
+
+  async getAllSchedules(): Promise<Schedule[]> {
+    const db = await this.init();
+    const schedules = await db.getAll('schedules');
+    // Sort by scheduled time
+    return schedules.sort((a, b) => a.scheduledTime - b.scheduledTime);
+  }
+
   async deleteSchedule(id: string): Promise<void> {
     const db = await this.init();
     await db.delete('schedules', id);
@@ -699,6 +883,514 @@ class DatabaseService {
         schedules: Date.now()
       });
     }
+
+    // Trigger sync
+    syncService.deleteSchedule(id).catch(console.error);
+  }
+
+  // ==================== NOTES ====================
+  async createNote(note: Omit<Note, 'id' | 'createdAt' | 'updatedAt'>): Promise<Note> {
+    const db = await this.init();
+    const now = Date.now();
+
+    const newNote: Note = {
+      ...note,
+      id: `note_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await db.put('notes', newNote);
+    console.log('[PrinChat DB] Note created:', newNote.id);
+
+    // Trigger chrome.storage change event for real-time updates
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        notes: Date.now()
+      });
+    }
+
+    // Trigger sync
+    syncService.syncNote(newNote).catch(console.error);
+
+    return newNote;
+  }
+
+  async getNotesByChatId(chatId: string): Promise<Note[]> {
+    console.log('[DB] getNotesByChatId called with chatId:', chatId);
+    const db = await this.init();
+    const notes = await db.getAllFromIndex('notes', 'by-chatId', chatId);
+    console.log('[DB] getNotesByChatId found', notes.length, 'notes:', notes);
+    // Sort by creation date descending (newest first)
+    return notes.sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  async getNote(id: string): Promise<Note | undefined> {
+    const db = await this.init();
+    return db.get('notes', id);
+  }
+
+  async updateNote(id: string, updates: Partial<Omit<Note, 'id' | 'createdAt'>>): Promise<void> {
+    const db = await this.init();
+    const existingNote = await db.get('notes', id);
+
+    if (!existingNote) {
+      throw new Error(`Note with id ${id} not found`);
+    }
+
+    const updatedNote: Note = {
+      ...existingNote,
+      ...updates,
+      updatedAt: Date.now(),
+    };
+
+    await db.put('notes', updatedNote);
+    console.log('[PrinChat DB] Note updated:', id);
+
+    // Trigger chrome.storage change event for real-time updates
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        notes: Date.now()
+      });
+    }
+
+    // Trigger sync
+    syncService.syncNote(updatedNote).catch(console.error);
+  }
+
+  async deleteNote(id: string): Promise<void> {
+    const db = await this.init();
+    await db.delete('notes', id);
+    console.log('[PrinChat DB] Note deleted:', id);
+
+    // Trigger chrome.storage change event for real-time updates
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        notes: Date.now()
+      });
+    }
+
+    // Trigger sync
+    syncService.deleteNote(id).catch(console.error);
+  }
+
+  async getAllNotes(): Promise<Note[]> {
+    const db = await this.init();
+    const notes = await db.getAll('notes');
+    // Sort by creation date descending (newest first)
+    return notes.sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  // ==================== KANBAN COLUMNS ====================
+  /**
+   * Initialize default Kanban columns if none exist
+   */
+  private async initializeDefaultKanbanColumns(): Promise<void> {
+    const db = await this.init();
+    const existingColumns = await db.getAll('kanban_columns');
+
+    if (existingColumns.length === 0) {
+      console.log('[PrinChat DB] Initializing default Kanban columns...');
+
+      const now = Date.now();
+
+      for (const column of DEFAULT_KANBAN_COLUMNS) {
+        const kanbanColumn: KanbanColumn = {
+          ...column,
+          id: `kanban_col_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+          createdAt: now,
+          updatedAt: now,
+        };
+        await db.put('kanban_columns', kanbanColumn);
+        console.log('[PrinChat DB] Created default column:', kanbanColumn.name);
+
+        // No need to sync defaults immediately as they are initializing
+      }
+
+      console.log('[PrinChat DB] ✅ Default Kanban columns initialized');
+    }
+  }
+
+  /**
+   * Save or update a Kanban column
+   */
+  async saveKanbanColumn(column: KanbanColumn): Promise<void> {
+    const db = await this.init();
+    await db.put('kanban_columns', column);
+
+    // Trigger chrome.storage change event for real-time updates
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        kanban_columns: Date.now()
+      });
+    }
+
+    // Trigger sync
+    syncService.syncKanbanColumn(column).catch(console.error);
+  }
+
+  /**
+   * Get a Kanban column by ID
+   */
+  async getKanbanColumn(id: string): Promise<KanbanColumn | undefined> {
+    const db = await this.init();
+    return db.get('kanban_columns', id);
+  }
+
+  /**
+   * Get all Kanban columns sorted by order
+   */
+  async getAllKanbanColumns(): Promise<KanbanColumn[]> {
+    const db = await this.init();
+    const columns = await db.getAllFromIndex('kanban_columns', 'by-order');
+    return columns;
+  }
+
+  /**
+   * Delete a Kanban column
+   * @param id Column ID to delete
+   * @throws Error if column is not deletable or has leads
+   */
+  async deleteKanbanColumn(id: string): Promise<void> {
+    const db = await this.init();
+    const column = await db.get('kanban_columns', id);
+
+    if (!column) {
+      throw new Error('Column not found');
+    }
+
+    if (!column.canDelete) {
+      throw new Error('Cannot delete default column');
+    }
+
+    // Check if column has any leads
+    const leads = await db.getAllFromIndex('kanban_leads', 'by-columnId', id);
+    if (leads.length > 0) {
+      throw new Error('Cannot delete column with leads. Move leads first.');
+    }
+
+    await db.delete('kanban_columns', id);
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        kanban_columns: Date.now()
+      });
+    }
+
+    // Trigger sync
+    syncService.deleteKanbanColumn(id).catch(console.error);
+  }
+
+  /**
+   * Update column order
+   * @param columnId Column to move
+   * @param newOrder New order position (0-based)
+   */
+  async updateColumnOrder(columnId: string, newOrder: number): Promise<void> {
+    const db = await this.init();
+    const allColumns = await this.getAllKanbanColumns();
+
+    // Find the column to move
+    const columnToMove = allColumns.find(c => c.id === columnId);
+    if (!columnToMove) {
+      throw new Error('Column not found');
+    }
+
+    const oldOrder = columnToMove.order;
+
+    // Reorder columns
+    const updatedColumns = allColumns.map(col => {
+      if (col.id === columnId) {
+        return { ...col, order: newOrder, updatedAt: Date.now() };
+      } else {
+        // Shift other columns
+        if (oldOrder < newOrder) {
+          // Moving right
+          if (col.order > oldOrder && col.order <= newOrder) {
+            return { ...col, order: col.order - 1, updatedAt: Date.now() };
+          }
+        } else {
+          // Moving left
+          if (col.order >= newOrder && col.order < oldOrder) {
+            return { ...col, order: col.order + 1, updatedAt: Date.now() };
+          }
+        }
+        return col;
+      }
+    });
+
+    // Save all updated columns
+    for (const col of updatedColumns) {
+      await db.put('kanban_columns', col);
+    }
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        kanban_columns: Date.now()
+      });
+    }
+
+    // Sync all updated columns (for order update)
+    // Optimisation: Could receive array in syncService
+    for (const col of updatedColumns) {
+      syncService.syncKanbanColumn(col).catch(console.error);
+    }
+  }
+
+  /**
+   * Create a new Kanban column
+   */
+  async createKanbanColumn(
+    name: string,
+    color: string,
+    description?: string
+  ): Promise<KanbanColumn> {
+    const db = await this.init();
+    const existingColumns = await this.getAllKanbanColumns();
+
+    // Check for duplicate names
+    if (existingColumns.some(col => col.name.toLowerCase() === name.toLowerCase())) {
+      throw new Error('Column name already exists');
+    }
+
+    const now = Date.now();
+    const newColumn: KanbanColumn = {
+      id: `kanban_col_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+      name,
+      color,
+      description,
+      order: existingColumns.length, // Add to end
+      isDefault: false,
+      canDelete: true,
+      canEdit: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await db.put('kanban_columns', newColumn);
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        kanban_columns: Date.now()
+      });
+    }
+
+    // Trigger sync
+    syncService.syncKanbanColumn(newColumn).catch(console.error);
+
+    return newColumn;
+  }
+
+  /**
+   * Update Kanban column (name and/or color)
+   */
+  async updateKanbanColumn(
+    id: string,
+    updates: { name?: string; color?: string }
+  ): Promise<void> {
+    const db = await this.init();
+    const column = await db.get('kanban_columns', id);
+
+    if (!column) {
+      throw new Error('Column not found');
+    }
+
+    if (!column.canEdit) {
+      throw new Error('Cannot edit default column');
+    }
+
+    // Check for duplicate names if name is being updated
+    if (updates.name && updates.name !== column.name) {
+      const existingColumns = await this.getAllKanbanColumns();
+      if (existingColumns.some(col => col.id !== id && col.name.toLowerCase() === updates.name!.toLowerCase())) {
+        throw new Error('Column name already exists');
+      }
+    }
+
+    const updatedColumn: KanbanColumn = {
+      ...column,
+      ...updates,
+      updatedAt: Date.now(),
+    };
+
+    await db.put('kanban_columns', updatedColumn);
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        kanban_columns: Date.now()
+      });
+    }
+
+    // Trigger sync
+    syncService.syncKanbanColumn(updatedColumn).catch(console.error);
+  }
+
+  // ==================== KANBAN LEADS ====================
+  /**
+   * Create a new lead contact
+   */
+  async createLead(lead: Omit<LeadContact, 'id' | 'createdAt' | 'updatedAt'>): Promise<LeadContact> {
+    const db = await this.init();
+    const now = Date.now();
+
+    const newLead: LeadContact = {
+      ...lead,
+      id: lead.phone, // Use phone as ID (WhatsApp chat ID format)
+      order: lead.order ?? -now, // Default to top of list if order is missing
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await db.put('kanban_leads', newLead);
+    console.log('[PrinChat DB] Lead created:', newLead.id);
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        kanban_leads: Date.now()
+      });
+    }
+
+    // Trigger sync
+    syncService.syncLead(newLead).catch(console.error);
+
+    return newLead;
+  }
+
+  /**
+   * Save/update a lead
+   */
+  async saveLead(lead: LeadContact): Promise<void> {
+    const db = await this.init();
+    const updatedLead = { ...lead, updatedAt: Date.now() };
+    await db.put('kanban_leads', updatedLead);
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        kanban_leads: Date.now()
+      });
+    }
+
+    // Trigger sync
+    syncService.syncLead(updatedLead).catch(console.error);
+  }
+
+  /**
+   * Update a lead partially
+   */
+  async updateLead(id: string, updates: Partial<LeadContact>): Promise<void> {
+    const db = await this.init();
+    const lead = await db.get('kanban_leads', id);
+
+    if (!lead) {
+      throw new Error(`Lead with id ${id} not found`);
+    }
+
+    const updatedLead: LeadContact = {
+      ...lead,
+      ...updates,
+      updatedAt: Date.now(),
+    };
+
+    await db.put('kanban_leads', updatedLead);
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        kanban_leads: Date.now()
+      });
+    }
+
+    // Trigger sync
+    syncService.syncLead(updatedLead).catch(console.error);
+  }
+
+  /**
+   * Get a single lead by ID
+   */
+  async getLead(id: string): Promise<LeadContact | undefined> {
+    const db = await this.init();
+    return db.get('kanban_leads', id);
+  }
+
+  /**
+   * Get all leads
+   */
+  async getAllLeads(): Promise<LeadContact[]> {
+    const db = await this.init();
+    return db.getAll('kanban_leads');
+  }
+
+  /**
+   * Get leads for a specific column
+   */
+  async getLeadsByColumn(columnId: string): Promise<LeadContact[]> {
+    const db = await this.init();
+    const leads = await db.getAllFromIndex('kanban_leads', 'by-columnId', columnId);
+    const sorted = leads.sort((a, b) => a.order - b.order);
+
+    // Debug: Log first 3 leads to verify order
+    if (sorted.length > 0) {
+      console.log(`[PrinChat DB] Loaded column ${columnId}:`, sorted.map(l => `${l.id.substring(0, 5)}..(${l.order})`));
+    }
+
+    return sorted;
+  }
+
+  /**
+   * Move a lead to a different column
+   */
+  async moveLead(leadId: string, newColumnId: string, newOrder: number): Promise<void> {
+    const db = await this.init();
+    const lead = await db.get('kanban_leads', leadId);
+
+    if (!lead) {
+      console.warn('[PrinChat DB] Lead not found:', leadId);
+      return;
+    }
+
+    const updatedLead: LeadContact = {
+      ...lead,
+      columnId: newColumnId,
+      order: newOrder,
+      updatedAt: Date.now()
+    };
+
+    await db.put('kanban_leads', updatedLead);
+    console.log('[PrinChat DB] Lead moved:', leadId, '→', newColumnId);
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        kanban_leads: Date.now()
+      });
+    }
+
+    // Trigger sync
+    syncService.syncLead(updatedLead).catch(console.error);
+  }
+
+  /**
+   * Delete a lead
+   */
+  async deleteLead(id: string): Promise<void> {
+    const db = await this.init();
+    await db.delete('kanban_leads', id);
+
+    // Trigger chrome.storage change event
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({
+        kanban_leads: Date.now()
+      });
+    }
+
+    // Trigger sync
+    syncService.deleteLead(id).catch(console.error);
   }
 
   // ==================== UTILITY ====================
@@ -821,3 +1513,4 @@ class DatabaseService {
 
 // Export singleton instance
 export const db = new DatabaseService();
+

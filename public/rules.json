@@ -1,0 +1,50 @@
+[
+    {
+        "id": 1,
+        "priority": 1,
+        "action": {
+            "type": "modifyHeaders",
+            "requestHeaders": [
+                {
+                    "header": "Origin",
+                    "operation": "remove"
+                },
+                {
+                    "header": "Referer",
+                    "operation": "remove"
+                }
+            ]
+        },
+        "condition": {
+            "urlFilter": "||princhat-files.b-cdn.net",
+            "resourceTypes": [
+                "xmlhttprequest",
+                "other"
+            ]
+        }
+    },
+    {
+        "id": 2,
+        "priority": 1,
+        "action": {
+            "type": "modifyHeaders",
+            "requestHeaders": [
+                {
+                    "header": "Origin",
+                    "operation": "remove"
+                },
+                {
+                    "header": "Referer",
+                    "operation": "remove"
+                }
+            ]
+        },
+        "condition": {
+            "urlFilter": "||b-cdn.net",
+            "resourceTypes": [
+                "xmlhttprequest",
+                "other"
+            ]
+        }
+    }
+]

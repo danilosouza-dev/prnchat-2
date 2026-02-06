@@ -42,7 +42,7 @@ export default defineConfig({
       input: {
         popup: resolve(__dirname, 'src/popup/index.html'),
         'fab-popup': resolve(__dirname, 'src/fab-popup/index.html'),
-        options: resolve(__dirname, 'src/options/index.html'),
+        options: resolve(__dirname, 'options.html'),
         background: resolve(__dirname, 'src/background/service-worker.ts'),
         content: resolve(__dirname, 'src/content/whatsapp-injector.ts'),
         'content-page': resolve(__dirname, 'src/content/whatsapp-page-script.ts'),
@@ -85,6 +85,7 @@ export default defineConfig({
           }
           return '[name].js';
         },
+        // chunkFileNames removed because IIFE doesn't support code splitting (usually)
         chunkFileNames: 'chunks/[name]-[hash].js',
         assetFileNames: 'assets/[name]-[hash].[ext]'
       }

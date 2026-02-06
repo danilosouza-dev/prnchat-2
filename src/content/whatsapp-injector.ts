@@ -33,7 +33,8 @@
 
   // Selectors for WhatsApp Web
   const SELECTORS = {
-    chatContainer: '#main'
+    chatContainer: '#main',
+    side: '#side'
   };
 
   // Script Executor class
@@ -510,12 +511,17 @@
       // Inject UI overlay
       await this.injectUIOverlay();
 
+      // CRITICAL: Add navigation listener to reinject scripts after SPA navigation
+      // WhatsApp is a SPA, so F5/reload doesn't trigger content script again
+      console.log('[PrinChat] Setting up navigation observer...');
+      this.setupNavigationObserver();
+
       // Listen for responses from page script
-      document.addEventListener('PrinChatMessageSent', (event: any) => {
+      document.addEventListener('PrinChatMessageSent', async (event: any) => {
         console.log('[PrinChat] 📨 PrinChatMessageSent event received!', event.detail);
 
-        const { success, error, requestId } = event.detail;
-        console.log('[PrinChat] Event details:', { success, error, requestId });
+        const { success, error, requestId, chatId, text } = event.detail;
+        console.log('[PrinChat] Event details:', { success, error, requestId, chatId, text });
         console.log('[PrinChat] Pending requests:', Array.from(this.pendingRequests.keys()));
 
         const pending = this.pendingRequests.get(requestId);
@@ -532,6 +538,71 @@
           this.pendingRequests.delete(requestId);
         } else {
           console.warn('[PrinChat] ⚠️ No pending request found for requestId:', requestId);
+        }
+
+        // If message was sent successfully, update lead (reset unread count and update last message)
+        if (success && chatId) {
+          try {
+            console.log('[PrinChat Kanban] Message sent, updating lead for:', chatId);
+            const leadsResponse = await chrome.runtime.sendMessage({ type: 'GET_ALL_KANBAN_LEADS' });
+            const allLeads = leadsResponse?.data || [];
+
+            // Normalize chatId for comparison (remove @c.us, @lid, etc.)
+            const normalizeId = (id: string) => {
+              if (!id) return '';
+              return id.replace(/@c\.us|@lid|@g\.us|@s\.whatsapp\.net/g, '');
+            };
+            const normalizedChatId = normalizeId(chatId);
+
+            // Find lead with flexible matching
+            const existingLead = allLeads.find((l: any) => {
+              const leadId = l.id || '';
+              const leadChatId = l.chatId || '';
+              return normalizeId(leadId) === normalizedChatId ||
+                normalizeId(leadChatId) === normalizedChatId ||
+                leadId === chatId ||
+                leadChatId === chatId;
+            });
+
+            console.log('[PrinChat Kanban] Looking for lead with chatId:', chatId, 'normalized:', normalizedChatId, 'found:', !!existingLead);
+
+            if (existingLead) {
+              const updates: any = {};
+
+              // Reset unread count if > 0
+              if (existingLead.unreadCount > 0) {
+                updates.unreadCount = 0;
+              }
+
+              // Update last message preview with my message (if text available)
+              if (text) {
+                updates.lastMessage = text;
+                updates.lastMessageTime = Date.now();
+              }
+
+              // Only update if there are changes
+              if (Object.keys(updates).length > 0) {
+                await chrome.runtime.sendMessage({
+                  type: 'UPDATE_KANBAN_LEAD',
+                  payload: {
+                    leadId: existingLead.id,
+                    updates
+                  }
+                });
+                console.log('[PrinChat Kanban] ✅ Lead updated:', chatId, updates);
+
+                // Dispatch event for real-time UI update
+                document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
+                  detail: {
+                    leadId: existingLead.id,
+                    updates
+                  }
+                }));
+              }
+            }
+          } catch (e) {
+            console.error('[PrinChat Kanban] Error updating lead after message sent:', e);
+          }
         }
       });
 
@@ -576,39 +647,293 @@
         }
       });
 
+      // Listen for bulk chat info results
+      document.addEventListener('PrinChatBulkInfoResult', (event: any) => {
+        const { success, data, error, requestId } = event.detail;
+
+        const request = this.pendingRequests.get(requestId);
+        if (request) {
+          const { resolve, reject } = request;
+          this.pendingRequests.delete(requestId);
+          if (success) resolve({ success: true, data });
+          else reject(new Error(error || 'Bulk fetch failed'));
+        }
+      });
+
       // Listen for incoming messages from page script (for triggers)
       document.addEventListener('PrinChatIncomingMessage', async (event: any) => {
-        const { messageText, chatId, timestamp } = event.detail;
-        console.log('[PrinChat] Incoming message detected:', messageText);
+        const { messageText, chatId, timestamp, fromMe } = event.detail;
+        console.log('[PrinChat] Message detected:', messageText, 'from:', chatId, 'fromMe:', fromMe);
 
-        // Send to service worker to check triggers
+        // Send to service worker to check triggers (ONLY for incoming messages)
+        if (!fromMe) {
+          try {
+            // Check if extension context is still valid
+            if (!chrome.runtime?.id) {
+              console.warn('[PrinChat] Extension context invalidated, skipping trigger check');
+              return;
+            }
+
+            await chrome.runtime.sendMessage({
+              type: 'CHECK_TRIGGERS',
+              payload: {
+                messageText,
+                chatId,
+                timestamp
+              }
+            });
+          } catch (e) {
+            console.error('[PrinChat] Error checking triggers:', e);
+          }
+        }
+
+        // AUTO-ADD TO KANBAN / UPDATE KANBAN LEADS
+        // Check if this contact should be added to Kanban or updated
         try {
-          // Check if extension context is still valid
-          if (!chrome.runtime?.id) {
-            console.warn('[PrinChat] Extension context invalidated, skipping trigger check');
+          // Skip group chats
+          if (chatId.includes('@g.us')) {
+            console.log('[PrinChat Kanban] Skipping group chat');
             return;
           }
 
+          // Get all leads to check if contact already exists
+          const leadsResponse = await chrome.runtime.sendMessage({ type: 'GET_ALL_KANBAN_LEADS' });
+          const allLeads = leadsResponse?.data || [];
+
+          // Normalize ID helper for consistent matching
+          const normalizeId = (id: string) => {
+            if (!id) return '';
+            return id.replace(/@c\.us|@lid|@g\.us|@s\.whatsapp\.net/g, '');
+          };
+          const normalizedChatId = normalizeId(chatId);
+
+          // Check if contact already in Kanban (check both id and chatId)
+          const existingLead = allLeads.find((l: any) => {
+            const leadId = l.id || '';
+            const leadChatId = l.chatId || '';
+            return normalizeId(leadId) === normalizedChatId ||
+              normalizeId(leadChatId) === normalizedChatId ||
+              leadId === chatId ||
+              leadChatId === chatId;
+          });
+
+          if (existingLead) {
+            console.log('[PrinChat Kanban] Contact already in Kanban, updating:', chatId);
+
+            // Update existing lead
+            const updates: any = {
+              // TRICK: Use negative timestamp to always force to top (smallest number)
+              order: -Date.now()
+            };
+
+            // Only update lastMessage if this message is newer than what we have
+            // This prevents old messages (ghosts) from overwriting newer ones
+            const newMessageTime = timestamp || Date.now();
+            if (!existingLead.lastMessageTime || newMessageTime >= existingLead.lastMessageTime) {
+              updates.lastMessage = messageText;
+              updates.lastMessageTime = newMessageTime;
+            } else {
+              console.log('[PrinChat Kanban] Skipping lastMessage update (older message):', {
+                current: existingLead.lastMessageTime,
+                new: newMessageTime,
+                text: messageText
+              });
+            }
+
+            // Logic for unread count based on who sent the message
+            if (fromMe) {
+              // I sent a message -> Reset unread count to 0
+              updates.unreadCount = 0;
+              console.log('[PrinChat Kanban] Outgoing message -> Resetting unread count');
+            } else {
+              // Incoming message -> Increment unread count
+              updates.unreadCount = (existingLead.unreadCount || 0) + 1;
+              console.log('[PrinChat Kanban] Incoming message -> Incrementing unread count to:', updates.unreadCount);
+            }
+
+            // Sync latest contact info to keep it fresh
+            const chatInfo = await this.getChatInfo(chatId);
+            if (chatInfo.success && chatInfo.data) {
+              if (chatInfo.data.chatName) updates.name = chatInfo.data.chatName;
+              if (chatInfo.data.chatPhoto) updates.photo = chatInfo.data.chatPhoto;
+              if (chatInfo.data.tags) updates.tags = chatInfo.data.tags;
+            }
+
+            await chrome.runtime.sendMessage({
+              type: 'UPDATE_KANBAN_LEAD',
+              payload: {
+                leadId: existingLead.id,
+                updates: updates
+              }
+            });
+
+            // Dispatch event for real-time UI update
+            document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
+              detail: {
+                leadId: existingLead.id,
+                updates: updates
+              }
+            }));
+
+            return;
+          }
+
+          // IF outgoing message and contact NOT in Kanban -> Do nothing (don't auto-add on send)
+          if (fromMe) {
+            return;
+          }
+
+          // IF incoming message and contact NOT in Kanban -> Auto-add to Recentes
+
+          // Get contact info using getChatInfo (works for LIDs too)
+          console.log('[PrinChat Kanban] Fetching contact info for new lead:', chatId);
+          const chatInfoResponse = await this.getChatInfo(chatId);
+
+          let chatName = '';
+          let chatPhoto = '';
+          let phoneNumber = chatId.split('@')[0]; // Default to chatId
+
+          if (chatInfoResponse.success && chatInfoResponse.data) {
+            chatName = chatInfoResponse.data.chatName || '';
+            chatPhoto = chatInfoResponse.data.chatPhoto || '';
+            // Use the real phone number from API (not Instagram/Facebook ID)
+            if (chatInfoResponse.data.phoneNumber) {
+              phoneNumber = chatInfoResponse.data.phoneNumber;
+            }
+          } else {
+            console.warn('[PrinChat Kanban] Could not get chat info, using chatId as name');
+          }
+
+          // Get Recentes column ID
+          const columnsResponse = await chrome.runtime.sendMessage({ type: 'GET_KANBAN_COLUMNS' });
+          const columns = columnsResponse?.data || [];
+          const recentesColumn = columns.find((c: any) => c.isDefault === true);
+
+          if (!recentesColumn) {
+            console.warn('[PrinChat Kanban] Recentes column not found');
+            return;
+          }
+
+          // Format phone number for display if no name
+          const formattedName = chatName || this.formatPhoneNumber(phoneNumber);
+
+          // Create new lead with unread count
+          const newLead = {
+            phone: phoneNumber,
+            chatId: chatId,
+            name: formattedName,
+            photo: chatPhoto || '',
+            columnId: recentesColumn.id,
+            // TRICK: Use negative timestamp to always force to top (smallest number)
+            order: -Date.now(),
+            lastMessage: messageText,
+            lastMessageTime: timestamp || Date.now(),
+            unreadCount: 1,  // New message just arrived
+            tags: chatInfoResponse.data?.tags || [] // Add tags from WA Business
+          };
+
+          console.log('[PrinChat Kanban] Auto-adding contact to Recentes:', newLead.name);
+
+          // Save to database
           await chrome.runtime.sendMessage({
-            type: 'CHECK_TRIGGERS',
+            type: 'CREATE_KANBAN_LEAD',
+            payload: newLead
+          });
+
+          // Notify UI to re-render
+          document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadCreated', {
+            detail: { lead: newLead }
+          }));
+
+        } catch (kanbanError: any) {
+          console.error('[PrinChat Kanban] Error auto-adding to Kanban:', kanbanError);
+        }
+
+      });
+
+      // Listen for label/tag changes (from page script)
+      document.addEventListener('PrinChatLabelsChanged', async (event: any) => {
+        const { chatId, tags, name, photo, isGroup } = event.detail;
+        console.log('[PrinChat DEBUG] 4. Injector received PrinChatLabelsChanged!', chatId, tags);
+
+        if (!chatId || !tags) {
+          console.warn('[PrinChat DEBUG] ⚠️ Missing chatId or tags in event');
+          return;
+        }
+
+        try {
+          // CRITICAL: Normalize chatId to match database format (without @lid, @c.us, etc.)
+          const normalizedChatId = chatId.replace(/@lid$|@c\.us$|@s\.whatsapp\.net$|@g\.us$/g, '');
+          console.log(`[PrinChat DEBUG] 5. Normalized chatId: "${chatId}" → "${normalizedChatId}"`);
+
+          console.log('[PrinChat DEBUG] 5. Sending UPDATE_KANBAN_LEAD to Background...');
+          // Update database directly
+          const updateResult = await chrome.runtime.sendMessage({
+            type: 'UPDATE_KANBAN_LEAD',
             payload: {
-              messageText,
-              chatId,
-              timestamp
+              leadId: normalizedChatId, // Use normalized ID
+              updates: { tags: tags }
             }
           });
-        } catch (error: any) {
-          // Ignore "Extension context invalidated" errors and message channel errors
-          if (error.message?.includes('Extension context invalidated')) {
-            console.warn('[PrinChat] Extension context invalidated, trigger check skipped');
-          } else if (error.message?.includes('message channel closed') ||
-            error.message?.includes('The message port closed')) {
-            // This can happen if the service worker is restarting or the script execution takes too long
-            // It's not a critical error - the trigger check was received, just the response was lost
-            console.warn('[PrinChat] Message channel closed during trigger check (non-critical)');
+
+          console.log('[PrinChat DEBUG] 6. Background Response:', updateResult);
+
+          if (updateResult.success) {
+            console.log('[PrinChat DEBUG] 7. Lead updated in DB. Dispatching PrinChatKanbanLeadUpdated...');
+
+            // Notify UI to re-render immediately with fresh data
+            // We use LEAD_UPDATED event which UI Overlay listens to
+            document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
+              detail: {
+                leadId: updateResult.data?.id, // This might be undefined if background doesn't return data object
+                changes: { tags: tags }
+              }
+            }));
+            console.log('[PrinChat DEBUG] 8. Dispatched PrinChatKanbanLeadUpdated');
           } else {
-            console.error('[PrinChat] Error checking triggers:', error);
+            // Handle "Lead Not Found" by Creating it
+            console.log('[PrinChat DEBUG] 🛑 Update failed. Attempting to CREATE lead...', updateResult.error);
+
+            if (isGroup) {
+              console.log('[PrinChat DEBUG] 🛑 Skipping creation because it is a group.');
+              return;
+            }
+
+            const newLead = {
+              id: chatId,
+              name: name || 'Novo Contato',
+              number: chatId.split('@')[0],
+              photo: photo || '',
+              columnId: 'column-1', // Default to "Recentes" (assuming column-1 exists, or backend handles it)
+              tags: tags,
+              unreadCount: 0,
+              lastMessage: '',
+              lastMessageTime: Date.now()
+            };
+
+            const createResult = await chrome.runtime.sendMessage({
+              type: 'CREATE_KANBAN_LEAD',
+              payload: newLead
+            });
+
+            if (createResult.success) {
+              console.log('[PrinChat DEBUG] 7b. Lead CREATED in DB. Dispatching PrinChatKanbanLeadUpdated...');
+              document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
+                detail: {
+                  leadId: chatId,
+                  changes: { tags: tags } // Treat creation as an update for UI
+                }
+              }));
+              // Also dispatch Created event if UI listens to it specifically
+              document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadCreated', {
+                detail: { lead: createResult.data }
+              }));
+            } else {
+              console.error('[PrinChat DEBUG] 🛑 Failed to CREATE lead:', createResult.error);
+            }
           }
+        } catch (e) {
+          console.error('[PrinChat DEBUG] 🛑 Error updating tags in injector:', e);
         }
       });
 
@@ -649,8 +974,17 @@
 
           if (message.type === 'GET_SCRIPTS_AND_MESSAGES' || message.type === 'GET_SETTINGS' || message.type === 'TOGGLE_SIDE_PANEL' ||
             message.type === 'GET_SIGNATURES' || message.type === 'SAVE_SIGNATURE' || message.type === 'DELETE_SIGNATURE' ||
-            message.type === 'GET_SIGNATURE' || message.type === 'TOGGLE_SIGNATURE_ACTIVE') {
-            console.log('[PrinChat] Forwarding to background service worker...');
+            message.type === 'GET_SIGNATURE' || message.type === 'TOGGLE_SIGNATURE_ACTIVE' ||
+            message.type === 'SAVE_SCHEDULE' || message.type === 'GET_SCHEDULES_BY_CHAT' || message.type === 'GET_ALL_SCHEDULES' ||
+            message.type === 'DELETE_SCHEDULE' || message.type === 'UPDATE_SCHEDULE_STATUS' ||
+            message.type === 'GET_ALL_NOTES' ||
+            message.type === 'GET_KANBAN_COLUMNS' || message.type === 'CREATE_KANBAN_COLUMN' ||
+            message.type === 'UPDATE_KANBAN_COLUMN' || message.type === 'DELETE_KANBAN_COLUMN' ||
+            message.type === 'UPDATE_COLUMN_ORDER' || message.type === 'GET_ALL_KANBAN_LEADS' ||
+            message.type === 'CREATE_KANBAN_LEAD' || message.type === 'MOVE_KANBAN_LEAD' ||
+            message.type === 'UPDATE_KANBAN_LEAD' || message.type === 'DELETE_KANBAN_LEAD' ||
+            message.type === 'FETCH_MEDIA_BLOB') {
+            console.log('[PrinChat] Forwarding to background service worker:', message.type);
 
             // Check if extension context is still valid
             if (!chrome.runtime?.id) {
@@ -700,13 +1034,16 @@
           }));
           console.log('[PrinChat] ✅ Response sent to UI overlay');
         } catch (error: any) {
+          // Suppress "Extension context invalidated" error logs as requested
+          if (error.message?.includes('Extension context invalidated')) {
+            // Silently fail/ignore as user requested no error logs/banner for this
+            return;
+          }
+
           console.error('[PrinChat] ❌ Error handling UI request:', error);
 
           // Provide better error message for context invalidation
           let errorMessage = error.message || 'Unknown error';
-          if (error.message?.includes('Extension context invalidated')) {
-            errorMessage = 'A extensão foi atualizada. Por favor, recarregue a página.';
-          }
 
           document.dispatchEvent(new CustomEvent('PrinChatUIResponse', {
             detail: {
@@ -909,19 +1246,19 @@
     }
 
     private async injectScripts() {
-      console.log('[PrinChat] Preparing to inject scripts...');
+      console.log('[PrinChat] 🔧 Preparing to inject scripts...');
 
       try {
         // Check if extension context is still valid
         if (!chrome.runtime?.id) {
-          console.warn('[PrinChat] Extension context invalidated, cannot inject scripts');
+          console.error('[PrinChat] ❌ Extension context invalidated, cannot inject scripts');
           return;
         }
 
         // STEP 1: Create marker in DOM with extension ID
         // The loader script will use this to construct chrome-extension:// URLs
         const extensionId = chrome.runtime.id;
-        console.log('[PrinChat] Extension ID:', extensionId);
+        console.log('[PrinChat] 📋 Extension ID:', extensionId);
 
         const marker = document.createElement('div');
         marker.id = 'princhat-marker';
@@ -929,25 +1266,48 @@
         marker.style.display = 'none';
         document.documentElement.appendChild(marker);
 
-        console.log('[PrinChat] Marker created with extension ID');
+        console.log('[PrinChat] ✅ Marker created with extension ID');
 
         // STEP 2: Ask service worker to inject the loader script
         // The loader is small and will then load WPPConnect + page script via DOM
+        console.log('[PrinChat] 📤 Sending INJECT_PAGE_SCRIPTS message to service worker...');
+
         const response = await chrome.runtime.sendMessage({
           type: 'INJECT_PAGE_SCRIPTS'
         });
 
+        console.log('[PrinChat] 📥 Service worker response:', response);
+
         if (response?.success) {
           console.log('[PrinChat] ✅ Loader injection requested successfully');
+
+          // Wait for scripts to load and check if they initialized
+          // NOTE: Commented out to avoid warning in extension manager
+          // All functionality works correctly without this check
+          /*
+          setTimeout(() => {
+            const injected = (window as any).__PRINCHAT_INJECTED__;
+            const version = (window as any).__PRINCHAT_VERSION__;
+            console.log('[PrinChat] 🔍 Post-injection check:', {
+              injected: !!injected,
+              version: version || 'not set'
+            });
+    
+            if (!injected) {
+              console.warn('[PrinChat] Page script may not have initialized yet (functionality should still work)');
+            }
+          }, 5000);
+          */
         } else {
           console.error('[PrinChat] ❌ Failed to request injection:', response?.error);
         }
 
       } catch (error: any) {
+        console.error('[PrinChat] ❌ Exception during script injection:', error);
         if (error.message?.includes('Extension context invalidated')) {
-          console.warn('[PrinChat] Extension context invalidated during script injection');
+          console.error('[PrinChat] Extension context invalidated during script injection');
         } else {
-          console.error('[PrinChat] ❌ Error communicating with service worker:', error);
+          console.error('[PrinChat] Error communicating with service worker:', error);
         }
       }
     }
@@ -1047,8 +1407,10 @@
       return new Promise((resolve) => {
         const check = () => {
           const chatContainer = document.querySelector(SELECTORS.chatContainer);
-          if (chatContainer) {
-            console.log('[PrinChat] WhatsApp container found');
+          const side = document.querySelector(SELECTORS.side);
+
+          if (chatContainer || side) {
+            console.log('[PrinChat] WhatsApp container found:', chatContainer ? '#main' : '#side');
             resolve();
           } else {
             setTimeout(check, 500);
@@ -1056,6 +1418,47 @@
         };
         check();
       });
+    }
+
+    /**
+     * Setup observer to detect WhatsApp navigation and reinject scripts
+     * WhatsApp is a SPA, so page "reloads" don't trigger content_scripts again
+     */
+    private setupNavigationObserver() {
+      let lastUrl = location.href;
+      let lastInjectionTime = Date.now();
+
+      // Use both URL and DOM changes to detect navigation
+      const observer = new MutationObserver(() => {
+        const currentUrl = location.href;
+        const timeSinceLastInjection = Date.now() - lastInjectionTime;
+
+        // If URL changed or significant time passed, consider it a navigation
+        if (currentUrl !== lastUrl && timeSinceLastInjection > 5000) {
+          console.log('[PrinChat] Navigation detected!', 'Old:', lastUrl, 'New:', currentUrl);
+          lastUrl = currentUrl;
+          lastInjectionTime = Date.now();
+
+          // Reinject scripts after navigation
+          setTimeout(async () => {
+            console.log('[PrinChat] Reinjecting scripts after navigation...');
+            try {
+              await this.injectScripts();
+              console.log('[PrinChat] ✅ Scripts reinjected successfully');
+            } catch (error) {
+              console.error('[PrinChat] ❌ Error reinjecting scripts:', error);
+            }
+          }, 2000); // Wait 2s for WhatsApp to stabilize
+        }
+      });
+
+      // Observe the entire document for changes
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true
+      });
+
+      console.log('[PrinChat] ✅ Navigation observer active');
     }
 
     private async handleAction(action: any): Promise<any> {
@@ -1229,11 +1632,45 @@
         case 'GET_ACTIVE_CHAT':
           return await this.getActiveChat();
 
+        case 'GET_CHAT_INFO':
+          return await this.getChatInfo(action.payload?.chatId);
+
+        case 'GET_CHAT_PHOTO':
+          const chatInfo = await this.getChatInfo(action.payload?.chatId);
+          if (chatInfo.success && chatInfo.data) {
+            return { success: true, data: chatInfo.data.chatPhoto };
+          } else {
+            return { success: false, error: chatInfo.error || 'Could not get chat info' };
+          }
+
+        case 'GET_ALL_LABELS':
+          return await this.getAllLabels();
+
+        case 'GET_BULK_CHAT_INFO':
+          return await this.getBulkChatInfo(action.payload?.chatIds);
+
         case 'SAVE_SCHEDULE':
         case 'GET_SCHEDULES_BY_CHAT':
         case 'DELETE_SCHEDULE':
+        case 'UPDATE_SCHEDULE_STATUS':
           // Forward schedule operations to background service worker
           console.log('[PrinChat] Forwarding schedule operation to background:', action.type);
+          return await chrome.runtime.sendMessage(action);
+
+        case 'CREATE_NOTE':
+        case 'UPDATE_NOTE':
+        case 'GET_NOTES_BY_CHAT':
+        case 'GET_NOTE':
+        case 'DELETE_NOTE':
+        case 'FORCE_INIT':
+        case 'GET_KANBAN_COLUMNS':
+        case 'SAVE_KANBAN_COLUMN':
+        case 'DELETE_KANBAN_COLUMN':
+        case 'MOVE_KANBAN_LEAD': // Whitelist lead movement
+        case 'UPDATE_KANBAN_LEAD': // Whitelist lead update
+        case 'DELETE_KANBAN_LEAD': // Whitelist lead deletion
+          // Forward note operations to background service worker
+          console.log('[PrinChat] Forwarding note/kanban operation to background:', action.type);
           return await chrome.runtime.sendMessage(action);
 
         case 'SET_ACTIVE_SIGNATURE':
@@ -1242,8 +1679,9 @@
         case 'SAVE_SIGNATURE':
         case 'GET_SIGNATURES':
         case 'GET_SIGNATURE':
-          // Forward signature operations to background service worker
-          console.log('[PrinChat] Forwarding signature operation to background:', action.type);
+        case 'SAVE_TAG': // Whitelist tag saving
+          // Forward signature/tag operations to background service worker
+          console.log('[PrinChat] Forwarding operation to background:', action.type);
           return await chrome.runtime.sendMessage(action);
 
         default:
@@ -1802,7 +2240,7 @@
         const timeout = setTimeout(() => {
           console.log('[PrinChat Injector] ⏱️ getActiveChat() timeout - no response from page script');
           resolve({ success: false, error: 'Timeout' });
-        }, 5000); // Increased from 3000ms to 5000ms
+        }, 10000); // Increased from 3000ms to 5000ms
 
         const handler = (event: any) => {
           if (event.detail?.requestId === requestId) {
@@ -1812,9 +2250,13 @@
             if (event.detail.success) {
               // Use fallback getChatPhoto() if API didn't return photo
               const chatPhoto = event.detail.chatPhoto || this.getChatPhoto();
+
+              const responseData = { active: true, chatName: event.detail.chatName, chatId: event.detail.chatId, chatPhoto };
+              console.log('[PrinChat Injector] 📤 RESOLVING getActiveChat with:', JSON.stringify(responseData));
+
               resolve({
                 success: true,
-                data: { active: true, chatName: event.detail.chatName, chatId: event.detail.chatId, chatPhoto }
+                data: responseData
               });
             } else {
               console.log('[PrinChat Injector] ❌ Active chat request failed:', event.detail.error);
@@ -1831,9 +2273,36 @@
       });
     }
 
+    async getBulkChatInfo(chatIds: string[]): Promise<any> {
+      try {
+        if (!chatIds || chatIds.length === 0) return { success: true, data: {} };
+        const isPageScriptLoaded = document.getElementById('princhat-marker');
+        if (!isPageScriptLoaded) await this.injectScripts();
+
+        const requestId = `req_bulk_${Date.now()}_${Math.random()}`;
+        const promise = new Promise<any>((resolve, reject) => {
+          this.pendingRequests.set(requestId, { resolve, reject });
+          setTimeout(() => {
+            if (this.pendingRequests.has(requestId)) {
+              this.pendingRequests.delete(requestId);
+              reject(new Error('Timeout: Bulk chat info fetch'));
+            }
+          }, 60000); // 60s timeout for bulk
+        });
+
+        document.dispatchEvent(new CustomEvent('PrinChatGetBulkChatInfo', {
+          detail: { chatIds, requestId }
+        }));
+
+        return await promise;
+      } catch (error: any) {
+        return { success: false, error: error.message };
+      }
+    }
+
     async getChatInfo(chatId: string): Promise<any> {
       return new Promise((resolve) => {
-        const requestId = `chat-info-${Date.now()}`;
+        const requestId = `chat-info-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
         const timeout = setTimeout(() => {
           resolve({ success: false, error: 'Timeout' });
         }, 3000);
@@ -1848,7 +2317,13 @@
               const chatPhoto = event.detail.chatPhoto;
               resolve({
                 success: true,
-                data: { chatName: event.detail.chatName, chatId: event.detail.chatId, chatPhoto }
+                data: {
+                  chatName: event.detail.chatName,
+                  chatId: event.detail.chatId,
+                  chatPhoto,
+                  tags: event.detail.tags,
+                  labels: event.detail.labels
+                }
               });
             } else {
               resolve({ success: false, error: event.detail.error });
@@ -1859,6 +2334,82 @@
         document.addEventListener('PrinChatChatInfoResult', handler);
         document.dispatchEvent(new CustomEvent('PrinChatGetChatInfo', {
           detail: { requestId, chatId }
+        }));
+      });
+    }
+
+    /**
+     * Format phone number for display
+     * Examples:
+     *   - Brazil (55): 5511987654321 -> +55 11 98765-4321
+     *   - US (1): 18608382021 -> +1 (860) 838-2021
+     *   - Instagram/Facebook IDs (15+ digits): return as-is (not a phone number)
+     */
+    private formatPhoneNumber(phone: string): string {
+      const digits = phone.replace(/\D/g, '');
+
+      // CRITICAL: IDs from Instagram/Facebook integration are 15+ digits
+      // These are NOT phone numbers - they are internal WhatsApp IDs
+      // Real phone numbers max out at ~13 digits
+      if (digits.length >= 15) {
+        return phone; // Return original without formatting
+      }
+
+      if (digits.length < 10) {
+        return digits;
+      }
+
+      // Brazil (12-13 digits)
+      if (digits.startsWith('55') && digits.length >= 12 && digits.length <= 13) {
+        const ddd = digits.substring(2, 4);
+        const number = digits.substring(4);
+        if (number.length === 9) {
+          return `+55 (${ddd}) ${number.substring(0, 5)}-${number.substring(5)}`;
+        } else {
+          return `+55 (${ddd}) ${number.substring(0, 4)}-${number.substring(4)}`;
+        }
+      }
+
+      // US/Canada (exactly 11 digits)
+      if (digits.startsWith('1') && digits.length === 11) {
+        return `+1 (${digits.substring(1, 4)}) ${digits.substring(4, 7)}-${digits.substring(7)}`;
+      }
+
+      // Generic international (up to 14 digits)
+      if (digits.length > 10 && digits.length < 15) {
+        const countryCode = digits.substring(0, digits.length - 10);
+        const rest = digits.substring(digits.length - 10);
+        return `+${countryCode} ${rest.substring(0, 3)} ${rest.substring(3, 6)}-${rest.substring(6)}`;
+      }
+
+      return `+${digits}`;
+    }
+
+    private async getAllLabels(): Promise<any> {
+      return new Promise((resolve) => {
+        const requestId = `labels-${Date.now()}`;
+
+        // Timeout
+        const timeout = setTimeout(() => {
+          document.removeEventListener('PrinChatGetAllLabelsResult', handler);
+          resolve({ success: false, error: 'Timeout fetching labels' });
+        }, 8000); // 8s timeout for robustness
+
+        const handler = (event: any) => {
+          if (event.detail?.requestId === requestId) {
+            clearTimeout(timeout);
+            document.removeEventListener('PrinChatGetAllLabelsResult', handler);
+            resolve({
+              success: event.detail.success,
+              data: { labels: event.detail.labels }, // Wrap in 'data' as UI expects response.data.labels
+              error: event.detail.error
+            });
+          }
+        };
+
+        document.addEventListener('PrinChatGetAllLabelsResult', handler);
+        document.dispatchEvent(new CustomEvent('PrinChatGetAllLabels', {
+          detail: { requestId }
         }));
       });
     }
@@ -1928,6 +2479,33 @@
     chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS' }).catch(error => {
       console.error('[PrinChat Content] Error opening options:', error);
     });
+  });
+
+  // Listen for PRINCHAT_LOGOUT event from UI overlay (profile dropdown)
+  document.addEventListener('PRINCHAT_LOGOUT', () => {
+    console.log('[PrinChat Content] PRINCHAT_LOGOUT event received');
+    // Clear auth session
+    chrome.storage.sync.remove(['auth_session'], () => {
+      console.log('[PrinChat Content] Session cleared');
+    });
+  });
+
+  // Listen for auth check requests from UI overlay
+  document.addEventListener('PrinChatAuthCheckRequest', (event: Event) => {
+    const customEvent = event as CustomEvent;
+    const requestId = customEvent.detail?.requestId;
+
+    if (requestId) {
+      chrome.storage.sync.get(['auth_session'], (result) => {
+        const isAuthenticated = result.auth_session?.isAuthenticated === true;
+
+        const responseEvent = new CustomEvent('PrinChatAuthCheckResponse', {
+          bubbles: true,
+          detail: { requestId, isAuthenticated }
+        });
+        document.dispatchEvent(responseEvent);
+      });
+    }
   });
 
   console.log('[PrinChat] Content script initialization complete');
