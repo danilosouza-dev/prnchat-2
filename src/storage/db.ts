@@ -1691,20 +1691,55 @@ class DatabaseService {
     const scopedInstanceId = this.normalizeScope(lead.instanceId);
     const identity = this.normalizeLeadIdentity(lead.chatId || lead.phone) || lead.phone;
     const normalizedChatId = this.normalizeLeadChatId(lead.chatId || lead.phone || identity) || (lead.chatId || lead.phone);
+    const scopedId = buildScopedLeadId(scopedInstanceId, identity);
+
+    // MERGE-ON-COLLISION: If a lead with this ID already exists, preserve
+    // existing non-empty data (photo, tags, labels, columnId) that the
+    // caller might not have (e.g., injector re-creating a lead it failed
+    // to match via variant lookup).
+    let existingLead: LeadContact | undefined;
+    try {
+      existingLead = await db.get('kanban_leads', scopedId);
+    } catch (_e) { /* not found, that's fine */ }
 
     const newLead: LeadContact = {
       ...lead,
       instanceId: scopedInstanceId,
       chatId: normalizedChatId,
       phone: this.normalizeLeadIdentity(lead.phone || lead.chatId || identity) || lead.phone,
-      id: buildScopedLeadId(scopedInstanceId, identity), // Scope lead key by WhatsApp instance
+      id: scopedId,
       order: lead.order ?? -now, // Default to top of list if order is missing
-      createdAt: now,
+      createdAt: existingLead?.createdAt || now,
       updatedAt: now,
     };
 
+    // Preserve existing non-empty fields when the incoming data is empty
+    if (existingLead) {
+      console.log('[PrinChat DB] createLead: lead already exists, merging with existing data:', scopedId);
+
+      // Preserve photo if new lead has none
+      if (!newLead.photo && existingLead.photo) {
+        newLead.photo = existingLead.photo;
+      }
+
+      // Preserve tags if new lead has none
+      if ((!Array.isArray(newLead.tags) || newLead.tags.length === 0) && Array.isArray(existingLead.tags) && existingLead.tags.length > 0) {
+        newLead.tags = existingLead.tags;
+      }
+
+      // Preserve labels if new lead has none
+      if ((!Array.isArray((newLead as any).labels) || (newLead as any).labels.length === 0) && Array.isArray((existingLead as any).labels) && (existingLead as any).labels.length > 0) {
+        (newLead as any).labels = (existingLead as any).labels;
+      }
+
+      // Preserve columnId — don't reset to default column on re-creation
+      if (existingLead.columnId && lead.columnId !== existingLead.columnId) {
+        newLead.columnId = existingLead.columnId;
+      }
+    }
+
     await db.put('kanban_leads', newLead);
-    console.log('[PrinChat DB] Lead created:', newLead.id);
+    console.log('[PrinChat DB] Lead created:', newLead.id, existingLead ? '(merged with existing)' : '(new)');
 
     // Trigger chrome.storage change event
     if (typeof chrome !== 'undefined' && chrome.storage) {

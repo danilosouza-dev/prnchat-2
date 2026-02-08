@@ -314,37 +314,11 @@
     return Array.from(ids).filter(Boolean);
   };
 
-  const fetchWppProfilePhotoByIds = async (candidateIds: string[]): Promise<string | undefined> => {
-    const WPP = safeRead(() => (window as any).WPP);
-    if (!WPP?.contact?.getProfilePictureUrl) return undefined;
-
-    const Store = safeRead(() => (window as any).Store);
-    const widFactory = safeRead(() => WPP?.whatsapp?.WidFactory) || safeRead(() => Store?.WidFactory);
-    const seen = new Set<string>();
-
-    for (const raw of candidateIds) {
-      const normalized = sanitizeScopedChatId(raw);
-      if (!normalized || seen.has(normalized)) continue;
-      seen.add(normalized);
-
-      try {
-        const direct = await WPP.contact.getProfilePictureUrl(normalized);
-        if (isRenderableImageUrl(direct)) return direct;
-      } catch (_error) {
-        // continue
-      }
-
-      if (widFactory?.createWid) {
-        try {
-          const wid = widFactory.createWid(normalized);
-          const viaWid = await WPP.contact.getProfilePictureUrl(wid);
-          if (isRenderableImageUrl(viaWid)) return viaWid;
-        } catch (_error) {
-          // continue
-        }
-      }
-    }
-
+  const fetchWppProfilePhotoByIds = async (_candidateIds: string[]): Promise<string | undefined> => {
+    // WPP.contact.getProfilePictureUrl and Store.ProfilePicThumb are both BROKEN in current WA build.
+    // WPP throws TypeError: Cannot read properties of undefined (reading 'm')
+    // Store.ProfilePicThumb doesn't exist at all.
+    // Only viable photo source is sidebar DOM scraping.
     return undefined;
   };
 
@@ -401,6 +375,10 @@
     const normalizedChatId = sanitizeScopedChatId(chatId);
     if (!normalizedChatId) return undefined;
 
+    // Extract phone digits from chatId (e.g., "553397048517@c.us" → "553397048517")
+    const chatIdDigits = normalizedChatId.replace(/@.*$/, '').replace(/\D/g, '');
+    if (!chatIdDigits || chatIdDigits.length < 8) return undefined;
+
     const variants = buildChatIdLookupVariants(normalizedChatId).map((v) => v.toLowerCase());
     const roots = Array.from(document.querySelectorAll('#pane-side, #side'));
     const searchRoots = roots.length > 0 ? roots : [document.body];
@@ -408,17 +386,44 @@
     for (const root of searchRoots) {
       if (!root) continue;
 
-      const rows = Array.from(root.querySelectorAll('[data-id]')) as HTMLElement[];
+      // Strategy 1: Find rows by role="row" and match via span[title] phone digits
+      const rows = Array.from(root.querySelectorAll('[role="row"]')) as HTMLElement[];
       for (const row of rows) {
+        const titleSpans = Array.from(row.querySelectorAll('span[title]')) as HTMLElement[];
+        for (const span of titleSpans) {
+          const title = span.getAttribute('title') || span.textContent || '';
+          if (!title) continue;
+
+          // Match by phone digits: strip all non-digits from title and compare
+          const titleDigits = title.replace(/\D/g, '');
+          const isPhoneMatch = titleDigits.length >= 8 && (
+            chatIdDigits.endsWith(titleDigits) || titleDigits.endsWith(chatIdDigits) ||
+            chatIdDigits.includes(titleDigits) || titleDigits.includes(chatIdDigits)
+          );
+
+          // Match by exact name
+          const isNameMatch = chatName && title.trim().toLowerCase() === chatName.trim().toLowerCase();
+
+          if (isPhoneMatch || isNameMatch) {
+            const photo = findImageInElement(row);
+            if (photo) return photo;
+          }
+        }
+      }
+
+      // Strategy 2: Legacy [data-id] matching (for older WA builds)
+      const dataIdRows = Array.from(root.querySelectorAll('[data-id]')) as HTMLElement[];
+      for (const row of dataIdRows) {
         const dataId = String(row.getAttribute('data-id') || '').toLowerCase();
         if (!dataId) continue;
         if (!variants.some((variant) => dataId.includes(variant))) continue;
 
-        const listItem = row.closest('[role="listitem"]') || row;
-        const photo = findImageInElement(listItem);
+        const container = row.closest('[role="row"]') || row.closest('[role="listitem"]') || row;
+        const photo = findImageInElement(container);
         if (photo) return photo;
       }
 
+      // Strategy 3: Fallback — search all span[title] for chatName match  
       if (chatName) {
         const normalizedName = chatName.trim().toLowerCase();
         const titleNodes = Array.from(root.querySelectorAll('span[title], div[title]')) as HTMLElement[];
@@ -426,8 +431,8 @@
           const title = String(node.getAttribute('title') || node.textContent || '').trim().toLowerCase();
           if (!title || title !== normalizedName) continue;
 
-          const listItem = node.closest('[role="listitem"]') || node.closest('[data-id]') || node.parentElement;
-          const photo = findImageInElement(listItem);
+          const container = node.closest('[role="row"]') || node.closest('[role="listitem"]') || node.closest('[data-id]') || node.parentElement;
+          const photo = findImageInElement(container);
           if (photo) return photo;
         }
       }
@@ -2235,19 +2240,37 @@
             if (!chatLabels.find(l => l.id === id)) {
               let finalColor: string | undefined = undefined;
 
+              // Same palette as GET_ALL_LABELS
+              const CHAT_INFO_PALETTE = [
+                '#FF9E9E', '#5AB5E5', '#FDD835', '#C594D7', '#90A4AE',
+                '#26C6DA', '#F48FB1', '#FFB300', '#7986CB', '#D4E157',
+                '#00ACC1', '#FFAB91', '#81C784', '#E57373', '#42A5F5',
+                '#9CCC65', '#FF9800', '#64B5F6', '#BA68C8', '#9575CD'
+              ];
+
               // PRIORITY 1: Cached DOM Color (Visual Truth)
               // This MUST take precedence during hydration to match what user sees
               if (name && cachedColors[name]) {
                 finalColor = cachedColors[name];
               }
-              // PRIORITY 2: Direct/Raw Color
-              else if (rawColor) {
+              // PRIORITY 2: Direct hex string color
+              else if (rawColor && typeof rawColor === 'string' && rawColor.startsWith('#')) {
                 finalColor = rawColor;
               }
-              // PRIORITY 3: Extract from Model
+              // PRIORITY 3: colorIndex palette (most common for WhatsApp Business labels)
+              else if (model && typeof model.colorIndex === 'number' && model.colorIndex >= 0 && model.colorIndex < CHAT_INFO_PALETTE.length) {
+                finalColor = CHAT_INFO_PALETTE[model.colorIndex];
+              }
+              // PRIORITY 4: Extract from Model (hexColor, string color, numeric color)
               else if (model) {
                 finalColor = extractColor(model);
               }
+              // PRIORITY 5: Raw color if it's a valid hex string
+              else if (rawColor && typeof rawColor === 'string') {
+                finalColor = rawColor;
+              }
+
+              if (!finalColor) finalColor = '#2196f3'; // fallback blue
 
               chatLabels.push({ id, name, color: finalColor });
               chatTags.push(name);
@@ -2617,179 +2640,434 @@
           if (msg && (msg.type === 'chat' || msg.type === 'image' || msg.type === 'video' || msg.type === 'audio' || msg.type === 'ptt' || msg.type === 'document' || msg.type === 'sticker' || msg.type === 'location' || msg.type === 'vcard')) {
             (async () => {
               try {
-              // STRICT VALIDATION: Ignore if no timestamp (don't default to now)
-              if (!msg.t) {
-                return;
-              }
+                // STRICT VALIDATION: Ignore if no timestamp (don't default to now)
+                if (!msg.t) {
+                  return;
+                }
 
-              // STRICT VALIDATION: Ignore if not a new message (prevents history sync from triggering)
-              if (msg.isNewMsg === false) {
-                return;
-              }
+                // STRICT VALIDATION: Ignore if not a new message (prevents history sync from triggering)
+                if (msg.isNewMsg === false) {
+                  return;
+                }
 
-              const now = Date.now();
-              const msgTimestamp = msg.t * 1000;
-              const messageAge = now - msgTimestamp;
+                const now = Date.now();
+                const msgTimestamp = msg.t * 1000;
+                const messageAge = now - msgTimestamp;
 
-              // Skip if message is older than MAX_MESSAGE_AGE (e.g. 60 seconds)
-              // This is a safety net for "new" messages that are actually from a long sync
-              if (messageAge > MAX_MESSAGE_AGE && messageAge > 60000) {
-                console.log('[PrinChat] Skipping old message detected as new:', {
-                  body: msg.body ? msg.body.substring(0, 30) : 'media',
-                  age: messageAge,
-                  msgTime: new Date(msgTimestamp).toLocaleTimeString()
-                });
-                return;
-              }
+                // Skip if message is older than MAX_MESSAGE_AGE (e.g. 60 seconds)
+                // This is a safety net for "new" messages that are actually from a long sync
+                if (messageAge > MAX_MESSAGE_AGE && messageAge > 60000) {
+                  console.log('[PrinChat] Skipping old message detected as new:', {
+                    body: msg.body ? msg.body.substring(0, 30) : 'media',
+                    age: messageAge,
+                    msgTime: new Date(msgTimestamp).toLocaleTimeString()
+                  });
+                  return;
+                }
 
-              // Create unique message ID
-              const messageId = `${msg.id.id}_${msg.from}_${msg.t}`;
+                // Create unique message ID
+                const messageId = `${msg.id.id}_${msg.from}_${msg.t}`;
 
-              // Skip if already processed
-              if (processedMessages.has(messageId)) {
-                return;
-              }
+                // Skip if already processed
+                if (processedMessages.has(messageId)) {
+                  return;
+                }
 
-              // Mark as processed
-              processedMessages.add(messageId);
+                // Mark as processed
+                processedMessages.add(messageId);
 
-              // Clean up old processed messages periodically
-              if (processedMessages.size > 100) {
-                const oldMessages = Array.from(processedMessages).slice(0, 50);
-                oldMessages.forEach(id => processedMessages.delete(id));
-              }
+                // Clean up old processed messages periodically
+                if (processedMessages.size > 100) {
+                  const oldMessages = Array.from(processedMessages).slice(0, 50);
+                  oldMessages.forEach(id => processedMessages.delete(id));
+                }
 
-              // Determine Message Preview Text
-              let messageText = msg.body || '';
+                // Determine Message Preview Text
+                let messageText = msg.body || '';
 
-              if (msg.type === 'image') {
-                messageText = msg.caption ? `📷 ${msg.caption}` : '📷 Foto';
-              } else if (msg.type === 'video') {
-                messageText = msg.caption ? `📹 ${msg.caption}` : '📹 Vídeo';
-              } else if (msg.type === 'audio' || msg.type === 'ptt') {
-                messageText = '🎵 Áudio';
-              } else if (msg.type === 'document') {
-                messageText = msg.caption ? `📄 ${msg.caption}` : (msg.fileName ? `📄 ${msg.fileName}` : '📄 Arquivo');
-              } else if (msg.type === 'sticker') {
-                messageText = '💟 Figurinha';
-              } else if (msg.type === 'location') {
-                messageText = '📍 Localização';
-              } else if (msg.type === 'vcard') {
-                messageText = '👤 Contato';
-              }
+                if (msg.type === 'image') {
+                  messageText = msg.caption ? `📷 ${msg.caption}` : '📷 Foto';
+                } else if (msg.type === 'video') {
+                  messageText = msg.caption ? `📹 ${msg.caption}` : '📹 Vídeo';
+                } else if (msg.type === 'audio' || msg.type === 'ptt') {
+                  messageText = '🎵 Áudio';
+                } else if (msg.type === 'document') {
+                  messageText = msg.caption ? `📄 ${msg.caption}` : (msg.fileName ? `📄 ${msg.fileName}` : '📄 Arquivo');
+                } else if (msg.type === 'sticker') {
+                  messageText = '💟 Figurinha';
+                } else if (msg.type === 'location') {
+                  messageText = '📍 Localização';
+                } else if (msg.type === 'vcard') {
+                  messageText = '👤 Contato';
+                }
 
-              console.log('[PrinChat] New message received:', messageText, `(age: ${messageAge}ms)`);
+                console.log('[PrinChat] New message received:', messageText, `(age: ${messageAge}ms)`);
 
-              // Get chatId from message (can be LID, getChatInfo will handle it)
-              const rawChatId = safeRead(() => msg?.id?.remote?.toString?.()) || safeRead(() => msg?.from?.toString?.()) || '';
-              const chatId = extractMessageChatId(msg);
-              if (!chatId) {
-                console.warn('[PrinChat] Skipping message without resolvable chatId');
-                return;
-              }
-              const chatIdVariants = buildChatIdLookupVariants(chatId);
-              console.log('[PrinChat] Chat ID from message:', { rawChatId, chatId });
+                // Get chatId from message (can be LID, getChatInfo will handle it)
+                const rawChatId = safeRead(() => msg?.id?.remote?.toString?.()) || safeRead(() => msg?.from?.toString?.()) || '';
+                const chatId = extractMessageChatId(msg);
+                if (!chatId) {
+                  console.warn('[PrinChat] Skipping message without resolvable chatId');
+                  return;
+                }
+                const chatIdVariants = buildChatIdLookupVariants(chatId);
+                console.log('[PrinChat] Chat ID from message:', { rawChatId, chatId });
 
-              // Best-effort chat photo extraction at message-time.
-              // IMPORTANT: only trust sources resolved by the remote chatId.
-              // Some WA builds can expose the active/self context in message objects.
-              let messageChatPhoto = '';
-              let messagePhotoSource = '';
+                // Extract contact name EARLY so we can use it for sidebar photo matching
+                let earlyContactName = '';
+                try {
+                  const earlyChatModel = safeRead(() => msg?.chat) || (() => {
+                    if (Store?.Chat?.get) {
+                      for (const variant of chatIdVariants) {
+                        const c = Store.Chat.get(variant);
+                        if (c) return c;
+                      }
+                    }
+                    return null;
+                  })();
+                  const earlyContactObj = safeRead(() => earlyChatModel?.contact);
+                  earlyContactName = safeRead(() => earlyContactObj?.pushname)
+                    || safeRead(() => earlyContactObj?.name)
+                    || safeRead(() => earlyContactObj?.verifiedName)
+                    || safeRead(() => earlyChatModel?.formattedTitle)
+                    || safeRead(() => earlyChatModel?.name)
+                    || '';
+                } catch (_e) { /* ignore */ }
 
-              try {
-                messageChatPhoto =
-                  extractPhotoUrl(safeRead(() => msg?.chat?.contact))
-                  || extractPhotoUrl(safeRead(() => msg?.chat))
-                  || extractPhotoUrl(safeRead(() => msg?.senderObj))
-                  || extractPhotoUrl(safeRead(() => msg?.authorObj))
-                  || extractPhotoUrl(msg)
-                  || '';
+                // Best-effort chat photo extraction at message-time.
+                // IMPORTANT: only trust sources resolved by the remote chatId.
+                // Some WA builds can expose the active/self context in message objects.
+                let messageChatPhoto = '';
+                let messagePhotoSource = '';
+
+                try {
+                  // DIAGNOSTIC: Dump all available photo sources for debugging
+                  const photoDiag: Record<string, any> = {};
+                  // Check msg model properties
+                  photoDiag.msgChat_contact_profilePicThumb = safeRead(() => !!msg?.chat?.contact?.profilePicThumbObj?.eurl);
+                  photoDiag.msgChat_profilePicThumb = safeRead(() => !!msg?.chat?.profilePicThumbObj?.eurl);
+                  photoDiag.msgSenderObj_profilePicThumb = safeRead(() => !!msg?.senderObj?.profilePicThumbObj?.eurl);
+
+                  // API AVAILABILITY DIAGNOSTIC: What methods actually exist?
+                  const apiDiag: Record<string, any> = {};
+                  try {
+                    apiDiag.Store_ProfilePicThumb_exists = !!Store?.ProfilePicThumb;
+                    if (Store?.ProfilePicThumb) {
+                      apiDiag.Store_ProfilePicThumb_methods = Object.getOwnPropertyNames(Object.getPrototypeOf(Store.ProfilePicThumb) || {}).filter(m => typeof Store.ProfilePicThumb[m] === 'function').slice(0, 20);
+                      apiDiag.Store_ProfilePicThumb_find = typeof Store.ProfilePicThumb.find;
+                      apiDiag.Store_ProfilePicThumb_get = typeof Store.ProfilePicThumb.get;
+                      apiDiag.Store_ProfilePicThumb_getOrFetch = typeof Store.ProfilePicThumb.getOrFetch;
+                      apiDiag.Store_ProfilePicThumb_query = typeof Store.ProfilePicThumb.query;
+                      apiDiag.Store_ProfilePicThumb_fetchProfilePicThumb = typeof Store.ProfilePicThumb.fetchProfilePicThumb;
+                    }
+                    apiDiag.WPP_contact_exists = !!(window as any).WPP?.contact;
+                    if ((window as any).WPP?.contact) {
+                      apiDiag.WPP_contact_getProfilePictureUrl = typeof (window as any).WPP.contact.getProfilePictureUrl;
+                      apiDiag.WPP_contact_methods = Object.keys((window as any).WPP.contact).filter(k => typeof (window as any).WPP.contact[k] === 'function').slice(0, 20);
+                    }
+                    apiDiag.WPP_profilePic_exists = !!(window as any).WPP?.profilePic;
+                    if ((window as any).WPP?.profilePic) {
+                      apiDiag.WPP_profilePic_methods = Object.keys((window as any).WPP.profilePic).filter(k => typeof (window as any).WPP.profilePic[k] === 'function').slice(0, 20);
+                    }
+                    apiDiag.WPP_chat_exists = !!(window as any).WPP?.chat;
+                    if ((window as any).WPP?.chat) {
+                      apiDiag.WPP_chat_getProfilePictureUrl = typeof ((window as any).WPP.chat.getProfilePictureUrl);
+                    }
+                  } catch (_apiDiagErr) {
+                    apiDiag.error = String(_apiDiagErr).substring(0, 100);
+                  }
+                  console.log('[PrinChat Page] 📸 API AVAILABILITY:', JSON.stringify(apiDiag));
+
+                  messageChatPhoto =
+                    extractPhotoUrl(safeRead(() => msg?.chat?.contact))
+                    || extractPhotoUrl(safeRead(() => msg?.chat))
+                    || extractPhotoUrl(safeRead(() => msg?.senderObj))
+                    || extractPhotoUrl(safeRead(() => msg?.authorObj))
+                    || extractPhotoUrl(msg)
+                    || '';
+                  if (messageChatPhoto) {
+                    messagePhotoSource = 'message_model';
+                  }
+
+                  // Strategy: Store.Chat.get (sync cache)
+                  if (!messageChatPhoto && Store?.Chat?.get) {
+                    for (const variant of chatIdVariants) {
+                      if (messageChatPhoto) break;
+                      try {
+                        const storeChat = Store.Chat.get(variant);
+                        photoDiag[`storeChat_${variant}_exists`] = !!storeChat;
+                        photoDiag[`storeChat_${variant}_contact_photo`] = safeRead(() => !!storeChat?.contact?.profilePicThumbObj?.eurl);
+                        messageChatPhoto = extractPhotoUrl(storeChat?.contact) || extractPhotoUrl(storeChat) || '';
+                        if (messageChatPhoto) messagePhotoSource = 'store_chat';
+                      } catch (_err) {
+                        // ignore
+                      }
+                    }
+                  }
+
+                  // Strategy: Store.Chat.find (async)
+                  if (!messageChatPhoto && Store?.Chat?.find) {
+                    for (const variant of chatIdVariants) {
+                      if (messageChatPhoto) break;
+                      try {
+                        const storeChat = await Store.Chat.find(variant);
+                        photoDiag[`storeChatFind_${variant}_exists`] = !!storeChat;
+                        photoDiag[`storeChatFind_${variant}_contact_photo`] = safeRead(() => !!storeChat?.contact?.profilePicThumbObj?.eurl);
+                        messageChatPhoto = extractPhotoUrl(storeChat?.contact) || extractPhotoUrl(storeChat) || '';
+                        if (messageChatPhoto) messagePhotoSource = 'store_chat_find';
+                      } catch (_err) {
+                        // ignore
+                      }
+                    }
+                  }
+
+                  // Strategy: Store.Contact.get
+                  if (!messageChatPhoto && Store?.Contact?.get) {
+                    for (const variant of chatIdVariants) {
+                      if (messageChatPhoto) break;
+                      try {
+                        const storeContact = Store.Contact.get(variant);
+                        photoDiag[`storeContact_${variant}_exists`] = !!storeContact;
+                        photoDiag[`storeContact_${variant}_photo`] = safeRead(() => !!storeContact?.profilePicThumbObj?.eurl);
+                        messageChatPhoto = extractPhotoUrl(storeContact) || '';
+                        if (messageChatPhoto) messagePhotoSource = 'store_contact';
+                      } catch (_err) {
+                        // ignore
+                      }
+                    }
+                  }
+
+                  // WPP.contact.getProfilePictureUrl is BROKEN in this WA build (Store.ProfilePicThumb missing → TypeError reading 'm')
+                  // Only reliable source: sidebar DOM scraping (sidebar DOM is still in page behind Kanban overlay)
+
+                  // Strategy: Sidebar DOM scraping (with focused diagnostic)
+                  if (!messageChatPhoto) {
+                    const paneSide = document.querySelector('#pane-side');
+                    const sidePanel = document.querySelector('#side');
+                    const searchRoot = paneSide || sidePanel || document.body;
+
+                    // Probe sidebar DOM structure (minimal diagnostic)
+                    const rows = Array.from(searchRoot.querySelectorAll('[role="row"]'));
+                    const spanTitles = Array.from(searchRoot.querySelectorAll('span[title]'));
+                    const allImages = Array.from(searchRoot.querySelectorAll('img')) as HTMLImageElement[];
+                    const renderableImages = allImages.filter(img => img.src && (img.src.startsWith('http') || img.src.startsWith('blob:') || img.src.startsWith('data:')));
+
+                    const chatIdDigitsForDiag = chatId.replace(/@.*$/, '').replace(/\D/g, '');
+
+                    // Find which sidebar titles contain our phone digits or name
+                    const matchingTitles = spanTitles.filter(s => {
+                      const t = s.getAttribute('title') || s.textContent || '';
+                      const tDigits = t.replace(/\D/g, '');
+                      const phoneMatch = tDigits.length >= 8 && chatIdDigitsForDiag.length >= 8 && (
+                        chatIdDigitsForDiag.includes(tDigits) || tDigits.includes(chatIdDigitsForDiag)
+                      );
+                      const nameMatch = earlyContactName && t.trim().toLowerCase() === earlyContactName.trim().toLowerCase();
+                      return phoneMatch || nameMatch;
+                    }).map(s => s.getAttribute('title')?.substring(0, 30));
+
+                    console.log('[PrinChat Page] 📷 SIDEBAR DEEP DIAG:', JSON.stringify({
+                      paneSide: !!paneSide, side: !!sidePanel,
+                      rows: rows.length, spanTitles: spanTitles.length,
+                      renderable: renderableImages.length,
+                      chatId, chatIdDigits: chatIdDigitsForDiag,
+                      earlyContactName: earlyContactName || '(empty)',
+                      matchingTitles,
+                      sampleTitles: spanTitles.slice(0, 8).map(s => s.getAttribute('title')?.substring(0, 30) || s.textContent?.substring(0, 30)),
+                    }));
+
+                    // Still try the existing scraper
+                    messageChatPhoto = findSidebarPhotoByChat(chatId, earlyContactName) || '';
+                    if (messageChatPhoto) messagePhotoSource = 'sidebar';
+                    photoDiag.sidebar_result = !!messageChatPhoto;
+
+                    // If sidebar scrape failed, schedule a delayed retry with sidebar scroll.
+                    // WhatsApp virtualizes the sidebar — the chat may not be rendered.
+                    // Since the overlay covers the sidebar, the virtual list may not update.
+                    // SOLUTION: Force-scroll the sidebar to the top, wait for re-render, then scrape.
+                    if (!messageChatPhoto) {
+                      const retryChatId = chatId;
+                      const retryContactName = earlyContactName;
+
+                      const forceScrollAndScrape = (attempt: number): void => {
+                        // Find the sidebar scroll container
+                        const paneContent = document.querySelector('#pane-side');
+                        if (paneContent) {
+                          // The scrollable element is usually a child div with role="list" or the direct child
+                          const scrollable = paneContent.querySelector('[role="grid"]')
+                            || paneContent.querySelector('[role="list"]')
+                            || paneContent.querySelector('[data-testid="chat-list"]')
+                            || paneContent.firstElementChild;
+
+                          if (scrollable) {
+                            // Force scroll to top — WhatsApp puts new-message chats at the top
+                            scrollable.scrollTop = 0;
+                            console.log(`[PrinChat Page] 📷 Sidebar scroll forced to top (attempt ${attempt})`);
+                          }
+                        }
+
+                        // Wait for WhatsApp virtual list to re-render after scroll
+                        setTimeout(() => {
+                          const retryPhoto = findSidebarPhotoByChat(retryChatId, retryContactName);
+                          if (retryPhoto) {
+                            console.log(`[PrinChat Page] 📷 Sidebar retry #${attempt} found photo for`, retryChatId);
+                            document.dispatchEvent(new CustomEvent('PrinChatPhotoUpdate', {
+                              detail: { chatId: retryChatId, chatPhoto: retryPhoto }
+                            }));
+                          } else {
+                            console.log(`[PrinChat Page] 📷 Sidebar retry #${attempt} NO photo for`, retryChatId, retryContactName || '(no name)');
+                            // Try again if we have more attempts
+                            if (attempt < 3) {
+                              setTimeout(() => forceScrollAndScrape(attempt + 1), 2000);
+                            }
+                          }
+                        }, 500); // Give virtual list 500ms to re-render after scroll
+                      };
+
+                      // Start first retry after 1.5s (give WhatsApp time to process the message)
+                      setTimeout(() => forceScrollAndScrape(1), 1500);
+                    }
+                  }
+
+                  // FINAL DIAGNOSTIC OUTPUT
+                  console.log('[PrinChat Page] 📸 PHOTO DIAG for incoming message:', JSON.stringify(photoDiag));
+                } catch (photoError: any) {
+                  console.warn('[PrinChat Page] Message photo lookup failed (continuing without photo):', photoError?.message || photoError);
+                  messageChatPhoto = '';
+                }
+
                 if (messageChatPhoto) {
-                  messagePhotoSource = 'message_model';
+                  console.log('[PrinChat Page] Photo resolved', {
+                    phase: 'create',
+                    rawChatId,
+                    canonicalChatId: chatId,
+                    photoSource: messagePhotoSource
+                  });
                 }
 
-                if (Store?.Chat?.get) {
-                  for (const variant of chatIdVariants) {
-                    if (messageChatPhoto) break;
+                // Notify content script about new message
+                // getChatInfo in the injector will fetch name/photo
+                const fromMe = !!(
+                  safeRead(() => msg?.id?.fromMe)
+                  ?? safeRead(() => msg?.fromMe)
+                );
+
+                // Extract chat labels and name right here so the injector doesn't
+                // have to call getContactInfo back to us (which often returns empty labels
+                // because WhatsApp loads labels lazily during message processing)
+                let messageChatLabels: { id: string; name: string; color?: string }[] = [];
+                let messageChatTags: string[] = [];
+                let messageChatName = '';
+
+                // Same palette as GET_ALL_LABELS for color consistency
+                const MSG_LABEL_PALETTE = [
+                  '#FF9E9E', '#5AB5E5', '#FDD835', '#C594D7', '#90A4AE',
+                  '#26C6DA', '#F48FB1', '#FFB300', '#7986CB', '#D4E157',
+                  '#00ACC1', '#FFAB91', '#81C784', '#E57373', '#42A5F5',
+                  '#9CCC65', '#FF9800', '#64B5F6', '#BA68C8', '#9575CD'
+                ];
+
+                try {
+                  // Try to get labels from the chat model
+                  const chatModel = safeRead(() => msg?.chat) || (() => {
+                    if (Store?.Chat?.get) {
+                      for (const variant of chatIdVariants) {
+                        const c = Store.Chat.get(variant);
+                        if (c) return c;
+                      }
+                    }
+                    return null;
+                  })();
+
+                  // Extract contact name
+                  const contactObj = safeRead(() => chatModel?.contact);
+                  messageChatName = safeRead(() => contactObj?.pushname)
+                    || safeRead(() => contactObj?.name)
+                    || safeRead(() => contactObj?.verifiedName)
+                    || safeRead(() => chatModel?.formattedTitle)
+                    || safeRead(() => chatModel?.name)
+                    || '';
+
+                  // Extract labels from chat model
+                  const chatLabelIds = safeRead(() => chatModel?.labels) || [];
+                  if (Array.isArray(chatLabelIds) && chatLabelIds.length > 0 && Store?.Label) {
+                    // Load cached colors for consistency
+                    let cachedLabelColors: Record<string, string> = {};
                     try {
-                      const storeChat = Store.Chat.get(variant);
-                      messageChatPhoto = extractPhotoUrl(storeChat?.contact) || extractPhotoUrl(storeChat) || '';
-                      if (messageChatPhoto) messagePhotoSource = 'store_chat';
-                    } catch (_err) {
-                      // ignore
+                      const cache = JSON.parse(localStorage.getItem('princhat_label_cache') || '{}');
+                      cachedLabelColors = cache.byName || {};
+                    } catch (_e) { }
+
+                    const allLabelModels = Store.Label.models || Store.Label._models || [];
+                    chatLabelIds.forEach((labelId: any) => {
+                      const id = typeof labelId === 'object' ? labelId?.id : String(labelId);
+                      let labelModel = Store.Label.get?.(id);
+                      if (!labelModel && allLabelModels.length > 0) {
+                        labelModel = allLabelModels.find((m: any) => m.id === id || m.id?._serialized === id);
+                      }
+                      if (labelModel) {
+                        // Resolve color using the same priority as GET_ALL_LABELS
+                        let labelColor: string | undefined;
+                        if (labelModel.hexColor) {
+                          labelColor = labelModel.hexColor;
+                        } else if (typeof labelModel.color === 'string' && labelModel.color.startsWith('#')) {
+                          labelColor = labelModel.color;
+                        } else if (labelModel.name && cachedLabelColors[labelModel.name]) {
+                          labelColor = cachedLabelColors[labelModel.name];
+                        } else if (typeof labelModel.colorIndex === 'number' && labelModel.colorIndex >= 0 && labelModel.colorIndex < MSG_LABEL_PALETTE.length) {
+                          labelColor = MSG_LABEL_PALETTE[labelModel.colorIndex];
+                        } else {
+                          labelColor = '#2196f3'; // fallback blue
+                        }
+
+                        messageChatLabels.push({
+                          id: labelModel.id,
+                          name: labelModel.name,
+                          color: labelColor
+                        });
+                        messageChatTags.push(labelModel.id);
+                      } else {
+                        messageChatTags.push(id);
+                      }
+                    });
+                    console.log('[PrinChat Page] 🏷️ Labels found on incoming message chat:', messageChatTags, 'with colors:', messageChatLabels.map((l: any) => `${l.name}=${l.color}`));
+                  }
+
+                  // PHOTO ENHANCEMENT: Try async Store.ProfilePicThumb.find() which fetches from server
+                  // This works even when the sync .get() cache doesn't have the photo
+                  if (!messageChatPhoto && Store?.ProfilePicThumb?.find) {
+                    try {
+                      for (const variant of chatIdVariants) {
+                        if (messageChatPhoto) break;
+                        const widCandidate = Store?.WidFactory?.createWid?.(sanitizeScopedChatId(variant));
+                        const idToFind = widCandidate || variant;
+                        const profilePicModel = await Store.ProfilePicThumb.find(idToFind);
+                        const foundPhoto = extractPhotoUrl(profilePicModel);
+                        if (foundPhoto) {
+                          messageChatPhoto = foundPhoto;
+                          messagePhotoSource = 'store_profilepic_find_msg';
+                          console.log('[PrinChat Page] 📷 Got photo from async Store.ProfilePicThumb.find() during message');
+                        }
+                      }
+                    } catch (_findErr) {
+                      // ignore, best-effort
                     }
                   }
+                } catch (labelExtractionError) {
+                  console.warn('[PrinChat Page] Label extraction on incoming message failed:', labelExtractionError);
                 }
 
-                if (!messageChatPhoto && Store?.Chat?.find) {
-                  for (const variant of chatIdVariants) {
-                    if (messageChatPhoto) break;
-                    try {
-                      const storeChat = await Store.Chat.find(variant);
-                      messageChatPhoto = extractPhotoUrl(storeChat?.contact) || extractPhotoUrl(storeChat) || '';
-                      if (messageChatPhoto) messagePhotoSource = 'store_chat_find';
-                    } catch (_err) {
-                      // ignore
-                    }
+                document.dispatchEvent(new CustomEvent('PrinChatIncomingMessage', {
+                  detail: {
+                    messageText: messageText, // Use formatted text
+                    chatId: chatId,
+                    timestamp: msgTimestamp,
+                    fromMe,
+                    chatPhoto: messageChatPhoto,
+                    chatName: messageChatName,
+                    chatLabels: messageChatLabels,
+                    chatTags: messageChatTags
                   }
-                }
-
-                if (!messageChatPhoto && Store?.Contact?.get) {
-                  for (const variant of chatIdVariants) {
-                    if (messageChatPhoto) break;
-                    try {
-                      const storeContact = Store.Contact.get(variant);
-                      messageChatPhoto = extractPhotoUrl(storeContact) || '';
-                      if (messageChatPhoto) messagePhotoSource = 'store_contact';
-                    } catch (_err) {
-                      // ignore
-                    }
-                  }
-                }
-
-                if (!messageChatPhoto && (window as any).WPP?.contact?.getProfilePictureUrl) {
-                  const messageLookupIds = collectChatLookupIds(chatId, rawChatId, msg, safeRead(() => msg?.chat), safeRead(() => msg?.senderObj), safeRead(() => msg?.authorObj), ...chatIdVariants);
-                  const fetchedMessagePhoto = await fetchWppProfilePhotoByIds(messageLookupIds);
-                  if (fetchedMessagePhoto) {
-                    messageChatPhoto = fetchedMessagePhoto;
-                    messagePhotoSource = 'wpp_message';
-                  }
-                }
-
-                if (!messageChatPhoto) {
-                  messageChatPhoto = findSidebarPhotoByChat(chatId) || '';
-                  if (messageChatPhoto) messagePhotoSource = 'sidebar';
-                }
-              } catch (photoError: any) {
-                console.warn('[PrinChat Page] Message photo lookup failed (continuing without photo):', photoError?.message || photoError);
-                messageChatPhoto = '';
-              }
-
-              if (messageChatPhoto) {
-                console.log('[PrinChat Page] Photo resolved', {
-                  phase: 'create',
-                  rawChatId,
-                  canonicalChatId: chatId,
-                  photoSource: messagePhotoSource
-                });
-              }
-
-              // Notify content script about new message
-              // getChatInfo in the injector will fetch name/photo
-              const fromMe = !!(
-                safeRead(() => msg?.id?.fromMe)
-                ?? safeRead(() => msg?.fromMe)
-              );
-
-              document.dispatchEvent(new CustomEvent('PrinChatIncomingMessage', {
-                detail: {
-                  messageText: messageText, // Use formatted text
-                  chatId: chatId,
-                  timestamp: msgTimestamp,
-                  fromMe,
-                  chatPhoto: messageChatPhoto
-                }
-              }));
+                }));
               } catch (messageProcessingError: any) {
                 console.error('[PrinChat] Error processing incoming message hook:', messageProcessingError?.message || messageProcessingError);
               }
@@ -2852,18 +3130,64 @@
           console.log('[PrinChat DEBUG] 1. Store.Chat change:labels fired! ID:', chatModel?.id?._serialized);
           console.log('[PrinChat DEBUG] 1. RAW Labels:', JSON.stringify(chatModel?.labels));
 
-          // Sanitize tags: Ensure we send a list of string IDs
+          // Same palette as GET_ALL_LABELS and PrinChatGetChatInfo
+          const LABEL_CHANGE_PALETTE = [
+            '#FF9E9E', '#5AB5E5', '#FDD835', '#C594D7', '#90A4AE',
+            '#26C6DA', '#F48FB1', '#FFB300', '#7986CB', '#D4E157',
+            '#00ACC1', '#FFAB91', '#81C784', '#E57373', '#42A5F5',
+            '#9CCC65', '#FF9800', '#64B5F6', '#BA68C8', '#9575CD'
+          ];
+
+          // Load cached colors from localStorage
+          let cachedLabelColors: Record<string, string> = {};
+          try {
+            const cache = JSON.parse(localStorage.getItem('princhat_label_cache') || '{}');
+            cachedLabelColors = cache.byName || {};
+          } catch (e) { }
+
+          // Sanitize tags and resolve full label info
           let rawLabels = chatModel?.labels || [];
           let cleanTags: string[] = [];
+          let resolvedLabels: { id: string; name: string; color: string }[] = [];
 
           if (Array.isArray(rawLabels)) {
             try {
-              cleanTags = rawLabels.map((l: any) => {
-                // If it's an object with ID, use ID. If strictly string, use string.
-                if (typeof l === 'object' && l?.id) return l.id;
-                if (typeof l === 'string') return l;
-                return String(l); // Fallback
-              }).filter(Boolean); // Remove null/undefined
+              const allLabelModels = Store.Label?.models || Store.Label?._models || [];
+              rawLabels.forEach((l: any) => {
+                const id = (typeof l === 'object' && l?.id) ? l.id : String(l);
+                if (!id) return;
+                cleanTags.push(id);
+
+                // Resolve label name and color from Store.Label
+                let labelModel = Store.Label?.get?.(id);
+                if (!labelModel && allLabelModels.length > 0) {
+                  labelModel = allLabelModels.find((m: any) => m.id === id || m.id?._serialized === id);
+                }
+
+                let labelName = labelModel?.name || `Tag ${id}`;
+                let labelColor = '#2196f3'; // fallback blue
+
+                if (labelModel) {
+                  // Priority 1: cached DOM color
+                  if (labelModel.name && cachedLabelColors[labelModel.name]) {
+                    labelColor = cachedLabelColors[labelModel.name];
+                  }
+                  // Priority 2: hexColor
+                  else if (labelModel.hexColor) {
+                    labelColor = labelModel.hexColor;
+                  }
+                  // Priority 3: string color starting with #
+                  else if (typeof labelModel.color === 'string' && labelModel.color.startsWith('#')) {
+                    labelColor = labelModel.color;
+                  }
+                  // Priority 4: colorIndex palette
+                  else if (typeof labelModel.colorIndex === 'number' && labelModel.colorIndex >= 0 && labelModel.colorIndex < LABEL_CHANGE_PALETTE.length) {
+                    labelColor = LABEL_CHANGE_PALETTE[labelModel.colorIndex];
+                  }
+                }
+
+                resolvedLabels.push({ id, name: labelName, color: labelColor });
+              });
             } catch (err) {
               console.error('[PrinChat DEBUG] 🛑 Error cleaning tags:', err);
             }
@@ -2875,7 +3199,7 @@
           const profilePic = contact?.profilePicThumb?.eurl || contact?.profilePicThumb?.img || '';
           const isGroup = chatModel?.isGroup || false;
 
-          console.log('[PrinChat DEBUG] 2. Sanitized Tags:', cleanTags);
+          console.log('[PrinChat DEBUG] 2. Resolved Tags:', cleanTags, 'Labels:', resolvedLabels.map(l => `${l.name}=${l.color}`));
 
           // Use document.dispatchEvent to ensure content scripts (injector) can assume it
           document.dispatchEvent(new CustomEvent('PrinChatLabelsChanged', {
@@ -2884,6 +3208,7 @@
               reason: 'chat_labels_change',
               chatId: chatModel?.id?._serialized,
               tags: cleanTags,
+              labels: resolvedLabels,
               // Extra data for creating lead if it doesn't exist
               name: name,
               photo: profilePic,
