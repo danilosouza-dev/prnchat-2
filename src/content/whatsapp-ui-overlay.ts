@@ -190,6 +190,7 @@ class WhatsAppUIOverlay {
   private activeKanbanCardMenuButton: HTMLElement | null = null;
   private activeKanbanCardMenuCard: HTMLElement | null = null;
   private activeKanbanCardMenuOutsideHandler: ((event: MouseEvent) => void) | null = null;
+  private sidebarPhotoCache: Map<string, string> = new Map(); // Cache sidebar photos before overlay hides them
 
 
   constructor() {
@@ -10989,6 +10990,10 @@ class WhatsAppUIOverlay {
     // Setup global drag listeners
     // Moved to renderKanbanColumns to ensure elements exist
 
+    // CRITICAL: Cache sidebar photos BEFORE the overlay covers the sidebar.
+    // Once the overlay is appended, the sidebar DOM is hidden and photos can't be scraped.
+    this.cacheSidebarPhotos();
+
     // Find WhatsApp content area and insert overlay
     const whatsappContent = document.querySelector('#app');
     if (whatsappContent) {
@@ -11150,6 +11155,7 @@ class WhatsAppUIOverlay {
       };
 
       if (!leadId) {
+        console.warn('[PrinChat UI] 🔴 DIAG: queueKanbanRender triggered by PrinChatKanbanLeadUpdated (NO leadId)', detail);
         this.queueKanbanRender();
         return;
       }
@@ -11159,7 +11165,14 @@ class WhatsAppUIOverlay {
       // Find and update the card in DOM
       const card = this.findKanbanCardElementByLeadId(leadId);
       if (!card) {
-        this.queueKanbanRender();
+        // Only queue a re-render if one isn't already pending (e.g., from PrinChatKanbanLeadCreated).
+        // Queuing again would reset the debounce timer and delay the existing render.
+        if (!this.renderDebounceTimer) {
+          console.warn('[PrinChat UI] 🟠 DIAG: queueKanbanRender triggered by PrinChatKanbanLeadUpdated (card NOT FOUND for leadId):', leadId);
+          this.queueKanbanRender();
+        } else {
+          console.log('[PrinChat UI] ⏭️ Card not found but render already pending, skipping re-render for:', leadId);
+        }
         return;
       }
 
@@ -11252,12 +11265,21 @@ class WhatsAppUIOverlay {
           card.setAttribute('data-order', updates.order.toString());
         }
 
-        // If card changed column or tags/labels, schedule a full render to keep structure consistent.
+        // If tags/labels changed, update them INLINE (no full re-render to preserve photo/DOM).
         if (
-          Object.prototype.hasOwnProperty.call(updates, 'columnId') ||
           Object.prototype.hasOwnProperty.call(updates, 'tags') ||
           Object.prototype.hasOwnProperty.call(updates, 'labels')
         ) {
+          console.log('[PrinChat UI] 🏷️ Updating tags inline (no re-render)');
+          this.updateCardDOM({
+            id: leadId,
+            tags: updates.tags,
+            labels: updates.labels
+          });
+        }
+
+        if (Object.prototype.hasOwnProperty.call(updates, 'columnId')) {
+          console.warn('[PrinChat UI] 🟡 DIAG: queueKanbanRender triggered by PrinChatKanbanLeadUpdated (columnId changed):', leadId);
           this.queueKanbanRender();
         }
 
@@ -11283,6 +11305,73 @@ class WhatsAppUIOverlay {
         setTimeout(() => card.classList.remove('princhat-kanban-card-updated'), 300);
 
         console.log('[PrinChat UI] ✅ Card updated in DOM');
+
+        // DELAYED PHOTO HYDRATION: If card still has no photo, schedule retries.
+        // WhatsApp lazily loads profile pics; for non-active chats the pic isn't
+        // available at message-arrival time. After a short delay, WhatsApp updates
+        // the sidebar (bumps new-message chats to the top WITH their profile pic)
+        // and also populates the Store contact model.
+        const cardPhotoImg = card.querySelector('.princhat-kanban-lead-photo img') as HTMLImageElement | null;
+        if (!cardPhotoImg) {
+          const chatId = detail.chatId || card.getAttribute('data-lead-id') || leadId;
+          console.log('[PrinChat UI] 📸 No photo on card, scheduling delayed photo hydration for:', chatId);
+
+          const PHOTO_RETRY_DELAYS = [1000, 3000, 8000];
+          (async () => {
+            for (const delay of PHOTO_RETRY_DELAYS) {
+              await new Promise(r => setTimeout(r, delay));
+              if (!this.isKanbanOpen) return;
+
+              // Check if photo was resolved by another path in the meantime
+              const currentCard = this.findKanbanCardElementByLeadId(leadId);
+              if (!currentCard) return; // card removed
+              if (currentCard.querySelector('.princhat-kanban-lead-photo img')) {
+                console.log('[PrinChat UI] 📸 Photo already resolved for:', chatId);
+                return; // already has a photo
+              }
+
+              let resolvedPhoto: string | undefined;
+
+              // 1. Re-scrape sidebar (WhatsApp bumps new-message chats to top)
+              this.refreshSidebarPhotoCache();
+              resolvedPhoto = this.getSidebarPhotoForLead(chatId);
+              if (resolvedPhoto) {
+                console.log('[PrinChat UI] 📸 Got photo from sidebar re-scrape after', delay, 'ms for:', chatId);
+              }
+
+              // 2. Try GET_CHAT_PHOTO (goes through page script Store/WPP strategies)
+              if (!resolvedPhoto) {
+                resolvedPhoto = await this.getChatPhotoForLead(chatId);
+                if (resolvedPhoto) {
+                  console.log('[PrinChat UI] 📸 Got photo from GET_CHAT_PHOTO after', delay, 'ms for:', chatId);
+                }
+              }
+
+              // 3. Apply the photo to the card
+              if (resolvedPhoto && this.isRenderablePhotoUrl(resolvedPhoto)) {
+                const photoContainer = currentCard.querySelector('.princhat-kanban-lead-photo');
+                const resolvedName = (currentCard.querySelector('.princhat-kanban-lead-name')?.textContent || '').trim() || 'U';
+                if (photoContainer) {
+                  photoContainer.innerHTML = `<img src="${resolvedPhoto}" alt="${this.escapeHtml(resolvedName)}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">`;
+                  console.log('[PrinChat UI] 📸 ✅ Photo hydrated on card after', delay, 'ms for:', chatId);
+
+                  // Also update the sidebar photo cache for future use
+                  const identity = this.extractLeadIdentity(chatId);
+                  if (identity) this.sidebarPhotoCache.set(identity.toLowerCase(), resolvedPhoto);
+
+                  // Also persist to DB
+                  this.requestFromContentScript({
+                    type: 'UPDATE_KANBAN_LEAD',
+                    payload: { chatId, updates: { photo: resolvedPhoto } }
+                  }).catch(() => { });
+
+                  return; // Photo found, stop retrying
+                }
+              }
+            }
+            console.log('[PrinChat UI] 📸 ⚠️ All photo retries exhausted for:', chatId);
+          })();
+        }
       }
     });
 
@@ -11293,23 +11382,153 @@ class WhatsAppUIOverlay {
       const { lead } = event.detail;
       console.log('[PrinChat UI] ➕ New lead created:', lead.name);
 
-      // Re-render Kanban to show new card
+      // Re-render Kanban to show new card (might have empty photo/tags initially)
+      console.warn('[PrinChat UI] 🟢 DIAG: queueKanbanRender triggered by PrinChatKanbanLeadCreated:', lead?.name, lead?.id);
       this.queueKanbanRender();
+
+      // CRITICAL FIX: Schedule delayed hydration retries for the new lead.
+      // When a message first arrives, WhatsApp Store often doesn't have the contact
+      // photo/tags ready yet. The initial render will show an empty card.
+      // These retries give WhatsApp time to resolve the contact data.
+      const leadId = lead?.id || lead?.chatId;
+      const chatId = this.resolveLeadChatId(lead) || lead?.chatId || leadId;
+      if (!chatId) return;
+
+      const RETRY_DELAYS = [2000, 5000, 10000, 20000, 30000]; // 2s, 5s, 10s, 20s, 30s — WhatsApp lazy-loads profile pics
+      for (const delay of RETRY_DELAYS) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+        if (!this.isKanbanOpen) return; // Stop if Kanban was closed
+
+        // Check if card still needs data
+        const card = this.findKanbanCardElementByLeadId(leadId || chatId);
+        if (!card) continue; // Card not in DOM yet/anymore
+
+        const hasPhoto = !!card.querySelector('.princhat-kanban-lead-photo img');
+        const hasTags = !!card.querySelector('.princhat-kanban-lead-tags');
+        if (hasPhoto && hasTags) {
+          console.log('[PrinChat UI] ✅ New lead fully hydrated after', delay, 'ms');
+          break; // Card is complete
+        }
+
+        console.log('[PrinChat UI] 💧 Delayed hydration retry for new lead at', delay, 'ms...', { hasPhoto, hasTags });
+        console.log('[PrinChat UI] 🔬 DIAG hydration: chatId =', chatId, 'leadId =', leadId, 'cache size =', this.sidebarPhotoCache.size);
+        try {
+          const info = await this.getContactInfo(chatId);
+          console.log('[PrinChat UI] 🔬 DIAG hydration: getContactInfo returned:', JSON.stringify({
+            hasData: !!info,
+            chatName: info?.chatName,
+            chatPhoto: info?.chatPhoto ? info.chatPhoto.substring(0, 60) + '...' : '(none)',
+            labelsCount: Array.isArray(info?.labels) ? info.labels.length : 0,
+            labels: info?.labels,
+            error: (info as any)?.error,
+            isTimeout: (info as any)?.isTimeout
+          }));
+          const updates: any = {};
+
+          // Resolve photo
+          if (!hasPhoto) {
+            let resolvedPhoto = '';
+            if (this.isRenderablePhotoUrl(info?.chatPhoto)) {
+              resolvedPhoto = String(info.chatPhoto);
+              console.log('[PrinChat UI] 🔬 DIAG hydration: photo from getContactInfo');
+            } else {
+              resolvedPhoto = this.getSidebarPhotoForLead(chatId, info?.chatName || lead?.name) || '';
+              console.log('[PrinChat UI] 🔬 DIAG hydration: getSidebarPhotoForLead =', resolvedPhoto ? resolvedPhoto.substring(0, 60) + '...' : '(none)');
+            }
+            if (!resolvedPhoto) {
+              const directPhoto = await this.getChatPhotoForLead(chatId);
+              resolvedPhoto = directPhoto || '';
+              console.log('[PrinChat UI] 🔬 DIAG hydration: getChatPhotoForLead =', resolvedPhoto ? resolvedPhoto.substring(0, 60) + '...' : '(none)');
+            }
+            if (this.isRenderablePhotoUrl(resolvedPhoto)) {
+              updates.photo = resolvedPhoto;
+            }
+          }
+
+          // Resolve tags/labels
+          if (!hasTags) {
+            const labels = Array.isArray(info?.labels) ? info.labels : [];
+            console.log('[PrinChat UI] 🔬 DIAG hydration: labels from getContactInfo:', labels);
+            if (labels.length > 0) {
+              updates.tags = labels.map((l: any) => l.id).filter(Boolean);
+              updates.labels = labels;
+            }
+          }
+
+          if (Object.keys(updates).length > 0) {
+            console.log('[PrinChat UI] 💧 Delayed hydration got data:', Object.keys(updates));
+
+            // Update card in DOM
+            this.updateCardDOM({
+              id: leadId,
+              chatId,
+              name: info?.chatName || lead?.name,
+              ...updates
+            });
+
+            // Persist to DB
+            if (leadId) {
+              this.requestFromContentScript({
+                type: 'UPDATE_KANBAN_LEAD',
+                payload: { leadId, updates }
+              }).catch(() => null);
+            }
+
+            // If we got everything, stop retrying
+            if (updates.photo && updates.tags) {
+              console.log('[PrinChat UI] ✅ New lead fully hydrated after', delay, 'ms');
+              break;
+            }
+          } else {
+            console.log('[PrinChat UI] 🔬 DIAG hydration: NO useful data resolved at', delay, 'ms');
+          }
+        } catch (err) {
+          console.warn('[PrinChat UI] ⚠️ Delayed hydration attempt failed:', err);
+        }
+      }
     });
 
-    // Listen for label/tag changes (colors or new labels)
     // Listen for label/tag changes (colors or new labels)
     document.addEventListener('PrinChatLabelsChanged', async (event: any) => {
       try {
         console.log('[PrinChat UI] 🏷️📥 Label change detected!', event.detail);
 
-        // ALWAYS clear cache (even if Kanban closed) to ensure fresh data on next open
-        this.globalLabels = [];
-        console.log('[PrinChat UI] ✅ Cache cleared');
+        // Refresh labels cache WITHOUT clearing first — prevents flash of colorless tags.
+        // Keep old cache until fresh data arrives so any interim renders still have colors.
+        this.requestFromContentScript({ type: 'GET_ALL_LABELS' })
+          .then(res => {
+            if (res?.data?.labels) {
+              this.globalLabels = res.data.labels;
+              console.log('[PrinChat UI] ✅ Labels cache refreshed:', this.globalLabels.length);
+            }
+          })
+          .catch(err => console.error('[PrinChat UI] ⚠️ Failed to refresh labels:', err));
 
         // If event includes specific chat data, update that card INSTANTLY
         if (event.detail?.chatId && event.detail?.tags !== undefined) {
           console.log('[PrinChat UI] 🎯 Specific chat update detected - applying instant update');
+
+          // CRITICAL: Merge event labels into globalLabels so instant update can resolve names/colors
+          const eventLabels = event.detail?.labels;
+          if (Array.isArray(eventLabels) && eventLabels.length > 0) {
+            eventLabels.forEach((label: any) => {
+              if (!label?.id || !label?.name) return;
+              const existing = this.globalLabels.find(g => g.id === label.id);
+              if (existing) {
+                // Update name/color if the new data is better
+                if (label.name) existing.name = label.name;
+                if (typeof label.color === 'string' && label.color.startsWith('#')) existing.color = label.color;
+              } else {
+                this.globalLabels.push({
+                  id: label.id,
+                  name: label.name,
+                  color: (typeof label.color === 'string' && label.color.startsWith('#')) ? label.color : '#2196f3'
+                });
+              }
+            });
+            console.log('[PrinChat UI] 🏷️ Merged event labels into globalLabels. Total:', this.globalLabels.length);
+          }
+
           await this.updateCardTagsInstantly(event.detail.chatId, event.detail.tags, false);
         }
 
@@ -11317,8 +11536,8 @@ class WhatsAppUIOverlay {
         // Only re-render if Kanban is currently open
         if (this.isKanbanOpen) {
           console.log('[PrinChat UI] 🔄 Kanban open - queuing re-render...');
+          console.warn('[PrinChat UI] 🔵 DIAG: queueKanbanRender triggered by PrinChatLabelsChanged:', event.detail?.reason, event.detail?.chatId);
           this.queueKanbanRender();
-          // await this.renderKanbanColumns(); // Removed to use debounce
         } else {
           console.log('[PrinChat UI] 💤 Kanban closed - will fetch fresh on next open');
         }
@@ -11738,9 +11957,113 @@ class WhatsAppUIOverlay {
     return src.startsWith('http') || src.startsWith('blob:') || src.startsWith('data:image/');
   }
 
+  /**
+   * Cache all visible sidebar contact photos into sidebarPhotoCache.
+   * Must be called BEFORE the Kanban overlay hides the sidebar.
+   */
+  private cacheSidebarPhotos(): void {
+    this.sidebarPhotoCache.clear();
+    const roots = Array.from(document.querySelectorAll('#pane-side, #side'));
+    const searchRoots = roots.length > 0 ? roots : [document.body];
+
+    for (const root of searchRoots) {
+      if (!root) continue;
+      // WhatsApp uses role="row" (not data-id) for sidebar chat rows
+      const rows = Array.from(root.querySelectorAll('[role="row"]')) as HTMLElement[];
+      for (const row of rows) {
+        // Find span[title] with contact name/phone  
+        const titleSpan = row.querySelector('span[title]') as HTMLElement | null;
+        if (!titleSpan) continue;
+        const title = titleSpan.getAttribute('title') || titleSpan.textContent || '';
+        if (!title) continue;
+
+        // Find image in this row
+        const images = Array.from(row.querySelectorAll('img')) as HTMLImageElement[];
+        for (const img of images) {
+          if (this.isRenderablePhotoUrl(img.src)) {
+            // Cache by phone digits extracted from title (e.g. "+55 33 9704-8517" → "553397048517")
+            const titleDigits = title.replace(/\D/g, '');
+            if (titleDigits.length >= 8) {
+              this.sidebarPhotoCache.set(titleDigits, img.src);
+            }
+            // Also cache by the name (lowercased)
+            const titleLower = title.trim().toLowerCase();
+            if (titleLower) {
+              this.sidebarPhotoCache.set(titleLower, img.src);
+            }
+            break;
+          }
+        }
+      }
+    }
+    console.log('[PrinChat UI] 📸 Cached', this.sidebarPhotoCache.size, 'sidebar photos before overlay');
+  }
+
+  /**
+   * Refresh sidebar photo cache WITHOUT clearing existing entries.
+   * Used during delayed photo hydration to pick up newly-rendered sidebar rows.
+   */
+  private refreshSidebarPhotoCache(): void {
+    const roots = Array.from(document.querySelectorAll('#pane-side, #side'));
+    const searchRoots = roots.length > 0 ? roots : [document.body];
+    let newEntries = 0;
+
+    for (const root of searchRoots) {
+      if (!root) continue;
+      const rows = Array.from(root.querySelectorAll('[role="row"]')) as HTMLElement[];
+      for (const row of rows) {
+        const titleSpan = row.querySelector('span[title]') as HTMLElement | null;
+        if (!titleSpan) continue;
+        const title = titleSpan.getAttribute('title') || titleSpan.textContent || '';
+        if (!title) continue;
+
+        // Extract phone digits and name for cache key
+        const titleDigits = title.replace(/\D/g, '');
+        const titleLower = title.trim().toLowerCase();
+
+        // Skip if already cached
+        if (titleDigits.length >= 8 && this.sidebarPhotoCache.has(titleDigits)) continue;
+        if (titleLower && this.sidebarPhotoCache.has(titleLower)) continue;
+
+        const images = Array.from(row.querySelectorAll('img')) as HTMLImageElement[];
+        for (const img of images) {
+          if (this.isRenderablePhotoUrl(img.src)) {
+            if (titleDigits.length >= 8) {
+              this.sidebarPhotoCache.set(titleDigits, img.src);
+            }
+            if (titleLower) {
+              this.sidebarPhotoCache.set(titleLower, img.src);
+            }
+            newEntries++;
+            break;
+          }
+        }
+      }
+    }
+    if (newEntries > 0) {
+      console.log('[PrinChat UI] 📸 Refreshed sidebar cache, added', newEntries, 'new entries. Total:', this.sidebarPhotoCache.size);
+    }
+  }
+
   private getSidebarPhotoForLead(chatId: string, chatName?: string): string | undefined {
     const variants = this.buildLeadChatVariants(chatId);
     if (variants.length === 0) return undefined;
+
+    // Check cache first (sidebar may be hidden by Kanban overlay)
+    const identity = this.extractLeadIdentity(chatId);
+    if (identity) {
+      const cachedByIdentity = this.sidebarPhotoCache.get(identity.toLowerCase());
+      if (cachedByIdentity && this.isRenderablePhotoUrl(cachedByIdentity)) return cachedByIdentity;
+    }
+    for (const variant of variants) {
+      const cachedByVariant = this.sidebarPhotoCache.get(variant.toLowerCase());
+      if (cachedByVariant && this.isRenderablePhotoUrl(cachedByVariant)) return cachedByVariant;
+    }
+    // Check by contact name (saved contacts show name, not phone, in sidebar)
+    if (chatName) {
+      const cachedByName = this.sidebarPhotoCache.get(chatName.trim().toLowerCase());
+      if (cachedByName && this.isRenderablePhotoUrl(cachedByName)) return cachedByName;
+    }
 
     const roots = Array.from(document.querySelectorAll('#pane-side, #side'));
     const searchRoots = roots.length > 0 ? roots : [document.body];
@@ -11765,20 +12088,47 @@ class WhatsAppUIOverlay {
       return undefined;
     };
 
+    // Extract phone digits from chatId for matching
+    const chatIdDigits = this.extractLeadIdentity(chatId).replace(/\D/g, '');
+
     for (const root of searchRoots) {
       if (!root) continue;
 
-      const rows = Array.from(root.querySelectorAll('[data-id]')) as HTMLElement[];
+      // Strategy 1: role="row" with span[title] phone-digit matching
+      const rows = Array.from(root.querySelectorAll('[role="row"]')) as HTMLElement[];
       for (const row of rows) {
+        const titleSpans = Array.from(row.querySelectorAll('span[title]')) as HTMLElement[];
+        for (const span of titleSpans) {
+          const title = span.getAttribute('title') || span.textContent || '';
+          if (!title) continue;
+
+          const titleDigits = title.replace(/\D/g, '');
+          const isPhoneMatch = chatIdDigits.length >= 8 && titleDigits.length >= 8 && (
+            chatIdDigits.endsWith(titleDigits) || titleDigits.endsWith(chatIdDigits) ||
+            chatIdDigits.includes(titleDigits) || titleDigits.includes(chatIdDigits)
+          );
+          const isNameMatch = chatName && title.trim().toLowerCase() === chatName.trim().toLowerCase();
+
+          if (isPhoneMatch || isNameMatch) {
+            const photo = findElementPhoto(row);
+            if (photo) return photo;
+          }
+        }
+      }
+
+      // Strategy 2: Legacy [data-id] matching (for older WA builds)
+      const dataIdRows = Array.from(root.querySelectorAll('[data-id]')) as HTMLElement[];
+      for (const row of dataIdRows) {
         const dataId = String(row.getAttribute('data-id') || '').toLowerCase();
         if (!dataId) continue;
         if (!variants.some((variant) => dataId.includes(variant))) continue;
 
-        const listItem = row.closest('[role="listitem"]') || row;
-        const photo = findElementPhoto(listItem);
+        const container = row.closest('[role="row"]') || row.closest('[role="listitem"]') || row;
+        const photo = findElementPhoto(container);
         if (photo) return photo;
       }
 
+      // Strategy 3: Fallback — search all span[title] for chatName match  
       if (chatName) {
         const normalizedName = chatName.trim().toLowerCase();
         const titleNodes = Array.from(root.querySelectorAll('span[title], div[title]')) as HTMLElement[];
@@ -11786,8 +12136,8 @@ class WhatsAppUIOverlay {
           const title = String(node.getAttribute('title') || node.textContent || '').trim().toLowerCase();
           if (!title || title !== normalizedName) continue;
 
-          const listItem = node.closest('[role="listitem"]') || node.closest('[data-id]') || node.parentElement;
-          const photo = findElementPhoto(listItem);
+          const container = node.closest('[role="row"]') || node.closest('[role="listitem"]') || node.closest('[data-id]') || node.parentElement;
+          const photo = findElementPhoto(container);
           if (photo) return photo;
         }
       }
@@ -11879,25 +12229,21 @@ class WhatsAppUIOverlay {
 
       console.log('[PrinChat UI] 🔍 DEBUG: About to fetch/check labels. this.globalLabels.length =', this.globalLabels.length);
 
-      // OPTIMIZATION: Do NOT block rendering for labels.
-      // If we have them (from background fetch), great. If not, we render without colors
-      // and they will be fixed on next render/refresh.
+      // Quick label fetch with a short timeout — don't block rendering for too long.
       if (this.globalLabels.length === 0) {
-        console.log('[PrinChat UI] ⏳ Labels not ready yet. Triggering background fetch...');
-        // Fire and forget catch-up
-        this.requestFromContentScript({ type: 'GET_ALL_LABELS' })
-          .then(res => {
-            if (res?.data?.labels) {
-              this.globalLabels = res.data.labels;
-              console.log('[PrinChat UI] Late label fetch complete.');
-              // CRITICAL FIX: Re-render columns if Kanban is still open to apply colors
-              if (this.isKanbanOpen) {
-                console.log('[PrinChat UI] 🎨 Re-rendering Kanban with new labels...');
-                this.queueKanbanRender();
-              }
-            }
-          })
-          .catch(console.error);
+        console.log('[PrinChat UI] ⏳ Labels not ready yet. Quick fetch (2s timeout)...');
+        try {
+          const labelsRes = await Promise.race([
+            this.requestFromContentScript({ type: 'GET_ALL_LABELS' }),
+            new Promise(resolve => setTimeout(() => resolve(null), 2000))
+          ]) as any;
+          if (labelsRes?.data?.labels) {
+            this.globalLabels = labelsRes.data.labels;
+            console.log('[PrinChat UI] ✅ Labels fetched:', this.globalLabels.length);
+          }
+        } catch (labelErr) {
+          console.error('[PrinChat UI] ⚠️ Failed to fetch labels:', labelErr);
+        }
       } else {
         console.log('[PrinChat UI] Using cached global labels:', this.globalLabels.length);
       }
@@ -11907,6 +12253,46 @@ class WhatsAppUIOverlay {
       const leadsResponse = await this.requestFromContentScript({ type: 'GET_ALL_KANBAN_LEADS' });
       const allLeads = leadsResponse?.data || [];
       console.log('[PrinChat UI] Loaded', allLeads.length, 'total leads');
+
+      // FALLBACK: If globalLabels is still empty (GET_ALL_LABELS timed out),
+      // populate from lead.labels data which already has correct names and colors
+      // from the PrinChatIncomingMessage event.
+      if (this.globalLabels.length === 0) {
+        const seenIds = new Set<string>();
+        allLeads.forEach((lead: any) => {
+          if (Array.isArray(lead.labels)) {
+            lead.labels.forEach((label: any) => {
+              if (label?.id && label?.name && !seenIds.has(label.id)) {
+                seenIds.add(label.id);
+                this.globalLabels.push({
+                  id: label.id,
+                  name: label.name,
+                  color: (typeof label.color === 'string' && label.color.startsWith('#')) ? label.color : '#2196f3'
+                });
+              }
+            });
+          }
+        });
+        if (this.globalLabels.length > 0) {
+          console.log('[PrinChat UI] 🏷️ Populated globalLabels from lead.labels fallback:', this.globalLabels.length);
+        }
+      }
+
+      // DIAGNOSTIC: Log photo/tags status for each lead at render time
+      allLeads.forEach((lead: any) => {
+        const hasPhoto = this.isRenderablePhotoUrl(lead.photo);
+        const hasTags = Array.isArray(lead.tags) && lead.tags.length > 0;
+        if (!hasPhoto || !hasTags) {
+          console.warn('[PrinChat UI] 🔍 DIAG RENDER: Lead missing data:', {
+            id: lead.id,
+            name: lead.name,
+            hasPhoto,
+            photoValue: lead.photo ? lead.photo.substring(0, 50) + '...' : '(empty)',
+            hasTags,
+            tags: lead.tags
+          });
+        }
+      });
 
       const systemLeads = allLeads.filter((lead: any) => this.isSystemChatLead(lead));
       const visibleLeads = allLeads.filter((lead: any) => !this.isSystemChatLead(lead));
@@ -11957,6 +12343,13 @@ class WhatsAppUIOverlay {
       columns.forEach((column: any) => {
         const columnLeads = leadsWithContactInfo.filter((l: any) => l.columnId === column.id)
           .sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
+        // DIAGNOSTIC: Log globalLabels status at render time
+        console.log('[PrinChat UI] 🔍 DIAG RENDER: globalLabels.length =', this.globalLabels.length, 'sample:', this.globalLabels.slice(0, 3).map(l => `${l.id}=${l.name}(${l.color})`));
+        leadsWithContactInfo.forEach((lead: any) => {
+          if (lead.tags && lead.tags.length > 0) {
+            console.log('[PrinChat UI] 🔍 DIAG RENDER: Lead', lead.name, 'tags:', lead.tags, 'labels:', JSON.stringify(lead.labels));
+          }
+        });
         const columnEl = this.createColumnElement(column, columnLeads, this.globalLabels);
         fragment.appendChild(columnEl);
       });
@@ -12011,7 +12404,7 @@ class WhatsAppUIOverlay {
   private async hydrateLeadsInBackground(leads: any[]) {
     console.log(`[PrinChat UI] 💧 Starting background hydration for ${leads.length} leads...`);
     const BATCH_SIZE = 4;
-    const RETRY_DELAYS_MS = [0, 1200, 2600];
+    const RETRY_DELAYS_MS = [0, 2000, 5000, 10000, 20000]; // Extended for WhatsApp lazy-loaded photos
 
     for (let i = 0; i < leads.length; i += BATCH_SIZE) {
       const batch = leads.slice(i, i + BATCH_SIZE);
@@ -12068,15 +12461,27 @@ class WhatsAppUIOverlay {
               updates.photo = resolvedPhoto;
             }
 
+            // GUARD: Only update tags/labels if the fresh data is actually BETTER.
+            // "Better" = has names and valid hex colors. Don't overwrite correct
+            // event-sourced labels with potentially inferior getContactInfo data.
             if (hasFreshLabels) {
-              const currentTags = Array.isArray(currentLead.tags) ? currentLead.tags : [];
-              if (JSON.stringify(currentTags) !== JSON.stringify(nextTags)) {
-                updates.tags = nextTags;
-              }
-
               const currentLabels = Array.isArray((currentLead as any).labels) ? (currentLead as any).labels : [];
-              if (JSON.stringify(currentLabels) !== JSON.stringify(nextLabels)) {
-                updates.labels = nextLabels;
+              const currentHasCompleteLabels = currentLabels.length > 0 &&
+                currentLabels.every((l: any) => l.name && typeof l.color === 'string' && l.color.startsWith('#'));
+              const freshHasCompleteLabels = labels.length > 0 &&
+                labels.every((l: any) => l.name && typeof l.color === 'string' && l.color.startsWith('#'));
+
+              // Only overwrite if fresh data is complete OR current data is incomplete
+              if (freshHasCompleteLabels || !currentHasCompleteLabels) {
+                const currentTags = Array.isArray(currentLead.tags) ? currentLead.tags : [];
+                if (JSON.stringify(currentTags) !== JSON.stringify(nextTags)) {
+                  updates.tags = nextTags;
+                }
+                if (JSON.stringify(currentLabels) !== JSON.stringify(nextLabels)) {
+                  updates.labels = nextLabels;
+                }
+              } else {
+                console.log('[PrinChat UI] 💧 Hydration: skipping label overwrite — existing labels are better quality');
               }
             }
 
@@ -12201,8 +12606,8 @@ class WhatsAppUIOverlay {
       let textShadow = 'none';
 
       if (tagColor) {
-        // Tag Color at 30% opacity (Legacy Style from Commit 9915674)
-        finalBg = `color-mix(in srgb, ${safeColor} 30%, transparent)`;
+        // Tag Color at 30% opacity — use hex alpha (4D = ~30%) to match createColumnElement
+        finalBg = `${safeColor}4D`;
         finalColor = safeColor;
         textShadow = 'none';
       }
@@ -12428,14 +12833,14 @@ class WhatsAppUIOverlay {
             let textShadow = 'none';
 
             if (labelColor) {
-              // Tag Color at 30% opacity (Legacy Style from Commit 9915674)
-              finalBg = `color-mix(in srgb, ${labelColor} 30%, transparent)`;
+              // Tag Color at 30% opacity (hex alpha 4D ≈ 30%)
+              finalBg = `${labelColor}4D`;
               finalColor = labelColor;
               textShadow = 'none';
             }
 
             return `
-            <span class="princhat-kanban-tag princhat-kanban-tag-unified" style="background-color: ${labelColor ? labelColor + '4D' : finalBg}; color: ${finalColor} !important; text-shadow: ${textShadow}; margin-right: 4px;">
+            <span class="princhat-kanban-tag princhat-kanban-tag-unified" style="background-color: ${finalBg}; color: ${finalColor} !important; text-shadow: ${textShadow}; margin-right: 4px;">
               <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
                 <line x1="7" x2="7.01" y1="7" y2="7"/>

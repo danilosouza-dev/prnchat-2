@@ -622,6 +622,9 @@
       const variants = this.buildChatIdVariants(chatId);
       if (variants.length === 0) return undefined;
 
+      // Extract phone digits from chatId (e.g., "553397048517@c.us" → "553397048517")
+      const chatIdDigits = (chatId || '').replace(/@.*$/, '').replace(/\D/g, '');
+
       const roots = Array.from(document.querySelectorAll('#pane-side, #side'));
       const searchRoots = roots.length > 0 ? roots : [document.body];
 
@@ -645,20 +648,50 @@
       for (const root of searchRoots) {
         if (!root) continue;
 
-        const rows = Array.from(root.querySelectorAll('[data-id]')) as HTMLElement[];
+        // Strategy 1: role="row" with span[title] phone-digit matching
+        const rows = Array.from(root.querySelectorAll('[role="row"]')) as HTMLElement[];
         for (const row of rows) {
+          const titleSpans = Array.from(row.querySelectorAll('span[title]')) as HTMLElement[];
+          for (const span of titleSpans) {
+            const title = span.getAttribute('title') || span.textContent || '';
+            if (!title) continue;
+
+            // Match by phone digits
+            const titleDigits = title.replace(/\D/g, '');
+            const isPhoneMatch = chatIdDigits.length >= 8 && titleDigits.length >= 8 && (
+              chatIdDigits.endsWith(titleDigits) || titleDigits.endsWith(chatIdDigits) ||
+              chatIdDigits.includes(titleDigits) || titleDigits.includes(chatIdDigits)
+            );
+
+            // Match by exact name
+            const isNameMatch = chatName && title.trim().toLowerCase() === chatName.trim().toLowerCase();
+
+            if (isPhoneMatch || isNameMatch) {
+              const photo = findElementPhoto(row);
+              if (photo) {
+                this.logPhotoResolution(chatId || '', 'rehydrate', 'sidebar', photo);
+                return photo;
+              }
+            }
+          }
+        }
+
+        // Strategy 2: Legacy [data-id] matching (for older WA builds)
+        const dataIdRows = Array.from(root.querySelectorAll('[data-id]')) as HTMLElement[];
+        for (const row of dataIdRows) {
           const dataId = String(row.getAttribute('data-id') || '').toLowerCase();
           if (!dataId) continue;
           if (!variants.some((variant) => dataId.includes(variant))) continue;
 
-          const listItem = row.closest('[role="listitem"]') || row;
-          const photo = findElementPhoto(listItem);
+          const container = row.closest('[role="row"]') || row.closest('[role="listitem"]') || row;
+          const photo = findElementPhoto(container);
           if (photo) {
             this.logPhotoResolution(chatId || '', 'rehydrate', 'sidebar', photo);
             return photo;
           }
         }
 
+        // Strategy 3: Fallback — search all span[title] for chatName match
         if (chatName) {
           const normalizedName = chatName.trim().toLowerCase();
           const titleNodes = Array.from(root.querySelectorAll('span[title], div[title]')) as HTMLElement[];
@@ -666,8 +699,8 @@
             const title = String(node.getAttribute('title') || node.textContent || '').trim().toLowerCase();
             if (!title || title !== normalizedName) continue;
 
-            const listItem = node.closest('[role="listitem"]') || node.closest('[data-id]') || node.parentElement;
-            const photo = findElementPhoto(listItem);
+            const container = node.closest('[role="row"]') || node.closest('[role="listitem"]') || node.closest('[data-id]') || node.parentElement;
+            const photo = findElementPhoto(container);
             if (photo) {
               this.logPhotoResolution(chatId || '', 'rehydrate', 'sidebar', photo);
               return photo;
@@ -1159,8 +1192,8 @@
 
       // Listen for incoming messages from page script (for triggers)
       document.addEventListener('PrinChatIncomingMessage', async (event: any) => {
-        const { messageText, chatId, timestamp, fromMe, chatPhoto: eventChatPhoto } = event.detail;
-        console.log('[PrinChat] Message detected:', messageText, 'from:', chatId, 'fromMe:', fromMe);
+        const { messageText, chatId, timestamp, fromMe, chatPhoto: eventChatPhoto, chatName: eventChatName, chatLabels: eventChatLabels, chatTags: eventChatTags } = event.detail;
+        console.log('[PrinChat] Message detected:', messageText, 'from:', chatId, 'fromMe:', fromMe, 'eventLabels:', eventChatTags);
 
         // Send to service worker to check triggers (ONLY for incoming messages)
         if (!fromMe) {
@@ -1322,6 +1355,23 @@
               }
             }
 
+            // FALLBACK: Use labels/name from the PrinChatIncomingMessage event
+            // (extracted directly from WhatsApp Store by the page script)
+            if ((!updates.tags || updates.tags.length === 0) && Array.isArray(eventChatTags) && eventChatTags.length > 0) {
+              updates.tags = eventChatTags;
+              console.log('[PrinChat Kanban] Using event tags for existing lead:', eventChatTags);
+            }
+            if ((!updates.labels || updates.labels.length === 0) && Array.isArray(eventChatLabels) && eventChatLabels.length > 0) {
+              updates.labels = eventChatLabels;
+              console.log('[PrinChat Kanban] Using event labels for existing lead:', eventChatLabels);
+              if (!updates.tags || updates.tags.length === 0) {
+                updates.tags = eventChatLabels.map((l: any) => l?.id || l?.name).filter(Boolean);
+              }
+            }
+            if (!updates.name && eventChatName) {
+              updates.name = eventChatName;
+            }
+
             // Use message-level photo as immediate fallback for incoming events.
             // Outgoing events can resolve to self context on some WA builds.
             if (!updates.photo && !fromMe && this.isRenderablePhotoUrl(eventChatPhoto)) {
@@ -1429,8 +1479,17 @@
           const normalizedLeadChatId = resolvedChatId || (phoneNumber ? `${phoneNumber}@c.us` : this.normalizeChatIdentifier(chatId));
 
           // Create new lead with unread count
-          const chatInfoLabels = Array.isArray(chatInfo?.labels) ? chatInfo.labels.filter(Boolean) : [];
-          const chatInfoTagsRaw = Array.isArray(chatInfo?.tags) ? chatInfo.tags.filter(Boolean) : [];
+          // Use labels from chatInfo, OR fallback to event labels from page script
+          let chatInfoLabels = Array.isArray(chatInfo?.labels) ? chatInfo.labels.filter(Boolean) : [];
+          if (chatInfoLabels.length === 0 && Array.isArray(eventChatLabels) && eventChatLabels.length > 0) {
+            chatInfoLabels = eventChatLabels;
+            console.log('[PrinChat Kanban] Using event labels for new lead:', chatInfoLabels);
+          }
+          let chatInfoTagsRaw = Array.isArray(chatInfo?.tags) ? chatInfo.tags.filter(Boolean) : [];
+          if (chatInfoTagsRaw.length === 0 && Array.isArray(eventChatTags) && eventChatTags.length > 0) {
+            chatInfoTagsRaw = eventChatTags;
+            console.log('[PrinChat Kanban] Using event tags for new lead:', chatInfoTagsRaw);
+          }
           const chatInfoTags = chatInfoTagsRaw.length > 0
             ? chatInfoTagsRaw
             : chatInfoLabels.map((label: any) => label?.id || label?.name).filter(Boolean);
@@ -1478,10 +1537,42 @@
 
       });
 
+      // Listen for delayed photo updates from page script (sidebar retry)
+      document.addEventListener('PrinChatPhotoUpdate', async (event: any) => {
+        const { chatId: updateChatId, chatPhoto } = event.detail || {};
+        if (!updateChatId || !this.isRenderablePhotoUrl(chatPhoto)) return;
+
+        console.log('[PrinChat Kanban] Received delayed photo update for', updateChatId);
+        try {
+          // Find the lead by chatId
+          const variants = this.buildChatIdVariants(updateChatId);
+          const allLeads = await this.sendRuntimeMessage({ type: 'GET_ALL_KANBAN_LEADS' });
+          if (!allLeads?.success || !Array.isArray(allLeads.data)) return;
+
+          const matchLead = allLeads.data.find((lead: any) => {
+            const leadVariants = this.buildChatIdVariants(lead.chatId);
+            return variants.some(v => leadVariants.includes(v));
+          });
+
+          if (matchLead?.id) {
+            await this.sendRuntimeMessage({
+              type: 'UPDATE_KANBAN_LEAD',
+              payload: { leadId: matchLead.id, updates: { photo: chatPhoto } }
+            });
+            document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
+              detail: { leadId: matchLead.id, updates: { photo: chatPhoto } }
+            }));
+            console.log('[PrinChat Kanban] Updated lead photo from delayed sidebar retry:', matchLead.name || updateChatId);
+          }
+        } catch (err) {
+          console.warn('[PrinChat Kanban] Delayed photo update failed:', err);
+        }
+      });
+
       // Listen for label/tag changes (from page script)
       document.addEventListener('PrinChatLabelsChanged', async (event: any) => {
-        const { chatId, tags, name, photo, isGroup } = event.detail;
-        console.log('[PrinChat DEBUG] 4. Injector received PrinChatLabelsChanged!', chatId, tags);
+        const { chatId, tags, labels, name, photo, isGroup } = event.detail;
+        console.log('[PrinChat DEBUG] 4. Injector received PrinChatLabelsChanged!', chatId, tags, labels?.length);
 
         if (!chatId || !tags) {
           console.warn('[PrinChat DEBUG] ⚠️ Missing chatId or tags in event');
@@ -1502,13 +1593,19 @@
             canonicalIdentity
           });
 
+          // Build updates with tags AND labels (names/colors)
+          const updatePayload: any = { tags: tags };
+          if (Array.isArray(labels) && labels.length > 0) {
+            updatePayload.labels = labels;
+          }
+
           console.log('[PrinChat DEBUG] 5. Sending UPDATE_KANBAN_LEAD to Background...');
           // Update database directly
           const updateResult = await this.sendRuntimeMessage({
             type: 'UPDATE_KANBAN_LEAD',
             payload: {
               leadId: chatId,
-              updates: { tags: tags }
+              updates: updatePayload
             }
           });
 
@@ -1521,8 +1618,8 @@
             // We use LEAD_UPDATED event which UI Overlay listens to
             document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
               detail: {
-                leadId: updateResult.data?.id, // This might be undefined if background doesn't return data object
-                changes: { tags: tags }
+                leadId: updateResult.data?.id,
+                changes: updatePayload
               }
             }));
             console.log('[PrinChat DEBUG] 8. Dispatched PrinChatKanbanLeadUpdated');
@@ -1697,21 +1794,18 @@
           }));
           console.log('[PrinChat] ✅ Response sent to UI overlay');
         } catch (error: any) {
-          // Suppress "Extension context invalidated" error logs as requested
-          if (error.message?.includes('Extension context invalidated')) {
-            // Silently fail/ignore as user requested no error logs/banner for this
-            return;
+          const errorMessage = error.message || 'Unknown error';
+
+          // Suppress "Extension context invalidated" log noise, but ALWAYS
+          // send a response back so the UI overlay doesn't hang until timeout.
+          if (!error.message?.includes('Extension context invalidated')) {
+            console.error('[PrinChat] ❌ Error handling UI request:', error);
           }
-
-          console.error('[PrinChat] ❌ Error handling UI request:', error);
-
-          // Provide better error message for context invalidation
-          let errorMessage = error.message || 'Unknown error';
 
           document.dispatchEvent(new CustomEvent('PrinChatUIResponse', {
             detail: {
               requestId,
-              response: { success: false, error: errorMessage }
+              response: { success: false, error: errorMessage, isContextInvalidated: error.message?.includes('Extension context invalidated') }
             }
           }));
         }
