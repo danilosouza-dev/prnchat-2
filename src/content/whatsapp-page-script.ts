@@ -432,43 +432,16 @@
 
   const fetchWppProfilePhotoByIds = async (candidateIds: string[]): Promise<string | undefined> => {
     const WPP = safeRead(() => (window as any).WPP);
-    if (!WPP?.contact?.getProfilePictureUrl && !WPP?.contact?.get && !WPP?.chat?.get) return undefined;
+    // WPP.contact.getProfilePictureUrl is permanently broken (Cannot read properties of undefined reading 'm')
+    // Skip it entirely to avoid spamming errors. Only use model extraction fallbacks.
+    if (!WPP?.contact?.get && !WPP?.chat?.get) return undefined;
 
-    const Store = safeRead(() => (window as any).Store);
-    const widFactory = safeRead(() => WPP?.whatsapp?.WidFactory) || safeRead(() => Store?.WidFactory);
     const seen = new Set<string>();
 
     for (const raw of candidateIds) {
       const normalized = sanitizeScopedChatId(raw);
       if (!normalized || seen.has(normalized)) continue;
       seen.add(normalized);
-
-      try {
-        if (WPP?.contact?.getProfilePictureUrl) {
-          const direct = await WPP.contact.getProfilePictureUrl(normalized);
-          const directPhoto = normalizeImageSourceCandidate(direct) || extractPhotoUrl(direct);
-          if (directPhoto) return directPhoto;
-        }
-      } catch (error) {
-        if (!isKnownWppInteropError(error)) {
-          // best-effort only; continue fallback chain
-        }
-      }
-
-      if (widFactory?.createWid) {
-        try {
-          const wid = widFactory.createWid(normalized);
-          if (WPP?.contact?.getProfilePictureUrl) {
-            const viaWid = await WPP.contact.getProfilePictureUrl(wid);
-            const viaWidPhoto = normalizeImageSourceCandidate(viaWid) || extractPhotoUrl(viaWid);
-            if (viaWidPhoto) return viaWidPhoto;
-          }
-        } catch (error) {
-          if (!isKnownWppInteropError(error)) {
-            // best-effort only; continue fallback chain
-          }
-        }
-      }
 
       if (WPP?.contact?.get) {
         try {
@@ -2289,6 +2262,23 @@
                 if (foundPhoto) {
                   return foundPhoto;
                 }
+                // Force server fetch if model exists but has no photo
+                if (profilePic && !foundPhoto) {
+                  if (typeof profilePic.genUrl === 'function') {
+                    try {
+                      await profilePic.genUrl();
+                      const genPhoto = extractPhotoUrl(profilePic);
+                      if (genPhoto) return genPhoto;
+                    } catch (_e) { /* continue */ }
+                  }
+                  if (typeof profilePic.getUrl === 'function') {
+                    try {
+                      const url = await profilePic.getUrl();
+                      const normalized = normalizeImageSourceCandidate(url);
+                      if (normalized) return normalized;
+                    } catch (_e) { /* continue */ }
+                  }
+                }
               } catch (_err) {
                 // continue trying
               }
@@ -2411,13 +2401,106 @@
           const fallbackPhoneNumber = resolvePhoneNumberForLookup(null, null, resolvedChatId || chatId);
           let fallbackPhoto = '';
           let fallbackPhotoSource = 'not_found';
-          const sidebarFallbackPhoto =
-            findSidebarPhotoByChat(chatId)
-            || findSidebarPhotoByChat(normalizeChatIdWithDomain(chatId) || chatId);
-          if (sidebarFallbackPhoto) {
-            fallbackPhoto = sidebarFallbackPhoto;
-            fallbackPhotoSource = 'chatInfo.sidebar';
-          } else {
+
+          // Attempt 1: Store.ProfilePicThumb.find + genUrl (force server fetch)
+          const StoreRef = (window as any).Store;
+          if (!fallbackPhoto && StoreRef?.ProfilePicThumb?.find) {
+            const chatIdVariants = buildChatIdLookupVariants(chatId);
+            const resolveWid = (idValue: string): any => {
+              const normalized = sanitizeScopedChatId(idValue);
+              if (StoreRef?.WidFactory?.createWid) {
+                try { return StoreRef.WidFactory.createWid(normalized); } catch (_e) { /* ignore */ }
+              }
+              return normalized;
+            };
+            const widCandidates = chatIdVariants.map(v => resolveWid(v));
+            // One-time diagnostic: list available methods
+            const pptMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(StoreRef.ProfilePicThumb) || {}).filter((k: string) => typeof StoreRef.ProfilePicThumb[k] === 'function').slice(0, 20);
+            console.log('[PrinChat Page] 🔬 [fallback] Store.ProfilePicThumb methods:', pptMethods.join(', '));
+
+            for (const wid of widCandidates) {
+              try {
+                const profilePic = await StoreRef.ProfilePicThumb.find(wid);
+                const widStr = typeof wid === 'string' ? wid : (wid?._serialized || wid?.toString?.() || '?');
+                console.log('[PrinChat Page] 🔬 [fallback] ProfilePicThumb.find(' + widStr + '):', profilePic ? 'model found' : '(null)', 'eurl:', profilePic?.eurl ? 'yes' : 'no', 'img:', profilePic?.img ? 'yes' : 'no');
+                let photo = extractPhotoUrl(profilePic);
+                if (!photo && profilePic) {
+                  // Try genUrl() to force server fetch
+                  if (typeof profilePic.genUrl === 'function') {
+                    try {
+                      await profilePic.genUrl();
+                      photo = extractPhotoUrl(profilePic);
+                      if (photo) console.log('[PrinChat Page] ✅ [fallback] Photo from genUrl()');
+                    } catch (_e) {
+                      console.log('[PrinChat Page] 🔬 [fallback] genUrl() error:', (_e as any)?.message || _e);
+                    }
+                  }
+                  // Try getUrl()
+                  if (!photo && typeof profilePic.getUrl === 'function') {
+                    try {
+                      const url = await profilePic.getUrl();
+                      photo = normalizeImageSourceCandidate(url);
+                      if (photo) console.log('[PrinChat Page] ✅ [fallback] Photo from getUrl()');
+                    } catch (_e) {
+                      console.log('[PrinChat Page] 🔬 [fallback] getUrl() error:', (_e as any)?.message || _e);
+                    }
+                  }
+                  // Log all model methods and properties for discovery
+                  if (!photo && profilePic) {
+                    const modelMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(profilePic) || {}).filter((k: string) => typeof profilePic[k] === 'function').slice(0, 15);
+                    const modelProps = Object.keys(profilePic).slice(0, 15);
+                    console.log('[PrinChat Page] 🔬 [fallback] Model methods:', modelMethods.join(', '), 'props:', modelProps.join(', '));
+                  }
+                }
+                if (photo) {
+                  fallbackPhoto = photo;
+                  fallbackPhotoSource = 'chatInfo.profilePicThumb.fallback';
+                  console.log('[PrinChat Page] ✅ [fallback] Got photo from Store.ProfilePicThumb.find');
+                  break;
+                }
+              } catch (_err) {
+                // continue trying
+              }
+            }
+
+            // Also try .get() if .find() didn't work
+            if (!fallbackPhoto && StoreRef.ProfilePicThumb.get) {
+              for (const wid of widCandidates) {
+                try {
+                  const profilePicModel = await StoreRef.ProfilePicThumb.get(wid);
+                  let photo = extractPhotoUrl(profilePicModel);
+                  if (!photo && profilePicModel && typeof profilePicModel.genUrl === 'function') {
+                    try {
+                      await profilePicModel.genUrl();
+                      photo = extractPhotoUrl(profilePicModel);
+                    } catch (_e) { /* continue */ }
+                  }
+                  if (photo) {
+                    fallbackPhoto = photo;
+                    fallbackPhotoSource = 'chatInfo.profilePicThumb.get.fallback';
+                    console.log('[PrinChat Page] ✅ [fallback] Got photo from Store.ProfilePicThumb.get');
+                    break;
+                  }
+                } catch (_err) {
+                  // continue trying
+                }
+              }
+            }
+          }
+
+          // Attempt 2: Sidebar DOM lookup (with chatName extracted from chatId)
+          if (!fallbackPhoto) {
+            const sidebarFallbackPhoto =
+              findSidebarPhotoByChat(chatId)
+              || findSidebarPhotoByChat(normalizeChatIdWithDomain(chatId) || chatId);
+            if (sidebarFallbackPhoto) {
+              fallbackPhoto = sidebarFallbackPhoto;
+              fallbackPhotoSource = 'chatInfo.sidebar.fallback';
+            }
+          }
+
+          // Attempt 3: Phone-based fallback (Store.ProfilePicThumb.find with phone variants)
+          if (!fallbackPhoto && fallbackPhoneNumber) {
             const phoneFallbackPhoto = await tryPhoneBasedPhotoFallback(fallbackPhoneNumber);
             if (phoneFallbackPhoto) {
               fallbackPhoto = phoneFallbackPhoto;
@@ -2498,7 +2581,7 @@
         let chatPhoto: string | undefined = undefined;
         let photoSource: string = '';
         try {
-          console.log('[PrinChat Page] Checking for chat photo...');
+
 
           const chatIdVariants = buildChatIdLookupVariants(chatId);
           const resolveWidCandidate = (idValue: string): any => {
@@ -2523,8 +2606,83 @@
             }
           }
 
+          // Strategy 1.5: Force-fetch via contact/chat model methods + WPP.whatsapp
+          if (!chatPhoto) {
+
+
+            // Try 1: Call getProfilePicThumb() or similar on contact model
+            const modelTargets = [contact, chat, chat?.contact].filter(Boolean);
+            for (const model of modelTargets) {
+              if (chatPhoto) break;
+              const methodNames = ['getProfilePicThumb', 'getProfilePicFull', 'getProfilePicThumbObj', 'fetchProfilePicThumb'];
+              for (const methodName of methodNames) {
+                if (chatPhoto) break;
+                if (typeof model[methodName] === 'function') {
+                  try {
+                    const result = await model[methodName]();
+                    const photo = extractPhotoUrl(result);
+                    if (photo) {
+                      chatPhoto = photo;
+                      photoSource = 'chatInfo.model.' + methodName;
+                      console.log('[PrinChat Page] ✅ Got photo from contact.' + methodName + '()');
+                    }
+                  } catch (_e) { /* continue */ }
+                }
+              }
+            }
+
+            // Try 2: WPP.whatsapp.ProfilePicThumbStore.find() directly
+            if (!chatPhoto) {
+              try {
+                const pptStore = (window as any).WPP?.whatsapp?.ProfilePicThumbStore;
+                if (pptStore?.find) {
+                  const chatIdVariantsForPic = buildChatIdLookupVariants(chatId);
+                  for (const variant of chatIdVariantsForPic) {
+                    if (chatPhoto) break;
+                    try {
+                      const profilePic = await pptStore.find(variant);
+                      if (profilePic) {
+                        let photo = extractPhotoUrl(profilePic);
+                        if (!photo && typeof profilePic.genUrl === 'function') {
+                          await profilePic.genUrl();
+                          photo = extractPhotoUrl(profilePic);
+                        }
+                        if (photo) {
+                          chatPhoto = photo;
+                          photoSource = 'chatInfo.wpp_whatsapp_pptStore';
+                          console.log('[PrinChat Page] ✅ Got photo from WPP.whatsapp.ProfilePicThumbStore.find()');
+                        }
+                      }
+                    } catch (_e) { /* continue */ }
+                  }
+                }
+              } catch (_e) { /* ignore */ }
+            }
+
+            // Try 3: WPP.whatsapp.profilePicFind() directly
+            if (!chatPhoto) {
+              try {
+                const picFind = (window as any).WPP?.whatsapp?.profilePicFind;
+                if (typeof picFind === 'function') {
+                  const result = await picFind(chatId);
+                  const photo = extractPhotoUrl(result);
+                  if (photo) {
+                    chatPhoto = photo;
+                    photoSource = 'chatInfo.wpp_whatsapp_profilePicFind';
+                    console.log('[PrinChart Page] ✅ Got photo from WPP.whatsapp.profilePicFind()');
+                  }
+                }
+              } catch (_e) { /* ignore */ }
+            }
+          }
+
           // Strategy 2: Store.ProfilePicThumb lookup by multiple WID variants
           if (!chatPhoto && (window as any).Store?.ProfilePicThumb?.find) {
+            // One-time diagnostic: list available methods on ProfilePicThumb collection
+            const pptStore = (window as any).Store.ProfilePicThumb;
+            const pptMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(pptStore) || {}).filter(k => typeof pptStore[k] === 'function').slice(0, 20);
+            console.log('[PrinChat Page] 🔬 Store.ProfilePicThumb available methods:', pptMethods.join(', '));
+
             const widCandidates: any[] = [];
             if (chat?.id) widCandidates.push(chat.id);
             if (contact?.id) widCandidates.push(contact.id);
@@ -2533,11 +2691,43 @@
             for (const wid of widCandidates) {
               try {
                 const profilePic = await (window as any).Store.ProfilePicThumb.find(wid);
+                const widStr = typeof wid === 'string' ? wid : (wid?._serialized || wid?.toString?.() || '?');
+                console.log('[PrinChat Page] 🔬 Strategy2 ProfilePicThumb.find(' + widStr + '):', profilePic ? 'model found' : '(null)', 'keys:', profilePic ? Object.keys(profilePic).slice(0, 10).join(',') : 'N/A', 'eurl:', profilePic?.eurl ? profilePic.eurl.substring(0, 50) + '...' : '(empty)', 'img:', profilePic?.img ? 'yes' : 'no');
                 chatPhoto = extractPhotoUrl(profilePic);
                 if (chatPhoto) {
                   photoSource = 'chatInfo.profilePicThumb.find';
                   console.log('[PrinChat Page] ✅ Got photo from Store.ProfilePicThumb.find()');
                   break;
+                }
+                // If model exists but no photo URL, try genUrl() to force server fetch
+                if (profilePic && !chatPhoto) {
+                  if (typeof profilePic.genUrl === 'function') {
+                    try {
+                      await profilePic.genUrl();
+                      chatPhoto = extractPhotoUrl(profilePic);
+                      if (chatPhoto) {
+                        photoSource = 'chatInfo.profilePicThumb.find.genUrl';
+                        console.log('[PrinChat Page] ✅ Got photo from ProfilePicThumb.find().genUrl()');
+                        break;
+                      }
+                    } catch (_genErr) {
+                      console.log('[PrinChat Page] 🔬 genUrl() error:', (_genErr as any)?.message || _genErr);
+                    }
+                  }
+                  if (typeof profilePic.getUrl === 'function' && !chatPhoto) {
+                    try {
+                      const url = await profilePic.getUrl();
+                      const normalized = normalizeImageSourceCandidate(url);
+                      if (normalized) {
+                        chatPhoto = normalized;
+                        photoSource = 'chatInfo.profilePicThumb.find.getUrl';
+                        console.log('[PrinChat Page] ✅ Got photo from ProfilePicThumb.find().getUrl()');
+                        break;
+                      }
+                    } catch (_getUrlErr) {
+                      console.log('[PrinChat Page] 🔬 getUrl() error:', (_getUrlErr as any)?.message || _getUrlErr);
+                    }
+                  }
                 }
               } catch (_storeError) {
                 // continue trying other variants
@@ -2545,17 +2735,8 @@
             }
           }
 
-          // Strategy 3: WPP API with ID variants
-          if (!chatPhoto && (window as any).WPP?.contact?.getProfilePictureUrl) {
-            console.log('[PrinChat Page] Trying WPP.contact.getProfilePictureUrl...');
-            const lookupIds = collectChatLookupIds(chatId, resolvedChatId, chat, contact, ...chatIdVariants);
-            const pictureUrl = await fetchWppProfilePhotoByIds(lookupIds);
-            if (pictureUrl) {
-              chatPhoto = pictureUrl;
-              photoSource = 'chatInfo.wpp';
-              console.log('[PrinChat Page] ✅ Got photo from WPP');
-            }
-          }
+          // Strategy 3: WPP API — DISABLED (getProfilePictureUrl is permanently broken)
+          // if (!chatPhoto && (window as any).WPP?.contact?.getProfilePictureUrl) { ... }
 
           // Strategy 4: Force refresh via Store.ProfilePicThumb.get
           if (!chatPhoto && (window as any).Store?.ProfilePicThumb?.get) {
@@ -2567,11 +2748,43 @@
             for (const wid of widCandidates) {
               try {
                 const profilePicModel = await (window as any).Store.ProfilePicThumb.get(wid);
+                const widStr = typeof wid === 'string' ? wid : (wid?._serialized || wid?.toString?.() || '?');
+                console.log('[PrinChat Page] 🔬 Strategy4 ProfilePicThumb.get(' + widStr + '):', profilePicModel ? 'model found' : '(null)', 'eurl:', profilePicModel?.eurl ? profilePicModel.eurl.substring(0, 50) + '...' : '(empty)', 'img:', profilePicModel?.img ? 'yes' : 'no');
                 chatPhoto = extractPhotoUrl(profilePicModel);
                 if (chatPhoto) {
                   photoSource = 'chatInfo.profilePicThumb.get';
                   console.log('[PrinChat Page] ✅ Got photo from Store.ProfilePicThumb.get()');
                   break;
+                }
+                // Try genUrl/getUrl if model exists but photo is empty
+                if (profilePicModel && !chatPhoto) {
+                  if (typeof profilePicModel.genUrl === 'function') {
+                    try {
+                      await profilePicModel.genUrl();
+                      chatPhoto = extractPhotoUrl(profilePicModel);
+                      if (chatPhoto) {
+                        photoSource = 'chatInfo.profilePicThumb.get.genUrl';
+                        console.log('[PrinChat Page] ✅ Got photo from ProfilePicThumb.get().genUrl()');
+                        break;
+                      }
+                    } catch (_genErr) {
+                      console.log('[PrinChat Page] 🔬 Strategy4 genUrl() error:', (_genErr as any)?.message || _genErr);
+                    }
+                  }
+                  if (typeof profilePicModel.getUrl === 'function' && !chatPhoto) {
+                    try {
+                      const url = await profilePicModel.getUrl();
+                      const normalized = normalizeImageSourceCandidate(url);
+                      if (normalized) {
+                        chatPhoto = normalized;
+                        photoSource = 'chatInfo.profilePicThumb.get.getUrl';
+                        console.log('[PrinChat Page] ✅ Got photo from ProfilePicThumb.get().getUrl()');
+                        break;
+                      }
+                    } catch (_getUrlErr) {
+                      console.log('[PrinChat Page] 🔬 Strategy4 getUrl() error:', (_getUrlErr as any)?.message || _getUrlErr);
+                    }
+                  }
                 }
               } catch (_getError) {
                 // continue trying other variants
@@ -3935,23 +4148,28 @@
             const displayName = chat.contact?.pushname || chat.name || chat.formattedTitle || '';
             const phoneNumber = resolveChatPhoneNumber(chat, chatId);
             let chatPhoto = extractPhotoUrl(chat?.contact) || extractPhotoUrl(chat) || '';
+            let chatPhotoSource = chatPhoto ? 'chatinfo.store' : '';
             if (!chatPhoto && (window as any).WPP?.contact?.getProfilePictureUrl) {
               const lookupIds = collectChatLookupIds(chatId, chat, chat?.contact, ...lookupVariants);
               const fetched = await fetchWppProfilePhotoByIds(lookupIds);
               if (fetched) {
                 chatPhoto = fetched;
+                chatPhotoSource = 'chatinfo.wpp';
               }
             }
             if (!chatPhoto) {
               chatPhoto = findSidebarPhotoByChat(chatId, displayName) || '';
+              if (chatPhoto) chatPhotoSource = 'chatinfo.sidebar';
             }
             if (!chatPhoto) {
               chatPhoto = await tryPhonePhotoFallback(phoneNumber);
+              if (chatPhoto) chatPhotoSource = 'chatinfo.phone_fallback';
             }
             response = {
               success: true,
               data: {
-                chatPhoto: chatPhoto || undefined
+                chatPhoto: chatPhoto || undefined,
+                chatPhotoSource: chatPhoto ? chatPhotoSource : undefined
               }
             };
           } else {
@@ -3960,7 +4178,8 @@
               response = {
                 success: true,
                 data: {
-                  chatPhoto: sidebarPhoto
+                  chatPhoto: sidebarPhoto,
+                  chatPhotoSource: 'chatinfo.sidebar'
                 }
               };
             } else {
@@ -3969,7 +4188,8 @@
                 response = {
                   success: true,
                   data: {
-                    chatPhoto: phoneFallbackPhoto
+                    chatPhoto: phoneFallbackPhoto,
+                    chatPhotoSource: 'chatinfo.phone_fallback'
                   }
                 };
               } else {
