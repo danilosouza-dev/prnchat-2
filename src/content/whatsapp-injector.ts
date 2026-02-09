@@ -587,7 +587,7 @@
     private logPhotoResolution(
       rawChatId: string,
       phase: 'create' | 'update' | 'rehydrate',
-      photoSource: 'event' | 'chatInfo' | 'sidebar' | 'retry',
+      photoSource: string,
       photo?: string
     ) {
       if (!this.isRenderablePhotoUrl(photo)) return;
@@ -614,105 +614,79 @@
     private isRenderablePhotoUrl(value?: string): boolean {
       if (!value || typeof value !== 'string') return false;
       const src = value.trim();
-      if (!src || src === 'data:' || src.startsWith('data:image/svg')) return false;
-      return src.startsWith('http') || src.startsWith('blob:') || src.startsWith('data:image/');
+      if (!src || src === 'data:' || src === 'about:blank') return false;
+      if (this.isLikelyPlaceholderPhotoUrl(src)) return false;
+      if (/^https?:\/\//i.test(src)) return true;
+      if (src.startsWith('blob:')) return true;
+      if (/^data:image\//i.test(src) && !/^data:image\/svg/i.test(src)) return true;
+      if (src.startsWith('//')) return true;
+      return false;
     }
 
-    private findSidebarPhotoByChat(chatId?: string, chatName?: string): string | undefined {
-      const variants = this.buildChatIdVariants(chatId);
-      if (variants.length === 0) return undefined;
+    private isLikelyPlaceholderPhotoUrl(value?: string): boolean {
+      if (typeof value !== 'string') return true;
+      const src = value.trim();
+      if (!src) return true;
 
-      // Extract phone digits from chatId (e.g., "553397048517@c.us" → "553397048517")
-      const chatIdDigits = (chatId || '').replace(/@.*$/, '').replace(/\D/g, '');
+      const lower = src.toLowerCase();
+      if (lower.includes('ui-avatars.com')) return true;
 
-      const roots = Array.from(document.querySelectorAll('#pane-side, #side'));
-      const searchRoots = roots.length > 0 ? roots : [document.body];
+      try {
+        const parsed = new URL(
+          src.startsWith('//') ? `https:${src}` : src,
+          window.location.origin
+        );
+        const host = parsed.hostname.toLowerCase();
+        const path = parsed.pathname.toLowerCase();
+        const looksAvatarPath =
+          path.includes('avatar')
+          || path.includes('default-user')
+          || path.includes('default-group')
+          || path.includes('profile-placeholder');
 
-      const findElementPhoto = (element: Element | null): string | undefined => {
-        if (!element) return undefined;
-        const images = Array.from(element.querySelectorAll('img')) as HTMLImageElement[];
-        for (const img of images) {
-          if (this.isRenderablePhotoUrl(img.src)) return img.src;
+        if (host === 'web.whatsapp.com' && (looksAvatarPath || path.endsWith('.svg'))) {
+          return true;
         }
-        const nodes = Array.from(element.querySelectorAll('*')) as HTMLElement[];
-        for (const node of nodes) {
-          const bgImage = window.getComputedStyle(node).backgroundImage;
-          if (!bgImage || bgImage === 'none' || !bgImage.includes('url(')) continue;
-          const match = bgImage.match(/url\(["']?(.*?)["']?\)/i);
-          const url = match?.[1];
-          if (this.isRenderablePhotoUrl(url)) return url;
+        if (looksAvatarPath && path.endsWith('.svg')) {
+          return true;
         }
-        return undefined;
-      };
-
-      for (const root of searchRoots) {
-        if (!root) continue;
-
-        // Strategy 1: role="row" with span[title] phone-digit matching
-        const rows = Array.from(root.querySelectorAll('[role="row"]')) as HTMLElement[];
-        for (const row of rows) {
-          const titleSpans = Array.from(row.querySelectorAll('span[title]')) as HTMLElement[];
-          for (const span of titleSpans) {
-            const title = span.getAttribute('title') || span.textContent || '';
-            if (!title) continue;
-
-            // Match by phone digits
-            const titleDigits = title.replace(/\D/g, '');
-            const isPhoneMatch = chatIdDigits.length >= 8 && titleDigits.length >= 8 && (
-              chatIdDigits.endsWith(titleDigits) || titleDigits.endsWith(chatIdDigits) ||
-              chatIdDigits.includes(titleDigits) || titleDigits.includes(chatIdDigits)
-            );
-
-            // Match by exact name
-            const isNameMatch = chatName && title.trim().toLowerCase() === chatName.trim().toLowerCase();
-
-            if (isPhoneMatch || isNameMatch) {
-              const photo = findElementPhoto(row);
-              if (photo) {
-                this.logPhotoResolution(chatId || '', 'rehydrate', 'sidebar', photo);
-                return photo;
-              }
-            }
-          }
-        }
-
-        // Strategy 2: Legacy [data-id] matching (for older WA builds)
-        const dataIdRows = Array.from(root.querySelectorAll('[data-id]')) as HTMLElement[];
-        for (const row of dataIdRows) {
-          const dataId = String(row.getAttribute('data-id') || '').toLowerCase();
-          if (!dataId) continue;
-          if (!variants.some((variant) => dataId.includes(variant))) continue;
-
-          const container = row.closest('[role="row"]') || row.closest('[role="listitem"]') || row;
-          const photo = findElementPhoto(container);
-          if (photo) {
-            this.logPhotoResolution(chatId || '', 'rehydrate', 'sidebar', photo);
-            return photo;
-          }
-        }
-
-        // Strategy 3: Fallback — search all span[title] for chatName match
-        if (chatName) {
-          const normalizedName = chatName.trim().toLowerCase();
-          const titleNodes = Array.from(root.querySelectorAll('span[title], div[title]')) as HTMLElement[];
-          for (const node of titleNodes) {
-            const title = String(node.getAttribute('title') || node.textContent || '').trim().toLowerCase();
-            if (!title || title !== normalizedName) continue;
-
-            const container = node.closest('[role="row"]') || node.closest('[role="listitem"]') || node.closest('[data-id]') || node.parentElement;
-            const photo = findElementPhoto(container);
-            if (photo) {
-              this.logPhotoResolution(chatId || '', 'rehydrate', 'sidebar', photo);
-              return photo;
-            }
-          }
-        }
+      } catch (_error) {
+        if (lower.includes('avatar') && lower.includes('.svg')) return true;
       }
 
-      return undefined;
+      return false;
     }
 
-    private async refreshLeadPhotoFromChat(leadId: string, chatId: string, chatName?: string): Promise<void> {
+    private isTrustedIncomingPhotoSource(source?: string): boolean {
+      const normalized = typeof source === 'string' ? source.trim().toLowerCase() : '';
+      if (!normalized) return false;
+
+      if (normalized === 'wpp') return true;
+      if (normalized === 'message_model') return true;
+      if (normalized === 'store_chat' || normalized === 'store_chat_find') return true;
+      if (normalized === 'store_contact' || normalized === 'store_profilepic_find_msg') return true;
+      if (normalized.startsWith('store_profilepic_')) return true;
+
+      return false;
+    }
+
+    private isTrustedChatInfoPhotoSource(source?: string): boolean {
+      const normalized = typeof source === 'string' ? source.trim().toLowerCase() : '';
+      if (!normalized) return false;
+
+      if (normalized === 'chatinfo.local') return true;
+      if (normalized === 'chatinfo.profilepicthumb.find') return true;
+      if (normalized === 'chatinfo.profilepicthumb.get') return true;
+      if (normalized === 'chatinfo.wpp') return true;
+      if (normalized === 'chatinfo.phone_fallback') return true;
+      if (normalized === 'chatinfo.sidebar') return true;
+      if (normalized === 'chatinfo.dom.header') return true;
+      if (normalized === 'chatinfo.dom.background') return true;
+
+      return false;
+    }
+
+    private async refreshLeadPhotoFromChat(leadId: string, chatId: string): Promise<void> {
       if (!leadId || !chatId) return;
 
       const inFlight = this.pendingPhotoRefreshByLead.get(leadId);
@@ -721,8 +695,14 @@
       }
 
       const task = (async () => {
-        const attempts = [600, 1400, 3000, 6000];
+        const attempts = [600, 1400, 3000, 6000, 12000];
         const variants = this.buildChatIdVariants(chatId);
+        const dynamicVariantSet = new Set<string>(variants);
+        const addDynamicVariants = (value?: string) => {
+          if (!value || typeof value !== 'string') return;
+          const discovered = this.buildChatIdVariants(value);
+          discovered.forEach((variant) => dynamicVariantSet.add(variant));
+        };
         const primaryChatId = variants[0] || this.normalizeChatIdentifier(chatId) || chatId;
 
         for (const delayMs of attempts) {
@@ -737,13 +717,29 @@
               const info = await this.getChatInfo(variant);
               const infoData = info?.success ? info.data : null;
               const candidatePhoto = infoData?.chatPhoto || '';
-              if (this.isRenderablePhotoUrl(candidatePhoto)) {
+              const candidatePhotoSource = infoData?.chatPhotoSource;
+              if (
+                this.isRenderablePhotoUrl(candidatePhoto)
+                && this.isTrustedChatInfoPhotoSource(candidatePhotoSource)
+              ) {
                 photo = candidatePhoto;
-                this.logPhotoResolution(primaryChatId, 'rehydrate', 'retry', photo);
+                this.logPhotoResolution(
+                  primaryChatId,
+                  'rehydrate',
+                  `retry.${String(candidatePhotoSource || 'unknown')}`,
+                  photo
+                );
               }
 
               if (!bestName && typeof infoData?.chatName === 'string' && infoData.chatName.trim()) {
                 bestName = infoData.chatName.trim();
+              }
+
+              if (typeof infoData?.chatId === 'string' && infoData.chatId.trim()) {
+                addDynamicVariants(infoData.chatId);
+              }
+              if (typeof infoData?.phoneNumber === 'string' && infoData.phoneNumber.trim()) {
+                addDynamicVariants(infoData.phoneNumber);
               }
 
               if (bestTags.length === 0 && Array.isArray(infoData?.tags) && infoData.tags.length > 0) {
@@ -763,7 +759,8 @@
             }
 
             if (!photo) {
-              for (const variant of variants) {
+              const photoLookupVariants = Array.from(dynamicVariantSet);
+              for (const variant of photoLookupVariants) {
                 const photoResponse = await this.sendRuntimeMessage({
                   type: 'GET_CHAT_PHOTO',
                   payload: { chatId: variant }
@@ -774,16 +771,23 @@
                     ? responseData
                     : (responseData?.chatPhoto || ''))
                   : '';
-                if (this.isRenderablePhotoUrl(candidatePhoto)) {
+                const candidatePhotoSource = typeof responseData === 'string'
+                  ? ''
+                  : responseData?.chatPhotoSource;
+                if (
+                  this.isRenderablePhotoUrl(candidatePhoto)
+                  && this.isTrustedChatInfoPhotoSource(candidatePhotoSource)
+                ) {
                   photo = candidatePhoto;
-                  this.logPhotoResolution(primaryChatId, 'rehydrate', 'chatInfo', photo);
+                  this.logPhotoResolution(
+                    primaryChatId,
+                    'rehydrate',
+                    `chatInfo.${String(candidatePhotoSource || 'unknown')}`,
+                    photo
+                  );
                   break;
                 }
               }
-            }
-
-            if (!photo) {
-              photo = this.findSidebarPhotoByChat(primaryChatId, chatName) || '';
             }
 
             const updates: any = {};
@@ -1192,7 +1196,17 @@
 
       // Listen for incoming messages from page script (for triggers)
       document.addEventListener('PrinChatIncomingMessage', async (event: any) => {
-        const { messageText, chatId, timestamp, fromMe, chatPhoto: eventChatPhoto, chatName: eventChatName, chatLabels: eventChatLabels, chatTags: eventChatTags } = event.detail;
+        const {
+          messageText,
+          chatId,
+          timestamp,
+          fromMe,
+          chatPhoto: eventChatPhoto,
+          chatPhotoSource: eventChatPhotoSource,
+          chatName: eventChatName,
+          chatLabels: eventChatLabels,
+          chatTags: eventChatTags
+        } = event.detail;
         console.log('[PrinChat] Message detected:', messageText, 'from:', chatId, 'fromMe:', fromMe, 'eventLabels:', eventChatTags);
 
         // Send to service worker to check triggers (ONLY for incoming messages)
@@ -1242,6 +1256,9 @@
           const chatVariantSet = new Set(chatIdVariants);
           const canonicalChatId = this.normalizeChatIdentifier(chatId);
           const canonicalChatIdentity = this.getCanonicalChatIdentity(chatId);
+          const canUseIncomingEventPhoto = !fromMe
+            && this.isRenderablePhotoUrl(eventChatPhoto)
+            && this.isTrustedIncomingPhotoSource(eventChatPhotoSource);
 
           const resolveBestChatInfo = async () => {
             let bestData: any = null;
@@ -1252,7 +1269,8 @@
               if (!info?.success || !info?.data) continue;
 
               const hasName = typeof info.data.chatName === 'string' && info.data.chatName.trim().length > 0;
-              const hasPhoto = this.isRenderablePhotoUrl(info.data.chatPhoto);
+              const hasPhoto = this.isRenderablePhotoUrl(info.data.chatPhoto)
+                && this.isTrustedChatInfoPhotoSource(info.data.chatPhotoSource);
               const hasTags = Array.isArray(info.data.tags) && info.data.tags.length > 0;
               const score = (hasPhoto ? 4 : 0) + (hasName ? 2 : 0) + (hasTags ? 1 : 0);
 
@@ -1335,9 +1353,17 @@
             const chatInfo = await resolveBestChatInfo();
             if (chatInfo) {
               if (chatInfo.chatName) updates.name = chatInfo.chatName;
-              if (this.isRenderablePhotoUrl(chatInfo.chatPhoto)) {
+              if (
+                this.isRenderablePhotoUrl(chatInfo.chatPhoto)
+                && this.isTrustedChatInfoPhotoSource(chatInfo.chatPhotoSource)
+              ) {
                 updates.photo = chatInfo.chatPhoto;
-                this.logPhotoResolution(chatId, 'update', 'chatInfo', updates.photo);
+                this.logPhotoResolution(
+                  chatId,
+                  'update',
+                  `chatInfo.${String(chatInfo.chatPhotoSource || 'unknown')}`,
+                  updates.photo
+                );
               }
               if (Array.isArray(chatInfo.tags) && chatInfo.tags.length > 0) {
                 updates.tags = chatInfo.tags.filter(Boolean);
@@ -1374,16 +1400,9 @@
 
             // Use message-level photo as immediate fallback for incoming events.
             // Outgoing events can resolve to self context on some WA builds.
-            if (!updates.photo && !fromMe && this.isRenderablePhotoUrl(eventChatPhoto)) {
+            if (!updates.photo && canUseIncomingEventPhoto) {
               updates.photo = eventChatPhoto;
-              this.logPhotoResolution(chatId, 'update', 'event', updates.photo);
-            }
-
-            if (!updates.photo && !existingLead.photo) {
-              const sidebarPhoto = this.findSidebarPhotoByChat(canonicalChatId || chatId, updates.name || existingLead.name);
-              if (sidebarPhoto) {
-                updates.photo = sidebarPhoto;
-              }
+              this.logPhotoResolution(chatId, 'update', `event.${String(eventChatPhotoSource || 'unknown')}`, updates.photo);
             }
 
             const updateResult = await this.sendRuntimeMessage({
@@ -1407,7 +1426,7 @@
 
             const hasRenderableExistingPhoto = this.isRenderablePhotoUrl(updates.photo || existingLead.photo || '');
             if (!hasRenderableExistingPhoto && existingLead.id) {
-              this.refreshLeadPhotoFromChat(existingLead.id, chatId, updates.name || existingLead.name).catch(() => null);
+              this.refreshLeadPhotoFromChat(existingLead.id, chatId).catch(() => null);
             }
 
             return;
@@ -1431,9 +1450,17 @@
 
           if (chatInfo) {
             chatName = chatInfo.chatName || '';
-            if (this.isRenderablePhotoUrl(chatInfo.chatPhoto)) {
+            if (
+              this.isRenderablePhotoUrl(chatInfo.chatPhoto)
+              && this.isTrustedChatInfoPhotoSource(chatInfo.chatPhotoSource)
+            ) {
               chatPhoto = chatInfo.chatPhoto;
-              this.logPhotoResolution(chatId, 'create', 'chatInfo', chatPhoto);
+              this.logPhotoResolution(
+                chatId,
+                'create',
+                `chatInfo.${String(chatInfo.chatPhotoSource || 'unknown')}`,
+                chatPhoto
+              );
             }
 
             resolvedChatId = this.normalizeChatIdentifier(chatInfo.chatId || resolvedChatId || chatId);
@@ -1449,16 +1476,9 @@
             console.warn('[PrinChat Kanban] Could not get chat info, using chatId as name');
           }
 
-          if (!chatPhoto && this.isRenderablePhotoUrl(eventChatPhoto)) {
+          if (!chatPhoto && canUseIncomingEventPhoto) {
             chatPhoto = eventChatPhoto;
-            this.logPhotoResolution(chatId, 'create', 'event', chatPhoto);
-          }
-
-          if (!chatPhoto) {
-            const sidebarPhoto = this.findSidebarPhotoByChat(resolvedChatId || chatId, chatName);
-            if (sidebarPhoto) {
-              chatPhoto = sidebarPhoto;
-            }
+            this.logPhotoResolution(chatId, 'create', `event.${String(eventChatPhotoSource || 'unknown')}`, chatPhoto);
           }
 
           // Get Recentes column ID
@@ -1523,7 +1543,9 @@
           const createdLeadId = createResult?.data?.id;
           const refreshLeadKey = createdLeadId || normalizedLeadChatId || chatId;
           if (refreshLeadKey) {
-            this.refreshLeadPhotoFromChat(refreshLeadKey, normalizedLeadChatId || chatId, formattedName).catch(() => null);
+            // Use the original incoming chatId first: it is the most accurate
+            // identifier for non-active incoming messages.
+            this.refreshLeadPhotoFromChat(refreshLeadKey, chatId).catch(() => null);
           }
 
           // Notify UI to re-render
@@ -1537,32 +1559,42 @@
 
       });
 
-      // Listen for delayed photo updates from page script (sidebar retry)
+      // Listen for delayed photo hints from page script (sidebar retry).
+      // These hints are not persisted directly because sidebar matching can be ambiguous.
       document.addEventListener('PrinChatPhotoUpdate', async (event: any) => {
         const { chatId: updateChatId, chatPhoto } = event.detail || {};
         if (!updateChatId || !this.isRenderablePhotoUrl(chatPhoto)) return;
 
-        console.log('[PrinChat Kanban] Received delayed photo update for', updateChatId);
+        console.log('[PrinChat Kanban] Received delayed sidebar photo hint for', updateChatId);
         try {
           // Find the lead by chatId
           const variants = this.buildChatIdVariants(updateChatId);
+          const variantSet = new Set(variants);
+          const incomingIdentity = this.getCanonicalChatIdentity(updateChatId);
           const allLeads = await this.sendRuntimeMessage({ type: 'GET_ALL_KANBAN_LEADS' });
           if (!allLeads?.success || !Array.isArray(allLeads.data)) return;
 
           const matchLead = allLeads.data.find((lead: any) => {
-            const leadVariants = this.buildChatIdVariants(lead.chatId);
-            return variants.some(v => leadVariants.includes(v));
+            const leadCandidates = [lead?.id, lead?.chatId, lead?.phone];
+            for (const candidate of leadCandidates) {
+              const leadVariants = this.buildChatIdVariants(candidate);
+              if (leadVariants.some((variant) => variantSet.has(variant))) {
+                return true;
+              }
+
+              const leadIdentity = this.getCanonicalChatIdentity(candidate);
+              if (incomingIdentity && leadIdentity && incomingIdentity === leadIdentity) {
+                return true;
+              }
+            }
+            return false;
           });
 
           if (matchLead?.id) {
-            await this.sendRuntimeMessage({
-              type: 'UPDATE_KANBAN_LEAD',
-              payload: { leadId: matchLead.id, updates: { photo: chatPhoto } }
-            });
-            document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
-              detail: { leadId: matchLead.id, updates: { photo: chatPhoto } }
-            }));
-            console.log('[PrinChat Kanban] Updated lead photo from delayed sidebar retry:', matchLead.name || updateChatId);
+            const hasValidPhoto = this.isRenderablePhotoUrl(matchLead.photo || '');
+            if (!hasValidPhoto) {
+              this.refreshLeadPhotoFromChat(matchLead.id, updateChatId).catch(() => null);
+            }
           }
         } catch (err) {
           console.warn('[PrinChat Kanban] Delayed photo update failed:', err);
@@ -1587,6 +1619,8 @@
         try {
           const normalizedChatId = this.normalizeChatIdentifier(chatId);
           const canonicalIdentity = this.getCanonicalChatIdentity(chatId);
+          const chatVariants = this.buildChatIdVariants(chatId);
+          const chatVariantSet = new Set(chatVariants);
           console.log('[PrinChat DEBUG] 5. Normalized chatId', {
             rawChatId: chatId,
             canonicalChatId: normalizedChatId,
@@ -1599,12 +1633,37 @@
             updatePayload.labels = labels;
           }
 
-          console.log('[PrinChat DEBUG] 5. Sending UPDATE_KANBAN_LEAD to Background...');
+          let resolvedLeadId = normalizedChatId || chatId;
+          try {
+            const leadsResponse = await this.sendRuntimeMessage({ type: 'GET_ALL_KANBAN_LEADS' });
+            const allLeads = Array.isArray(leadsResponse?.data) ? leadsResponse.data : [];
+            const matchedLead = allLeads.find((lead: any) => {
+              const leadCandidates = [lead?.id, lead?.chatId, lead?.phone];
+              for (const candidate of leadCandidates) {
+                const leadVariants = this.buildChatIdVariants(candidate);
+                if (leadVariants.some((variant) => chatVariantSet.has(variant))) {
+                  return true;
+                }
+                const leadIdentity = this.getCanonicalChatIdentity(candidate);
+                if (leadIdentity && canonicalIdentity && leadIdentity === canonicalIdentity) {
+                  return true;
+                }
+              }
+              return false;
+            });
+            if (matchedLead?.id) {
+              resolvedLeadId = matchedLead.id;
+            }
+          } catch (_lookupError) {
+            // best-effort lookup only
+          }
+
+          console.log('[PrinChat DEBUG] 5. Sending UPDATE_KANBAN_LEAD to Background...', { leadId: resolvedLeadId });
           // Update database directly
           const updateResult = await this.sendRuntimeMessage({
             type: 'UPDATE_KANBAN_LEAD',
             payload: {
-              leadId: chatId,
+              leadId: resolvedLeadId,
               updates: updatePayload
             }
           });
@@ -1618,8 +1677,9 @@
             // We use LEAD_UPDATED event which UI Overlay listens to
             document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
               detail: {
-                leadId: updateResult.data?.id,
-                changes: updatePayload
+                leadId: updateResult.data?.id || normalizedChatId || chatId,
+                updates: updatePayload,
+                chatId: normalizedChatId || chatId
               }
             }));
             console.log('[PrinChat DEBUG] 8. Dispatched PrinChatKanbanLeadUpdated');
@@ -1663,8 +1723,9 @@
               console.log('[PrinChat DEBUG] 7b. Lead CREATED in DB. Dispatching PrinChatKanbanLeadUpdated...');
               document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
                 detail: {
-                  leadId: chatId,
-                  changes: { tags: tags } // Treat creation as an update for UI
+                  leadId: createResult.data?.id || normalizedChatId || chatId,
+                  updates: updatePayload,
+                  chatId: normalizedChatId || chatId
                 }
               }));
               // Also dispatch Created event if UI listens to it specifically
@@ -2400,7 +2461,8 @@
             return {
               success: true,
               data: {
-                chatPhoto: chatInfo.data.chatPhoto
+                chatPhoto: chatInfo.data.chatPhoto,
+                chatPhotoSource: chatInfo.data.chatPhotoSource
               }
             };
           }
@@ -3019,8 +3081,7 @@
             document.removeEventListener('PrinChatActiveChatResult', handler);
             console.log('[PrinChat Injector] ✅ Received active chat result:', event.detail);
             if (event.detail.success) {
-              // Use fallback getChatPhoto() if API didn't return photo
-              const chatPhoto = event.detail.chatPhoto || this.getChatPhoto();
+              const chatPhoto = event.detail.chatPhoto;
 
               const responseData = { active: true, chatName: event.detail.chatName, chatId: event.detail.chatId, chatPhoto };
               console.log('[PrinChat Injector] 📤 RESOLVING getActiveChat with:', JSON.stringify(responseData));
@@ -3077,7 +3138,7 @@
         const timeout = setTimeout(() => {
           document.removeEventListener('PrinChatChatInfoResult', handler);
           resolve({ success: false, error: 'Timeout' });
-        }, 7000);
+        }, 15000);
 
         const handler = (event: any) => {
           if (event.detail?.requestId === requestId) {
@@ -3093,6 +3154,7 @@
                   chatName: event.detail.chatName,
                   chatId: event.detail.chatId,
                   chatPhoto,
+                  chatPhotoSource: event.detail.photoSource,
                   phoneNumber: event.detail.phoneNumber,
                   tags: event.detail.tags,
                   labels: event.detail.labels
@@ -3185,31 +3247,6 @@
           detail: { requestId }
         }));
       });
-    }
-
-    private getChatPhoto(): string | undefined {
-      console.log('[PrinChat Injector] Getting chat photo from DOM as fallback...');
-
-      // Try multiple selectors for profile picture
-      const selectors = [
-        '#main header img[src*="https://"]',  // Profile pic with https URL
-        '#main header img[src*="blob:"]',     // Profile pic as blob
-        '#main [data-testid="conversation-info-header"] img',
-        '#main header [data-testid="default-user"] img',
-        '#main header [data-testid="default-group"] img',
-        '#main header img',  // Any image in header
-      ];
-
-      for (const selector of selectors) {
-        const img = document.querySelector(selector) as HTMLImageElement;
-        if (img?.src && img.src !== 'data:') {
-          console.log('[PrinChat Injector] Found chat photo from selector:', selector, '→', img.src);
-          return img.src;
-        }
-      }
-
-      console.log('[PrinChat Injector] No chat photo found in DOM');
-      return undefined;
     }
 
     // Note: openChat() is kept for potential future use but currently not needed

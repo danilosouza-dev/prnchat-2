@@ -191,6 +191,10 @@ class WhatsAppUIOverlay {
   private activeKanbanCardMenuCard: HTMLElement | null = null;
   private activeKanbanCardMenuOutsideHandler: ((event: MouseEvent) => void) | null = null;
   private sidebarPhotoCache: Map<string, string> = new Map(); // Cache sidebar photos before overlay hides them
+  private incomingPhotoHydrationByLead: Map<string, Promise<void>> = new Map();
+  private kanbanBootstrapRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private kanbanBootstrapRetryCount: number = 0;
+  private readonly MAX_KANBAN_BOOTSTRAP_RETRIES = 5;
 
 
   constructor() {
@@ -485,6 +489,79 @@ class WhatsAppUIOverlay {
       }));
       // console.log('[PrinChat UI] Event dispatched successfully');
     });
+  }
+
+  private isRetryableKanbanLoadError(response: any): boolean {
+    const errorText = String(response?.error || '').toUpperCase();
+    return !!(
+      response?.isTimeout ||
+      errorText.includes('INSTANCE_NOT_READY') ||
+      errorText.includes('INSTANCE_REQUIRED') ||
+      errorText.includes('REQUEST TIMEOUT') ||
+      errorText.includes('TIMEOUT') ||
+      errorText.includes('CONTEXT INVALIDATED')
+    );
+  }
+
+  private async requestKanbanDataWithRetry(message: any, timeoutMs: number = 7000, attempts: number = 4): Promise<any> {
+    let lastResponse: any = null;
+
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const response = await this.requestFromContentScript(message, timeoutMs);
+      lastResponse = response;
+
+      if (response?.success) {
+        return response;
+      }
+
+      if (!this.isRetryableKanbanLoadError(response) || attempt === attempts) {
+        break;
+      }
+
+      const backoffMs = 250 * attempt;
+      console.warn('[PrinChat UI] Kanban scoped request not ready. Retrying...', {
+        type: message?.type,
+        attempt,
+        backoffMs,
+        error: response?.error
+      });
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    }
+
+    return lastResponse;
+  }
+
+  private clearKanbanBootstrapRetry(): void {
+    if (this.kanbanBootstrapRetryTimer) {
+      clearTimeout(this.kanbanBootstrapRetryTimer);
+      this.kanbanBootstrapRetryTimer = null;
+    }
+    this.kanbanBootstrapRetryCount = 0;
+  }
+
+  private scheduleKanbanBootstrapRetry(reason: string): void {
+    if (!this.isKanbanOpen) return;
+    if (this.kanbanBootstrapRetryTimer) return;
+    if (this.kanbanBootstrapRetryCount >= this.MAX_KANBAN_BOOTSTRAP_RETRIES) {
+      console.warn('[PrinChat UI] Kanban bootstrap retries exhausted.', { reason });
+      return;
+    }
+
+    const retryDelays = [350, 800, 1400, 2200, 3200];
+    const delayMs = retryDelays[Math.min(this.kanbanBootstrapRetryCount, retryDelays.length - 1)];
+    this.kanbanBootstrapRetryCount += 1;
+
+    console.warn('[PrinChat UI] Scheduling Kanban bootstrap retry...', {
+      reason,
+      attempt: this.kanbanBootstrapRetryCount,
+      delayMs
+    });
+
+    this.kanbanBootstrapRetryTimer = setTimeout(() => {
+      this.kanbanBootstrapRetryTimer = null;
+      if (!this.isKanbanOpen) return;
+      this.renderKanbanColumns();
+    }, delayMs);
   }
 
   private createShortcutBar() {
@@ -11005,6 +11082,7 @@ class WhatsAppUIOverlay {
 
     this.kanbanOverlay = overlay;
     this.isKanbanOpen = true;
+    this.clearKanbanBootstrapRetry();
 
     document.body.classList.add('princhat-kanban-active');
 
@@ -11056,13 +11134,23 @@ class WhatsAppUIOverlay {
     document.addEventListener('PrinChatIncomingMessage', (event: any) => {
       if (!this.isKanbanOpen) return;
 
-      const { messageText, chatId, timestamp, fromMe } = event.detail;
+      const {
+        messageText,
+        chatId,
+        timestamp,
+        fromMe,
+        chatPhoto: incomingEventPhoto,
+        chatPhotoSource: incomingEventPhotoSource,
+        chatName: incomingEventName
+      } = event.detail;
       console.log('[PrinChat UI] 📨 Incoming message (Optimistic):', chatId);
 
       // 1. Find card using canonical identity (supports :device IDs)
       const card = this.findKanbanCardElementByLeadId(chatId);
 
       if (card) {
+        const cardLeadId = card.getAttribute('data-lead-id') || '';
+
         // 2. Move to top of its CURRENT column (Prevent Column Jump)
         // Ensure we find the column body relative to the card
         const currentColumnBody = card.closest('.princhat-kanban-column-body');
@@ -11101,13 +11189,15 @@ class WhatsAppUIOverlay {
           }
 
           // Persist reset to database
-          this.requestFromContentScript({
-            type: 'UPDATE_KANBAN_LEAD',
-            payload: {
-              leadId: chatId,
-              updates: { unreadCount: 0 }
-            }
-          }).catch(err => console.error('[PrinChat UI] Failed to clear unread count in DB:', err));
+          if (cardLeadId) {
+            this.requestFromContentScript({
+              type: 'UPDATE_KANBAN_LEAD',
+              payload: {
+                leadId: cardLeadId,
+                updates: { unreadCount: 0 }
+              }
+            }).catch(err => console.error('[PrinChat UI] Failed to clear unread count in DB:', err));
+          }
 
         } else {
           // If message is INCOMING, increment unread count
@@ -11135,6 +11225,90 @@ class WhatsAppUIOverlay {
             // Let's trust the background listener for increments to avoid double-counting if we send updates.
             // Actually, for optimistic UI, we update visual here.
           }
+        }
+
+        // PHOTO GUARANTEE ON INCOMING: if the card still has placeholder, force
+        // hydration for this specific incoming chat (independent from active chat).
+        const hydrationKey = cardLeadId || chatId;
+        const currentPhotoImg = card.querySelector('.princhat-kanban-lead-photo img') as HTMLImageElement | null;
+        if (hydrationKey && !currentPhotoImg && !this.incomingPhotoHydrationByLead.has(hydrationKey)) {
+          const hydrationTask = (async () => {
+            const photoContainer = card.querySelector('.princhat-kanban-lead-photo');
+            if (!photoContainer) return;
+
+            const resolvedName = (
+              (card.querySelector('.princhat-kanban-lead-name')?.textContent || '')
+              || incomingEventName
+              || 'U'
+            ).trim();
+
+            const applyPhoto = (photo: string, persistToDb: boolean): boolean => {
+              if (!this.isRenderablePhotoUrl(photo)) return false;
+              photoContainer.innerHTML = `<img src="${photo}" alt="${this.escapeHtml(resolvedName)}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">`;
+
+              const identity = this.extractLeadIdentity(chatId);
+              if (identity) this.sidebarPhotoCache.set(identity.toLowerCase(), photo);
+
+              if (persistToDb && cardLeadId) {
+                this.requestFromContentScript({
+                  type: 'UPDATE_KANBAN_LEAD',
+                  payload: { leadId: cardLeadId, updates: { photo } }
+                }).catch(() => null);
+              }
+
+              return true;
+            };
+
+            const trustedIncomingEventPhoto =
+              this.isTrustedIncomingPhotoSource(incomingEventPhotoSource) ? incomingEventPhoto : '';
+            if (applyPhoto(trustedIncomingEventPhoto, true)) {
+              return;
+            }
+
+            const RETRY_DELAYS = [1200, 3200, 7000, 14000];
+            for (const delay of RETRY_DELAYS) {
+              await new Promise(resolve => setTimeout(resolve, delay));
+              if (!this.isKanbanOpen) return;
+
+              const currentCard = this.findKanbanCardElementByLeadId(cardLeadId || chatId);
+              if (!currentCard) return;
+              if (currentCard.querySelector('.princhat-kanban-lead-photo img')) return;
+
+              let resolvedPhoto = '';
+              let shouldPersistResolvedPhoto = false;
+              const chatInfoResolvedPhoto = await this.getChatPhotoForLead(chatId, cardLeadId);
+              if (this.isRenderablePhotoUrl(chatInfoResolvedPhoto)) {
+                resolvedPhoto = String(chatInfoResolvedPhoto);
+                shouldPersistResolvedPhoto = true;
+              }
+
+              const currentPhotoContainer = currentCard.querySelector('.princhat-kanban-lead-photo');
+              if (!currentPhotoContainer) return;
+              if (!this.isRenderablePhotoUrl(resolvedPhoto)) continue;
+              const finalPhoto = String(resolvedPhoto);
+
+              currentPhotoContainer.innerHTML = `<img src="${finalPhoto}" alt="${this.escapeHtml(resolvedName)}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">`;
+              const identity = this.extractLeadIdentity(chatId);
+              if (identity) this.sidebarPhotoCache.set(identity.toLowerCase(), finalPhoto);
+
+              if (shouldPersistResolvedPhoto && cardLeadId) {
+                this.requestFromContentScript({
+                  type: 'UPDATE_KANBAN_LEAD',
+                  payload: { leadId: cardLeadId, updates: { photo: finalPhoto } }
+                }).catch(() => null);
+              }
+
+              return;
+            }
+          })();
+
+          this.incomingPhotoHydrationByLead.set(hydrationKey, hydrationTask);
+          hydrationTask.finally(() => {
+            const currentTask = this.incomingPhotoHydrationByLead.get(hydrationKey);
+            if (currentTask === hydrationTask) {
+              this.incomingPhotoHydrationByLead.delete(hydrationKey);
+            }
+          });
         }
 
         // 6. Highlight animation
@@ -11313,17 +11487,26 @@ class WhatsAppUIOverlay {
         // and also populates the Store contact model.
         const cardPhotoImg = card.querySelector('.princhat-kanban-lead-photo img') as HTMLImageElement | null;
         if (!cardPhotoImg) {
-          const chatId = detail.chatId || card.getAttribute('data-lead-id') || leadId;
+          const initialCardLeadId = card.getAttribute('data-lead-id') || leadId;
+          const detailChatId = typeof detail?.chatId === 'string' ? detail.chatId : '';
+          const updateChatId = typeof detail?.updates?.chatId === 'string' ? detail.updates.chatId : '';
+          const chatId =
+            this.normalizeLeadChatId(detailChatId || updateChatId || initialCardLeadId || leadId)
+            || detailChatId
+            || updateChatId
+            || initialCardLeadId
+            || leadId;
+          const phoneHint = typeof detail?.updates?.phone === 'string' ? detail.updates.phone : '';
           console.log('[PrinChat UI] 📸 No photo on card, scheduling delayed photo hydration for:', chatId);
 
-          const PHOTO_RETRY_DELAYS = [1000, 3000, 8000];
+          const PHOTO_RETRY_DELAYS = [1000, 3000, 8000, 15000];
           (async () => {
             for (const delay of PHOTO_RETRY_DELAYS) {
               await new Promise(r => setTimeout(r, delay));
               if (!this.isKanbanOpen) return;
 
               // Check if photo was resolved by another path in the meantime
-              const currentCard = this.findKanbanCardElementByLeadId(leadId);
+              const currentCard = this.findKanbanCardElementByLeadId(leadId || initialCardLeadId || chatId);
               if (!currentCard) return; // card removed
               if (currentCard.querySelector('.princhat-kanban-lead-photo img')) {
                 console.log('[PrinChat UI] 📸 Photo already resolved for:', chatId);
@@ -11331,23 +11514,16 @@ class WhatsAppUIOverlay {
               }
 
               let resolvedPhoto: string | undefined;
+              let shouldPersistResolvedPhoto = false;
 
-              // 1. Re-scrape sidebar (WhatsApp bumps new-message chats to top)
-              this.refreshSidebarPhotoCache();
-              resolvedPhoto = this.getSidebarPhotoForLead(chatId);
+              // Try GET_CHAT_PHOTO (goes through page script Store/WPP strategies)
+              resolvedPhoto = await this.getChatPhotoForLead(chatId, phoneHint, initialCardLeadId);
               if (resolvedPhoto) {
-                console.log('[PrinChat UI] 📸 Got photo from sidebar re-scrape after', delay, 'ms for:', chatId);
+                shouldPersistResolvedPhoto = true;
+                console.log('[PrinChat UI] 📸 Got photo from GET_CHAT_PHOTO after', delay, 'ms for:', chatId);
               }
 
-              // 2. Try GET_CHAT_PHOTO (goes through page script Store/WPP strategies)
-              if (!resolvedPhoto) {
-                resolvedPhoto = await this.getChatPhotoForLead(chatId);
-                if (resolvedPhoto) {
-                  console.log('[PrinChat UI] 📸 Got photo from GET_CHAT_PHOTO after', delay, 'ms for:', chatId);
-                }
-              }
-
-              // 3. Apply the photo to the card
+              // Apply the photo to the card
               if (resolvedPhoto && this.isRenderablePhotoUrl(resolvedPhoto)) {
                 const photoContainer = currentCard.querySelector('.princhat-kanban-lead-photo');
                 const resolvedName = (currentCard.querySelector('.princhat-kanban-lead-name')?.textContent || '').trim() || 'U';
@@ -11360,10 +11536,30 @@ class WhatsAppUIOverlay {
                   if (identity) this.sidebarPhotoCache.set(identity.toLowerCase(), resolvedPhoto);
 
                   // Also persist to DB
-                  this.requestFromContentScript({
-                    type: 'UPDATE_KANBAN_LEAD',
-                    payload: { chatId, updates: { photo: resolvedPhoto } }
-                  }).catch(() => { });
+                  const cardLeadId = currentCard.getAttribute('data-lead-id') || '';
+                  const persistLeadId = detail.leadId || cardLeadId;
+                  if (shouldPersistResolvedPhoto && persistLeadId) {
+                    this.requestFromContentScript({
+                      type: 'UPDATE_KANBAN_LEAD',
+                      payload: { leadId: persistLeadId, updates: { photo: resolvedPhoto } }
+                    }).then((persistResult) => {
+                      if (!persistResult?.success) {
+                        console.warn('[PrinChat UI] ⚠️ Failed to persist hydrated photo in DB:', {
+                          leadId: persistLeadId,
+                          chatId,
+                          error: persistResult?.error || 'unknown'
+                        });
+                      }
+                    }).catch((persistError) => {
+                      console.warn('[PrinChat UI] ⚠️ Failed to persist hydrated photo in DB:', {
+                        leadId: persistLeadId,
+                        chatId,
+                        error: persistError?.message || persistError
+                      });
+                    });
+                  } else if (shouldPersistResolvedPhoto) {
+                    console.warn('[PrinChat UI] ⚠️ Could not persist hydrated photo: missing leadId', { chatId });
+                  }
 
                   return; // Photo found, stop retrying
                 }
@@ -11428,15 +11624,13 @@ class WhatsAppUIOverlay {
           // Resolve photo
           if (!hasPhoto) {
             let resolvedPhoto = '';
+            const phoneHint = this.extractLeadIdentity(info?.phoneNumber || lead?.phone || '');
             if (this.isRenderablePhotoUrl(info?.chatPhoto)) {
               resolvedPhoto = String(info.chatPhoto);
               console.log('[PrinChat UI] 🔬 DIAG hydration: photo from getContactInfo');
-            } else {
-              resolvedPhoto = this.getSidebarPhotoForLead(chatId, info?.chatName || lead?.name) || '';
-              console.log('[PrinChat UI] 🔬 DIAG hydration: getSidebarPhotoForLead =', resolvedPhoto ? resolvedPhoto.substring(0, 60) + '...' : '(none)');
             }
             if (!resolvedPhoto) {
-              const directPhoto = await this.getChatPhotoForLead(chatId);
+              const directPhoto = await this.getChatPhotoForLead(chatId, phoneHint, lead?.phone);
               resolvedPhoto = directPhoto || '';
               console.log('[PrinChat UI] 🔬 DIAG hydration: getChatPhotoForLead =', resolvedPhoto ? resolvedPhoto.substring(0, 60) + '...' : '(none)');
             }
@@ -11462,6 +11656,7 @@ class WhatsAppUIOverlay {
             this.updateCardDOM({
               id: leadId,
               chatId,
+              phone: info?.phoneNumber || lead?.phone,
               name: info?.chatName || lead?.name,
               ...updates
             });
@@ -11511,25 +11706,13 @@ class WhatsAppUIOverlay {
           // CRITICAL: Merge event labels into globalLabels so instant update can resolve names/colors
           const eventLabels = event.detail?.labels;
           if (Array.isArray(eventLabels) && eventLabels.length > 0) {
-            eventLabels.forEach((label: any) => {
-              if (!label?.id || !label?.name) return;
-              const existing = this.globalLabels.find(g => g.id === label.id);
-              if (existing) {
-                // Update name/color if the new data is better
-                if (label.name) existing.name = label.name;
-                if (typeof label.color === 'string' && label.color.startsWith('#')) existing.color = label.color;
-              } else {
-                this.globalLabels.push({
-                  id: label.id,
-                  name: label.name,
-                  color: (typeof label.color === 'string' && label.color.startsWith('#')) ? label.color : '#2196f3'
-                });
-              }
-            });
-            console.log('[PrinChat UI] 🏷️ Merged event labels into globalLabels. Total:', this.globalLabels.length);
+            const beforeMergeCount = this.globalLabels.length;
+            this.mergeLabelCandidatesIntoGlobalLabels(eventLabels);
+            console.log('[PrinChat UI] 🏷️ Merged event labels into globalLabels. Total:', this.globalLabels.length, '(+',
+              Math.max(0, this.globalLabels.length - beforeMergeCount), ')');
           }
 
-          await this.updateCardTagsInstantly(event.detail.chatId, event.detail.tags, false);
+          await this.updateCardTagsInstantly(event.detail.chatId, event.detail.tags, false, event.detail.labels || []);
         }
 
         // ALSO queue full render (as backup/sync for global label changes)
@@ -11566,6 +11749,7 @@ class WhatsAppUIOverlay {
       this.kanbanOverlay.remove();
       this.kanbanOverlay = null;
     }
+    this.clearKanbanBootstrapRetry();
 
     // Remove active state from Kanban sidebar button
     const kanbanBtn = document.querySelector('.princhat-kanban-sidebar-btn');
@@ -11627,7 +11811,7 @@ class WhatsAppUIOverlay {
    * Instantly update tags for a specific card without full re-render
    * Uses the robust ID matching strategy
    */
-  private async updateCardTagsInstantly(chatId: string, newTags: string[], allowClear: boolean = false): Promise<void> {
+  private async updateCardTagsInstantly(chatId: string, newTags: string[], allowClear: boolean = false, labelFallbacks: any[] = []): Promise<void> {
     if (!this.isKanbanOpen) {
       console.log('[PrinChat UI] ⚠️ Kanban not open - skipping instant update');
       return;
@@ -11708,15 +11892,20 @@ class WhatsAppUIOverlay {
       return;
     }
 
+    const normalizedFallbackLabels = Array.isArray(labelFallbacks) ? labelFallbacks.filter(Boolean) : [];
+
+    // Merge fallback labels into global cache (without polluting cache with weak id-only names)
+    if (normalizedFallbackLabels.length > 0) {
+      this.mergeLabelCandidatesIntoGlobalLabels(normalizedFallbackLabels);
+      allLabels = this.globalLabels;
+    }
+
     // Render tags (reuse logic from updateCardDOM)
     const MAX_VISIBLE = 1;
     const tagElements = normalizedTags.slice(0, MAX_VISIBLE).map(tagId => {
-      const normalizedTag = String(tagId).toLowerCase();
-      const label = allLabels.find((l: any) =>
-        l.id === tagId ||
-        (typeof l.name === 'string' && l.name.toLowerCase() === normalizedTag)
-      );
-      const tagName = label?.name || String(tagId);
+      const normalizedTag = this.normalizeTagToken(tagId);
+      const label = this.findLabelInfoByTag(normalizedTag, allLabels, normalizedFallbackLabels);
+      const tagName = label?.name || normalizedTag;
       const labelColor = label?.hexColor || label?.color || '#2196f3';
       const finalBg = labelColor ? `${labelColor}4D` : 'rgba(33, 150, 243, 0.30)';
       const finalColor = labelColor || '#2196f3';
@@ -11739,9 +11928,10 @@ class WhatsAppUIOverlay {
       (() => {
         const remainingTags = normalizedTags.slice(1);
         return remainingTags.map((tag: string) => {
-          const info = allLabels.find((l: any) => l.id === tag || (l.name && l.name.toLowerCase() === String(tag).toLowerCase()));
+          const normalizedTag = this.normalizeTagToken(tag);
+          const info = this.findLabelInfoByTag(normalizedTag, allLabels, normalizedFallbackLabels);
           return {
-            name: info?.name || tag,
+            name: info?.name || normalizedTag,
             color: info?.color || info?.hexColor || '#2196f3'
           };
         });
@@ -11843,7 +12033,7 @@ class WhatsAppUIOverlay {
         console.log(`[PrinChat UI]   Old: ${JSON.stringify(lastTags)}`);
         console.log(`[PrinChat UI]   New: ${JSON.stringify(currentTags)}`);
 
-        await this.updateCardTagsInstantly(cardLeadId, currentTags, true);
+        await this.updateCardTagsInstantly(cardLeadId, currentTags, true, Array.isArray(lead?.labels) ? lead.labels : []);
         this.lastPolledTags.set(cardLeadId, currentTags);
       } else {
         // Update cache even if no change (first poll)
@@ -11953,8 +12143,198 @@ class WhatsAppUIOverlay {
   private isRenderablePhotoUrl(value: any): boolean {
     if (typeof value !== 'string') return false;
     const src = value.trim();
-    if (!src || src === 'data:' || src.startsWith('data:image/svg')) return false;
-    return src.startsWith('http') || src.startsWith('blob:') || src.startsWith('data:image/');
+    if (!src || src === 'data:' || src === 'about:blank') return false;
+    if (this.isLikelyPlaceholderPhotoUrl(src)) return false;
+    if (/^https?:\/\//i.test(src)) return true;
+    if (src.startsWith('blob:')) return true;
+    if (/^data:image\//i.test(src) && !/^data:image\/svg/i.test(src)) return true;
+    if (src.startsWith('//')) return true;
+    return false;
+  }
+
+  private isLikelyPlaceholderPhotoUrl(value: any): boolean {
+    if (typeof value !== 'string') return true;
+    const src = value.trim();
+    if (!src) return true;
+
+    const lower = src.toLowerCase();
+    if (lower.includes('ui-avatars.com')) return true;
+
+    try {
+      const parsed = new URL(
+        src.startsWith('//') ? `https:${src}` : src,
+        window.location.origin
+      );
+      const host = parsed.hostname.toLowerCase();
+      const path = parsed.pathname.toLowerCase();
+      const looksAvatarPath =
+        path.includes('avatar')
+        || path.includes('default-user')
+        || path.includes('default-group')
+        || path.includes('profile-placeholder');
+
+      if (host === 'web.whatsapp.com' && (looksAvatarPath || path.endsWith('.svg'))) {
+        return true;
+      }
+      if (looksAvatarPath && path.endsWith('.svg')) {
+        return true;
+      }
+    } catch (_error) {
+      if (lower.includes('avatar') && lower.includes('.svg')) return true;
+    }
+
+    return false;
+  }
+
+  private isTrustedIncomingPhotoSource(source: any): boolean {
+    const normalized = typeof source === 'string' ? source.trim().toLowerCase() : '';
+    if (!normalized) return false;
+
+    if (normalized === 'wpp') return true;
+    if (normalized === 'message_model') return true;
+    if (normalized === 'store_chat' || normalized === 'store_chat_find') return true;
+    if (normalized === 'store_contact' || normalized === 'store_profilepic_find_msg') return true;
+    if (normalized.startsWith('store_profilepic_')) return true;
+
+    return false;
+  }
+
+  private isTrustedChatInfoPhotoSource(source: any): boolean {
+    const normalized = typeof source === 'string' ? source.trim().toLowerCase() : '';
+    if (!normalized) return false;
+
+    if (normalized === 'chatinfo.local') return true;
+    if (normalized === 'chatinfo.profilepicthumb.find') return true;
+    if (normalized === 'chatinfo.profilepicthumb.get') return true;
+    if (normalized === 'chatinfo.wpp') return true;
+    if (normalized === 'chatinfo.phone_fallback') return true;
+    if (normalized === 'chatinfo.sidebar') return true;
+    if (normalized === 'chatinfo.dom.header') return true;
+    if (normalized === 'chatinfo.dom.background') return true;
+
+    return false;
+  }
+
+  private normalizeTagToken(value: any): string {
+    if (value === null || value === undefined) return '';
+    return String(value).trim();
+  }
+
+  private isValidLabelColor(value: any): boolean {
+    if (typeof value !== 'string') return false;
+    const normalized = value.trim();
+    if (!normalized) return false;
+    return normalized.startsWith('#') || normalized.startsWith('rgb') || normalized.startsWith('hsl');
+  }
+
+  private isMeaningfulLabelName(name: any, idOrTag?: any): boolean {
+    const normalizedName = this.normalizeTagToken(name);
+    if (!normalizedName) return false;
+
+    const normalizedRef = this.normalizeTagToken(idOrTag);
+    if (normalizedRef && normalizedName.toLowerCase() === normalizedRef.toLowerCase()) return false;
+    if (/^tag\s+\d+$/i.test(normalizedName)) return false;
+    if (/^\d+$/.test(normalizedName)) return false;
+
+    return true;
+  }
+
+  private mergeLabelCandidatesIntoGlobalLabels(labels: any[] = []): void {
+    if (!Array.isArray(labels) || labels.length === 0) return;
+
+    labels.forEach((label: any) => {
+      const labelId = this.normalizeTagToken(label?.id);
+      const labelName = this.normalizeTagToken(label?.name);
+      const labelColor = this.normalizeTagToken(label?.color || label?.hexColor);
+      const hasMeaningfulName = this.isMeaningfulLabelName(labelName, labelId);
+      const hasValidColor = this.isValidLabelColor(labelColor);
+
+      if (!labelId && !hasMeaningfulName) return;
+
+      const existing = this.globalLabels.find((cached: any) => {
+        const cachedId = this.normalizeTagToken(cached?.id);
+        const cachedName = this.normalizeTagToken(cached?.name);
+        return (
+          (!!labelId && !!cachedId && cachedId === labelId) ||
+          (!!hasMeaningfulName && !!cachedName && cachedName.toLowerCase() === labelName.toLowerCase())
+        );
+      });
+
+      if (existing) {
+        const existingName = this.normalizeTagToken(existing?.name);
+        if (hasMeaningfulName && !this.isMeaningfulLabelName(existingName, existing?.id)) {
+          existing.name = labelName;
+        }
+        if (hasValidColor && !this.isValidLabelColor(existing?.color || existing?.hexColor)) {
+          existing.color = labelColor;
+        }
+        if (hasValidColor && !this.isValidLabelColor(existing?.hexColor)) {
+          existing.hexColor = labelColor;
+        }
+        if (!this.normalizeTagToken(existing?.id) && labelId) {
+          existing.id = labelId;
+        }
+        return;
+      }
+
+      // Avoid inserting weak id-only labels that later regress UI to numeric tags.
+      if (!hasMeaningfulName) return;
+
+      this.globalLabels.push({
+        id: labelId || labelName,
+        name: labelName,
+        color: hasValidColor ? labelColor : '#2196f3',
+      });
+    });
+  }
+
+  private findLabelInfoByTag(tag: any, labels: any[] = [], fallbackLabels: any[] = []): any | undefined {
+    const normalizedTag = this.normalizeTagToken(tag);
+    if (!normalizedTag) return undefined;
+    const normalizedTagLower = normalizedTag.toLowerCase();
+
+    const collectMatches = (pool: any[], source: 'global' | 'fallback'): Array<{ label: any; source: 'global' | 'fallback'; matchType: 'id' | 'name' }> => {
+      if (!Array.isArray(pool) || pool.length === 0) return [];
+      const matches: Array<{ label: any; source: 'global' | 'fallback'; matchType: 'id' | 'name' }> = [];
+      pool.forEach((label: any) => {
+        const labelId = this.normalizeTagToken(label?.id);
+        if (labelId && labelId === normalizedTag) {
+          matches.push({ label, source, matchType: 'id' });
+          return;
+        }
+
+        const labelName = this.normalizeTagToken(label?.name).toLowerCase();
+        if (labelName && labelName === normalizedTagLower) {
+          matches.push({ label, source, matchType: 'name' });
+        }
+      });
+      return matches;
+    };
+
+    const candidates = [
+      ...(collectMatches(labels, 'global') || []),
+      ...(collectMatches(fallbackLabels, 'fallback') || []),
+    ];
+
+    if (candidates.length === 0) return undefined;
+
+    const scoreCandidate = (candidate: { label: any; source: 'global' | 'fallback'; matchType: 'id' | 'name' }): number => {
+      const label = candidate.label || {};
+      const labelName = this.normalizeTagToken(label?.name);
+      const labelId = this.normalizeTagToken(label?.id);
+      const labelColor = this.normalizeTagToken(label?.color || label?.hexColor);
+
+      let score = candidate.matchType === 'id' ? 4 : 2;
+      if (this.isMeaningfulLabelName(labelName, labelId || normalizedTag)) score += 5;
+      else if (labelName) score += 1;
+      if (this.isValidLabelColor(labelColor)) score += 2;
+      if (candidate.source === 'fallback') score += 0.5;
+
+      return score;
+    };
+
+    candidates.sort((left, right) => scoreCandidate(right) - scoreCandidate(left));
+    return candidates[0]?.label;
   }
 
   /**
@@ -11965,6 +12345,48 @@ class WhatsAppUIOverlay {
     this.sidebarPhotoCache.clear();
     const roots = Array.from(document.querySelectorAll('#pane-side, #side'));
     const searchRoots = roots.length > 0 ? roots : [document.body];
+    const cacheKeysForRow = (row: HTMLElement, title: string, photo: string) => {
+      const keys = new Set<string>();
+
+      const titleDigits = title.replace(/\D/g, '');
+      if (titleDigits.length >= 8) {
+        keys.add(titleDigits);
+      }
+
+      const dataIds = new Set<string>();
+      const rowDataId = row.getAttribute('data-id');
+      if (rowDataId) {
+        dataIds.add(rowDataId);
+      }
+
+      const nestedDataIdNodes = Array.from(row.querySelectorAll('[data-id]')) as HTMLElement[];
+      for (const node of nestedDataIdNodes) {
+        const value = node.getAttribute('data-id');
+        if (value) {
+          dataIds.add(value);
+        }
+      }
+
+      for (const dataId of dataIds) {
+        const dataIdVariants = this.buildLeadChatVariants(dataId);
+        for (const variant of dataIdVariants) {
+          keys.add(variant.toLowerCase());
+        }
+
+        const identity = this.extractLeadIdentity(dataId).toLowerCase();
+        if (identity) {
+          keys.add(identity);
+          const identityToken = identity.replace(/[^a-z0-9]/g, '');
+          if (identityToken.length >= 5) {
+            keys.add(identityToken);
+          }
+        }
+      }
+
+      for (const key of keys) {
+        this.sidebarPhotoCache.set(key, photo);
+      }
+    };
 
     for (const root of searchRoots) {
       if (!root) continue;
@@ -11980,170 +12402,22 @@ class WhatsAppUIOverlay {
         // Find image in this row
         const images = Array.from(row.querySelectorAll('img')) as HTMLImageElement[];
         for (const img of images) {
-          if (this.isRenderablePhotoUrl(img.src)) {
-            // Cache by phone digits extracted from title (e.g. "+55 33 9704-8517" → "553397048517")
-            const titleDigits = title.replace(/\D/g, '');
-            if (titleDigits.length >= 8) {
-              this.sidebarPhotoCache.set(titleDigits, img.src);
-            }
-            // Also cache by the name (lowercased)
-            const titleLower = title.trim().toLowerCase();
-            if (titleLower) {
-              this.sidebarPhotoCache.set(titleLower, img.src);
-            }
+          const photoCandidate =
+            img.currentSrc
+            || img.src
+            || img.getAttribute('src')
+            || '';
+          const normalizedPhotoCandidate = photoCandidate.startsWith('//')
+            ? `https:${photoCandidate}`
+            : photoCandidate;
+          if (this.isRenderablePhotoUrl(normalizedPhotoCandidate)) {
+            cacheKeysForRow(row, title, normalizedPhotoCandidate);
             break;
           }
         }
       }
     }
     console.log('[PrinChat UI] 📸 Cached', this.sidebarPhotoCache.size, 'sidebar photos before overlay');
-  }
-
-  /**
-   * Refresh sidebar photo cache WITHOUT clearing existing entries.
-   * Used during delayed photo hydration to pick up newly-rendered sidebar rows.
-   */
-  private refreshSidebarPhotoCache(): void {
-    const roots = Array.from(document.querySelectorAll('#pane-side, #side'));
-    const searchRoots = roots.length > 0 ? roots : [document.body];
-    let newEntries = 0;
-
-    for (const root of searchRoots) {
-      if (!root) continue;
-      const rows = Array.from(root.querySelectorAll('[role="row"]')) as HTMLElement[];
-      for (const row of rows) {
-        const titleSpan = row.querySelector('span[title]') as HTMLElement | null;
-        if (!titleSpan) continue;
-        const title = titleSpan.getAttribute('title') || titleSpan.textContent || '';
-        if (!title) continue;
-
-        // Extract phone digits and name for cache key
-        const titleDigits = title.replace(/\D/g, '');
-        const titleLower = title.trim().toLowerCase();
-
-        // Skip if already cached
-        if (titleDigits.length >= 8 && this.sidebarPhotoCache.has(titleDigits)) continue;
-        if (titleLower && this.sidebarPhotoCache.has(titleLower)) continue;
-
-        const images = Array.from(row.querySelectorAll('img')) as HTMLImageElement[];
-        for (const img of images) {
-          if (this.isRenderablePhotoUrl(img.src)) {
-            if (titleDigits.length >= 8) {
-              this.sidebarPhotoCache.set(titleDigits, img.src);
-            }
-            if (titleLower) {
-              this.sidebarPhotoCache.set(titleLower, img.src);
-            }
-            newEntries++;
-            break;
-          }
-        }
-      }
-    }
-    if (newEntries > 0) {
-      console.log('[PrinChat UI] 📸 Refreshed sidebar cache, added', newEntries, 'new entries. Total:', this.sidebarPhotoCache.size);
-    }
-  }
-
-  private getSidebarPhotoForLead(chatId: string, chatName?: string): string | undefined {
-    const variants = this.buildLeadChatVariants(chatId);
-    if (variants.length === 0) return undefined;
-
-    // Check cache first (sidebar may be hidden by Kanban overlay)
-    const identity = this.extractLeadIdentity(chatId);
-    if (identity) {
-      const cachedByIdentity = this.sidebarPhotoCache.get(identity.toLowerCase());
-      if (cachedByIdentity && this.isRenderablePhotoUrl(cachedByIdentity)) return cachedByIdentity;
-    }
-    for (const variant of variants) {
-      const cachedByVariant = this.sidebarPhotoCache.get(variant.toLowerCase());
-      if (cachedByVariant && this.isRenderablePhotoUrl(cachedByVariant)) return cachedByVariant;
-    }
-    // Check by contact name (saved contacts show name, not phone, in sidebar)
-    if (chatName) {
-      const cachedByName = this.sidebarPhotoCache.get(chatName.trim().toLowerCase());
-      if (cachedByName && this.isRenderablePhotoUrl(cachedByName)) return cachedByName;
-    }
-
-    const roots = Array.from(document.querySelectorAll('#pane-side, #side'));
-    const searchRoots = roots.length > 0 ? roots : [document.body];
-
-    const findElementPhoto = (element: Element | null): string | undefined => {
-      if (!element) return undefined;
-
-      const images = Array.from(element.querySelectorAll('img')) as HTMLImageElement[];
-      for (const img of images) {
-        if (this.isRenderablePhotoUrl(img.src)) return img.src;
-      }
-
-      const nodes = Array.from(element.querySelectorAll('*')) as HTMLElement[];
-      for (const node of nodes) {
-        const bgImage = window.getComputedStyle(node).backgroundImage;
-        if (!bgImage || bgImage === 'none' || !bgImage.includes('url(')) continue;
-        const match = bgImage.match(/url\(["']?(.*?)["']?\)/i);
-        const url = match?.[1];
-        if (this.isRenderablePhotoUrl(url)) return url;
-      }
-
-      return undefined;
-    };
-
-    // Extract phone digits from chatId for matching
-    const chatIdDigits = this.extractLeadIdentity(chatId).replace(/\D/g, '');
-
-    for (const root of searchRoots) {
-      if (!root) continue;
-
-      // Strategy 1: role="row" with span[title] phone-digit matching
-      const rows = Array.from(root.querySelectorAll('[role="row"]')) as HTMLElement[];
-      for (const row of rows) {
-        const titleSpans = Array.from(row.querySelectorAll('span[title]')) as HTMLElement[];
-        for (const span of titleSpans) {
-          const title = span.getAttribute('title') || span.textContent || '';
-          if (!title) continue;
-
-          const titleDigits = title.replace(/\D/g, '');
-          const isPhoneMatch = chatIdDigits.length >= 8 && titleDigits.length >= 8 && (
-            chatIdDigits.endsWith(titleDigits) || titleDigits.endsWith(chatIdDigits) ||
-            chatIdDigits.includes(titleDigits) || titleDigits.includes(chatIdDigits)
-          );
-          const isNameMatch = chatName && title.trim().toLowerCase() === chatName.trim().toLowerCase();
-
-          if (isPhoneMatch || isNameMatch) {
-            const photo = findElementPhoto(row);
-            if (photo) return photo;
-          }
-        }
-      }
-
-      // Strategy 2: Legacy [data-id] matching (for older WA builds)
-      const dataIdRows = Array.from(root.querySelectorAll('[data-id]')) as HTMLElement[];
-      for (const row of dataIdRows) {
-        const dataId = String(row.getAttribute('data-id') || '').toLowerCase();
-        if (!dataId) continue;
-        if (!variants.some((variant) => dataId.includes(variant))) continue;
-
-        const container = row.closest('[role="row"]') || row.closest('[role="listitem"]') || row;
-        const photo = findElementPhoto(container);
-        if (photo) return photo;
-      }
-
-      // Strategy 3: Fallback — search all span[title] for chatName match  
-      if (chatName) {
-        const normalizedName = chatName.trim().toLowerCase();
-        const titleNodes = Array.from(root.querySelectorAll('span[title], div[title]')) as HTMLElement[];
-        for (const node of titleNodes) {
-          const title = String(node.getAttribute('title') || node.textContent || '').trim().toLowerCase();
-          if (!title || title !== normalizedName) continue;
-
-          const container = node.closest('[role="row"]') || node.closest('[role="listitem"]') || node.closest('[data-id]') || node.parentElement;
-          const photo = findElementPhoto(container);
-          if (photo) return photo;
-        }
-      }
-    }
-
-    return undefined;
   }
 
   private isSystemChatLead(lead: any): boolean {
@@ -12212,8 +12486,22 @@ class WhatsAppUIOverlay {
       console.log('[PrinChat UI] renderKanbanColumns called');
 
       // 1. Fetch EVERYTHING first (Atomic Update Preparation)
-      const columnsResponse = await this.requestFromContentScript({ type: 'GET_KANBAN_COLUMNS' });
-      let rawColumns = columnsResponse?.data || [];
+      const columnsResponse = await this.requestKanbanDataWithRetry({ type: 'GET_KANBAN_COLUMNS' }, 8000, 4);
+      if (!columnsResponse?.success) {
+        if (this.isRetryableKanbanLoadError(columnsResponse)) {
+          container.innerHTML = '<p style="color: #9aa4b2; text-align: center; padding: 2rem;">Carregando Kanban...</p>';
+          this.scheduleKanbanBootstrapRetry(`columns_request_failed:${columnsResponse?.error || 'unknown'}`);
+          return;
+        }
+        throw new Error(columnsResponse?.error || 'Failed to load Kanban columns');
+      }
+
+      let rawColumns = Array.isArray(columnsResponse?.data) ? columnsResponse.data : [];
+      if (rawColumns.length === 0) {
+        container.innerHTML = '<p style="color: #9aa4b2; text-align: center; padding: 2rem;">Carregando Kanban...</p>';
+        this.scheduleKanbanBootstrapRetry('columns_empty');
+        return;
+      }
 
       // DEDUPLICATE COLUMNS (Fixing User Issue)
       const uniqueColumnsMap = new Map();
@@ -12250,32 +12538,30 @@ class WhatsAppUIOverlay {
 
 
       // Fetch All Leads
-      const leadsResponse = await this.requestFromContentScript({ type: 'GET_ALL_KANBAN_LEADS' });
-      const allLeads = leadsResponse?.data || [];
+      const leadsResponse = await this.requestKanbanDataWithRetry({ type: 'GET_ALL_KANBAN_LEADS' }, 8000, 4);
+      if (!leadsResponse?.success) {
+        if (this.isRetryableKanbanLoadError(leadsResponse)) {
+          container.innerHTML = '<p style="color: #9aa4b2; text-align: center; padding: 2rem;">Carregando Kanban...</p>';
+          this.scheduleKanbanBootstrapRetry(`leads_request_failed:${leadsResponse?.error || 'unknown'}`);
+          return;
+        }
+        throw new Error(leadsResponse?.error || 'Failed to load Kanban leads');
+      }
+      const allLeads = Array.isArray(leadsResponse?.data) ? leadsResponse.data : [];
       console.log('[PrinChat UI] Loaded', allLeads.length, 'total leads');
 
-      // FALLBACK: If globalLabels is still empty (GET_ALL_LABELS timed out),
-      // populate from lead.labels data which already has correct names and colors
-      // from the PrinChatIncomingMessage event.
-      if (this.globalLabels.length === 0) {
-        const seenIds = new Set<string>();
-        allLeads.forEach((lead: any) => {
-          if (Array.isArray(lead.labels)) {
-            lead.labels.forEach((label: any) => {
-              if (label?.id && label?.name && !seenIds.has(label.id)) {
-                seenIds.add(label.id);
-                this.globalLabels.push({
-                  id: label.id,
-                  name: label.name,
-                  color: (typeof label.color === 'string' && label.color.startsWith('#')) ? label.color : '#2196f3'
-                });
-              }
-            });
-          }
-        });
-        if (this.globalLabels.length > 0) {
-          console.log('[PrinChat UI] 🏷️ Populated globalLabels from lead.labels fallback:', this.globalLabels.length);
+      // Merge labels embedded in lead payloads to fill cache gaps.
+      // This avoids rendering numeric IDs when a label exists on the lead but not in GET_ALL_LABELS.
+      const beforeLeadMergeCount = this.globalLabels.length;
+      const leadLabelCandidates: any[] = [];
+      allLeads.forEach((lead: any) => {
+        if (Array.isArray(lead?.labels) && lead.labels.length > 0) {
+          leadLabelCandidates.push(...lead.labels);
         }
+      });
+      this.mergeLabelCandidatesIntoGlobalLabels(leadLabelCandidates);
+      if (this.globalLabels.length > beforeLeadMergeCount) {
+        console.log('[PrinChat UI] 🏷️ Added missing labels from lead payloads:', this.globalLabels.length - beforeLeadMergeCount);
       }
 
       // DIAGNOSTIC: Log photo/tags status for each lead at render time
@@ -12360,6 +12646,7 @@ class WhatsAppUIOverlay {
 
       // 3. Post-Render Setup
       this.setupColumnDragAndDrop();
+      this.clearKanbanBootstrapRetry();
 
       if (this.kanbanOverlay) {
         // Immediate init on next frame (No 500ms delay)
@@ -12430,17 +12717,15 @@ class WhatsAppUIOverlay {
             const info = await this.getContactInfo(chatId);
             const labels = Array.isArray(info.labels) ? info.labels : [];
             const hasFreshLabels = labels.length > 0;
-            const sidebarPhoto = this.getSidebarPhotoForLead(chatId, info.chatName || currentLead?.name);
+            const phoneHint = this.extractLeadIdentity(info.phoneNumber || currentLead?.phone || '');
 
             let resolvedPhoto = '';
             if (this.isRenderablePhotoUrl(info.chatPhoto)) {
               resolvedPhoto = String(info.chatPhoto);
             } else if (this.isRenderablePhotoUrl(currentLead.photo)) {
               resolvedPhoto = currentLead.photo;
-            } else if (sidebarPhoto) {
-              resolvedPhoto = sidebarPhoto;
             } else {
-              const directPhoto = await this.getChatPhotoForLead(chatId);
+              const directPhoto = await this.getChatPhotoForLead(chatId, phoneHint, currentLead?.phone);
               resolvedPhoto = directPhoto || '';
             }
 
@@ -12455,6 +12740,10 @@ class WhatsAppUIOverlay {
             const nextName = (info.chatName || currentLead.name || '').trim();
             if (nextName && nextName !== currentLead.name) {
               updates.name = nextName;
+            }
+
+            if (phoneHint.length >= 8 && phoneHint !== this.extractLeadIdentity(currentLead?.phone || '')) {
+              updates.phone = phoneHint;
             }
 
             if (this.isRenderablePhotoUrl(resolvedPhoto) && resolvedPhoto !== currentLead.photo) {
@@ -12562,9 +12851,12 @@ class WhatsAppUIOverlay {
 
     // 2. Update Photo
     const photoContainer = card.querySelector('.princhat-kanban-lead-photo');
+    const resolvedPhoto = this.isRenderablePhotoUrl(lead?.photo)
+      ? String(lead.photo)
+      : '';
     if (photoContainer) {
-      if (this.isRenderablePhotoUrl(lead.photo)) {
-        photoContainer.innerHTML = `<img src="${lead.photo}" alt="${resolvedName}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">`;
+      if (this.isRenderablePhotoUrl(resolvedPhoto)) {
+        photoContainer.innerHTML = `<img src="${resolvedPhoto}" alt="${resolvedName}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">`;
       } else {
         const existingImage = photoContainer.querySelector('img');
         if (!existingImage) {
@@ -12588,18 +12880,14 @@ class WhatsAppUIOverlay {
       const tagsContainer = document.createElement('div');
       tagsContainer.className = 'princhat-kanban-lead-tags';
 
-      const firstTag = normalizedTags[0];
+      const firstTag = this.normalizeTagToken(normalizedTags[0]);
 
       // Lookup label info
-      let labelInfo = this.globalLabels.find(l => l.id === firstTag || (l.name && l.name.toLowerCase() === firstTag.toLowerCase()));
-      // Fallback
-      if (!labelInfo && lead.labels) {
-        labelInfo = lead.labels.find((l: any) => String(l.id) === String(firstTag) || (l.name && l.name === firstTag));
-      }
+      const labelInfo = this.findLabelInfoByTag(firstTag, this.globalLabels, Array.isArray(lead?.labels) ? lead.labels : []);
 
-      const tagName = labelInfo ? labelInfo.name : firstTag;
-      const tagColor = labelInfo ? (labelInfo.color || labelInfo.hexColor || '#2196f3') : '#2196f3';
-      const safeColor = tagColor.startsWith('#') ? tagColor : '#' + tagColor;
+      const tagName = this.normalizeTagToken(labelInfo?.name || firstTag);
+      const tagColor = this.normalizeTagToken(labelInfo?.color || labelInfo?.hexColor || '#2196f3');
+      const safeColor = (tagColor.startsWith('#') || tagColor.startsWith('rgb')) ? tagColor : `#${tagColor}`;
 
       let finalBg = 'rgba(33, 150, 243, 0.30)'; // Fallback default
       let finalColor = '#2196f3';
@@ -12626,12 +12914,12 @@ class WhatsAppUIOverlay {
           (() => {
             const remainingTags = normalizedTags.slice(1);
             return remainingTags.map((tag: string) => {
-              let info = this.globalLabels.find(l => l.id === tag || (l.name && l.name.toLowerCase() === tag.toLowerCase()));
-              if (!info && lead.labels) info = lead.labels.find((l: any) => l.id === tag || (l.name && l.name.toLowerCase() === tag.toLowerCase()));
+              const normalizedTag = this.normalizeTagToken(tag);
+              const info = this.findLabelInfoByTag(normalizedTag, this.globalLabels, Array.isArray(lead?.labels) ? lead.labels : []);
 
               return {
-                name: info?.name || tag,
-                color: info?.color || '#2196f3'
+                name: info?.name || normalizedTag,
+                color: info?.color || info?.hexColor || '#2196f3'
               };
             });
           })()
@@ -12657,22 +12945,25 @@ class WhatsAppUIOverlay {
   /**
    * Get contact info for a specific chat (used for Kanban hydration)
    */
-  private async getContactInfo(chatId: string): Promise<{ chatName?: string, chatPhoto?: string, labels?: any[] }> {
+  private async getContactInfo(chatId: string): Promise<{ chatName?: string, chatPhoto?: string, labels?: any[], phoneNumber?: string }> {
     try {
       const response = await this.requestFromContentScript({
         type: 'GET_CHAT_INFO',
         payload: { chatId }
-      }, 9000);
+      }, 15000);
 
       let chatPhoto = response?.data?.chatPhoto;
-      if (!this.isRenderablePhotoUrl(chatPhoto)) {
-        chatPhoto = await this.getChatPhotoForLead(chatId);
+      const chatPhotoSource = response?.data?.chatPhotoSource || response?.data?.photoSource;
+      const phoneNumber = response?.data?.phoneNumber;
+      if (!this.isRenderablePhotoUrl(chatPhoto) || !this.isTrustedChatInfoPhotoSource(chatPhotoSource)) {
+        chatPhoto = await this.getChatPhotoForLead(chatId, phoneNumber);
       }
 
       return {
         chatName: response?.data?.chatName || response?.data?.name,
         chatPhoto,
-        labels: response?.data?.labels || []
+        labels: response?.data?.labels || [],
+        phoneNumber
       };
     } catch (error) {
       console.error('[PrinChat UI] Error fetching contact info:', error);
@@ -12680,19 +12971,46 @@ class WhatsAppUIOverlay {
     }
   }
 
-  private async getChatPhotoForLead(chatId: string): Promise<string | undefined> {
-    if (!chatId) return undefined;
-    try {
-      const response = await this.requestFromContentScript({
-        type: 'GET_CHAT_PHOTO',
-        payload: { chatId }
-      }, 7000);
-      const responseData = response?.data;
-      const photo = typeof responseData === 'string' ? responseData : responseData?.chatPhoto;
-      return this.isRenderablePhotoUrl(photo) ? photo : undefined;
-    } catch (_error) {
-      return undefined;
+  private async getChatPhotoForLead(chatId: string, ...fallbackIds: Array<string | undefined>): Promise<string | undefined> {
+    const seedIds = [chatId, ...fallbackIds].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+    if (seedIds.length === 0) return undefined;
+
+    const lookupQueue: string[] = [];
+    const seenQueue = new Set<string>();
+    for (const seed of seedIds) {
+      const variants = this.buildLeadChatVariants(seed);
+      const candidates = variants.length > 0 ? variants : [seed];
+      for (const candidate of candidates) {
+        const normalizedCandidate = this.normalizeLeadChatId(candidate) || this.stripScopedChatId(candidate) || '';
+        if (!normalizedCandidate || seenQueue.has(normalizedCandidate)) continue;
+        seenQueue.add(normalizedCandidate);
+        lookupQueue.push(normalizedCandidate);
+      }
     }
+
+    for (const candidate of lookupQueue) {
+      const normalizedCandidate = this.normalizeLeadChatId(candidate) || this.stripScopedChatId(candidate) || '';
+      if (!normalizedCandidate) continue;
+
+      try {
+        const response = await this.requestFromContentScript({
+          type: 'GET_CHAT_PHOTO',
+          payload: { chatId: normalizedCandidate }
+        }, 12000);
+        const responseData = response?.data;
+        const photo = typeof responseData === 'string' ? responseData : responseData?.chatPhoto;
+        const photoSource = typeof responseData === 'string'
+          ? ''
+          : (responseData?.chatPhotoSource || responseData?.photoSource);
+        if (this.isRenderablePhotoUrl(photo) && this.isTrustedChatInfoPhotoSource(photoSource)) {
+          return photo;
+        }
+      } catch (_error) {
+        // Try next variant
+      }
+    }
+
+    return undefined;
   }
 
   /**
@@ -12775,7 +13093,7 @@ class WhatsAppUIOverlay {
       const safeChatId = this.escapeHtml(this.resolveLeadChatId(lead));
       const resolvedPhoto = this.isRenderablePhotoUrl(lead.photo)
         ? lead.photo
-        : (this.getSidebarPhotoForLead(this.resolveLeadChatId(lead), displayName) || '');
+        : '';
 
       // Fallback to updatedAt if lastMessageTime is missing (for legacy leads)
       const displayTime = lead.lastMessageTime || lead.updatedAt;
@@ -12802,23 +13120,15 @@ class WhatsAppUIOverlay {
               ${lead.tags && lead.tags.length > 0 ? `
                 <div class="princhat-kanban-lead-tags">
                   ${(() => {
-            const firstTag = lead.tags[0];
+            const firstTag = this.normalizeTagToken(lead.tags[0]);
 
             // LOOKUP STRATEGY: 
             // 1. Try to find by ID (if tag matches a label ID).
             // 2. Try to find by Name (case-insensitive).
-            let labelInfo = globalLabels.find(l => l.id === firstTag || (l.name && l.name.toLowerCase() === firstTag.toLowerCase()));
+            const labelInfo = this.findLabelInfoByTag(firstTag, globalLabels, Array.isArray(lead?.labels) ? lead.labels : []);
 
-            // Fallback: Check lead.labels (per-chat info) if global lookup failed
-            if (!labelInfo && lead.labels) {
-              labelInfo = lead.labels.find((l: any) =>
-                String(l.id) === String(firstTag) ||
-                l.name?.toLowerCase() === String(firstTag).toLowerCase()
-              );
-            }
-
-            let labelColor = labelInfo?.color;
-            let labelName = labelInfo?.name || firstTag;
+            let labelColor = this.normalizeTagToken(labelInfo?.color || labelInfo?.hexColor || '#2196f3');
+            let labelName = this.normalizeTagToken(labelInfo?.name || firstTag);
 
             // CSS Logic:
             // User Feedback 3: 
@@ -12854,12 +13164,12 @@ class WhatsAppUIOverlay {
             (() => {
               const remainingTags = lead.tags.slice(1);
               return remainingTags.map((tag: string) => {
-                let info = globalLabels.find(l => l.id === tag || (l.name && l.name.toLowerCase() === tag.toLowerCase()));
-                if (!info && lead.labels) info = lead.labels.find((l: any) => l.id === tag || (l.name && l.name.toLowerCase() === tag.toLowerCase()));
+                const normalizedTag = this.normalizeTagToken(tag);
+                const info = this.findLabelInfoByTag(normalizedTag, globalLabels, Array.isArray(lead?.labels) ? lead.labels : []);
 
                 return {
-                  name: info?.name || tag,
-                  color: info?.color || '#2196f3'
+                  name: info?.name || normalizedTag,
+                  color: info?.color || info?.hexColor || '#2196f3'
                 };
               });
             })()

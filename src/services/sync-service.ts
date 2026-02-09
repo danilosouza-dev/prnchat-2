@@ -22,6 +22,49 @@ class SyncService {
         return identity || String(lead.chatId || lead.phone || lead.id || '');
     }
 
+    private hasRenderablePhoto(photo?: string): boolean {
+        if (typeof photo !== 'string') return false;
+        const src = photo.trim();
+        if (!src || src === 'data:' || src === 'about:blank') return false;
+        if (this.isLikelyPlaceholderPhotoUrl(src)) return false;
+        if (/^https?:\/\//i.test(src)) return true;
+        if (src.startsWith('blob:')) return true;
+        if (/^data:image\//i.test(src) && !/^data:image\/svg/i.test(src)) return true;
+        if (src.startsWith('//')) return true;
+        return false;
+    }
+
+    private isLikelyPlaceholderPhotoUrl(photo?: string): boolean {
+        if (typeof photo !== 'string') return true;
+        const src = photo.trim();
+        if (!src) return true;
+
+        const lower = src.toLowerCase();
+        if (lower.includes('ui-avatars.com')) return true;
+
+        try {
+            const parsed = new URL(src.startsWith('//') ? `https:${src}` : src);
+            const host = parsed.hostname.toLowerCase();
+            const path = parsed.pathname.toLowerCase();
+            const looksAvatarPath =
+                path.includes('avatar')
+                || path.includes('default-user')
+                || path.includes('default-group')
+                || path.includes('profile-placeholder');
+
+            if (host === 'web.whatsapp.com' && (looksAvatarPath || path.endsWith('.svg'))) {
+                return true;
+            }
+            if (looksAvatarPath && path.endsWith('.svg')) {
+                return true;
+            }
+        } catch (_error) {
+            if (lower.includes('avatar') && lower.includes('.svg')) return true;
+        }
+
+        return false;
+    }
+
     private isMissingScopedColumn(error: any): boolean {
         const msg = String(error?.message || error || '').toLowerCase();
         return msg.includes(this.scopedColumnName) && msg.includes('column');
@@ -862,6 +905,14 @@ class SyncService {
                                 }
                             }
 
+                            const incomingPhoto = typeof s.photo_url === 'string' ? s.photo_url : '';
+                            const shouldPreserveLocalPhoto =
+                                !this.hasRenderablePhoto(incomingPhoto) &&
+                                this.hasRenderablePhoto(localLead?.photo);
+                            const mergedPhoto = shouldPreserveLocalPhoto
+                                ? localLead?.photo
+                                : (incomingPhoto || undefined);
+
                             await database.put('kanban_leads', {
                                 id: scopedLeadId,
                                 instanceId: scope,
@@ -870,7 +921,7 @@ class SyncService {
                                 order: s.order,
                                 name: s.name,
                                 phone: s.phone || leadIdentity,
-                                photo: s.photo_url,
+                                photo: mergedPhoto,
                                 unreadCount: s.unread_count,
                                 lastMessage: lastMsg,
                                 tags: s.tags || [],

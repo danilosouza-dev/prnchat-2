@@ -251,8 +251,46 @@ class DatabaseService {
     if (typeof photo !== 'string') return false;
     const src = photo.trim();
     if (!src) return false;
-    if (src === 'data:' || src.startsWith('data:image/svg')) return false;
-    return src.startsWith('http') || src.startsWith('blob:') || src.startsWith('data:image/');
+    if (src === 'data:' || src === 'about:blank') return false;
+    if (this.isLikelyPlaceholderPhotoUrl(src)) return false;
+    if (/^https?:\/\//i.test(src)) return true;
+    if (src.startsWith('blob:')) return true;
+    if (/^data:image\//i.test(src) && !/^data:image\/svg/i.test(src)) return true;
+    if (src.startsWith('//')) return true;
+    return false;
+  }
+
+  private isLikelyPlaceholderPhotoUrl(photo?: string): boolean {
+    if (typeof photo !== 'string') return true;
+    const src = photo.trim();
+    if (!src) return true;
+
+    const lower = src.toLowerCase();
+    if (lower.includes('ui-avatars.com')) return true;
+
+    try {
+      const parsed = new URL(
+        src.startsWith('//') ? `https:${src}` : src
+      );
+      const host = parsed.hostname.toLowerCase();
+      const path = parsed.pathname.toLowerCase();
+      const looksAvatarPath =
+        path.includes('avatar')
+        || path.includes('default-user')
+        || path.includes('default-group')
+        || path.includes('profile-placeholder');
+
+      if (host === 'web.whatsapp.com' && (looksAvatarPath || path.endsWith('.svg'))) {
+        return true;
+      }
+      if (looksAvatarPath && path.endsWith('.svg')) {
+        return true;
+      }
+    } catch (_error) {
+      if (lower.includes('avatar') && lower.includes('.svg')) return true;
+    }
+
+    return false;
   }
 
   private hasValidLeadName(value?: string): boolean {
@@ -1717,8 +1755,8 @@ class DatabaseService {
     if (existingLead) {
       console.log('[PrinChat DB] createLead: lead already exists, merging with existing data:', scopedId);
 
-      // Preserve photo if new lead has none
-      if (!newLead.photo && existingLead.photo) {
+      // Preserve existing valid photo when incoming photo is empty/invalid
+      if (!this.hasRenderablePhoto(newLead.photo) && this.hasRenderablePhoto(existingLead.photo)) {
         newLead.photo = existingLead.photo;
       }
 
@@ -1797,17 +1835,25 @@ class DatabaseService {
       throw new Error(`Lead with id ${id} not found`);
     }
 
+    const sanitizedUpdates: Partial<LeadContact> = { ...updates };
+    if (Object.prototype.hasOwnProperty.call(sanitizedUpdates, 'photo')) {
+      const incomingPhoto = (sanitizedUpdates as any).photo;
+      if (!this.hasRenderablePhoto(incomingPhoto) && this.hasRenderablePhoto(lead.photo)) {
+        delete (sanitizedUpdates as any).photo;
+      }
+    }
+
     const scopedInstanceId = this.normalizeScope((updates as any).instanceId || lead.instanceId || instanceId);
     const targetIdentity = this.normalizeLeadIdentity(
-      updates.chatId || updates.phone || lead.chatId || lead.phone || lead.id
-    ) || (updates.chatId || updates.phone || lead.chatId || lead.phone || lead.id);
+      sanitizedUpdates.chatId || sanitizedUpdates.phone || lead.chatId || lead.phone || lead.id
+    ) || (sanitizedUpdates.chatId || sanitizedUpdates.phone || lead.chatId || lead.phone || lead.id);
 
     const updatedLead: LeadContact = {
       ...lead,
-      ...updates,
+      ...sanitizedUpdates,
       instanceId: scopedInstanceId,
-      chatId: this.normalizeLeadChatId(updates.chatId || updates.phone || lead.chatId || lead.phone || targetIdentity) || (updates.chatId || lead.chatId),
-      phone: this.normalizeLeadIdentity(updates.phone || updates.chatId || lead.phone || lead.chatId || targetIdentity) || (updates.phone || lead.phone),
+      chatId: this.normalizeLeadChatId(sanitizedUpdates.chatId || sanitizedUpdates.phone || lead.chatId || lead.phone || targetIdentity) || (sanitizedUpdates.chatId || lead.chatId),
+      phone: this.normalizeLeadIdentity(sanitizedUpdates.phone || sanitizedUpdates.chatId || lead.phone || lead.chatId || targetIdentity) || (sanitizedUpdates.phone || lead.phone),
       id: storageKey.includes('::') ? storageKey : buildScopedLeadId(scopedInstanceId, targetIdentity),
       updatedAt: Date.now(),
     };
