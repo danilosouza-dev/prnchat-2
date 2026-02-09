@@ -678,6 +678,7 @@
       if (normalized === 'chatinfo.profilepicthumb.find') return true;
       if (normalized === 'chatinfo.profilepicthumb.get') return true;
       if (normalized === 'chatinfo.wpp') return true;
+      if (normalized === 'chatinfo.store') return true;
       if (normalized === 'chatinfo.phone_fallback') return true;
       if (normalized === 'chatinfo.sidebar') return true;
       if (normalized === 'chatinfo.dom.header') return true;
@@ -771,18 +772,17 @@
                     ? responseData
                     : (responseData?.chatPhoto || ''))
                   : '';
-                const candidatePhotoSource = typeof responseData === 'string'
-                  ? ''
-                  : responseData?.chatPhotoSource;
-                if (
-                  this.isRenderablePhotoUrl(candidatePhoto)
-                  && this.isTrustedChatInfoPhotoSource(candidatePhotoSource)
-                ) {
+                // GET_CHAT_PHOTO is a dedicated photo endpoint that already applies
+                // its own resolution strategies. No need to re-check isTrustedChatInfoPhotoSource.
+                if (this.isRenderablePhotoUrl(candidatePhoto)) {
                   photo = candidatePhoto;
+                  const candidatePhotoSource = typeof responseData === 'string'
+                    ? 'get_chat_photo'
+                    : (responseData?.chatPhotoSource || 'get_chat_photo');
                   this.logPhotoResolution(
                     primaryChatId,
                     'rehydrate',
-                    `chatInfo.${String(candidatePhotoSource || 'unknown')}`,
+                    `chatInfo.${String(candidatePhotoSource)}`,
                     photo
                   );
                   break;

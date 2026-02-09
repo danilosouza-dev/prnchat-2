@@ -11607,6 +11607,10 @@ class WhatsAppUIOverlay {
         }
 
         console.log('[PrinChat UI] 💧 Delayed hydration retry for new lead at', delay, 'ms...', { hasPhoto, hasTags });
+
+        // Refresh sidebar cache: WhatsApp bumps new-message chats to the top
+        // of the sidebar WITH their profile pic. Re-caching captures these.
+        this.cacheSidebarPhotos();
         console.log('[PrinChat UI] 🔬 DIAG hydration: chatId =', chatId, 'leadId =', leadId, 'cache size =', this.sidebarPhotoCache.size);
         try {
           const info = await this.getContactInfo(chatId);
@@ -11633,6 +11637,24 @@ class WhatsAppUIOverlay {
               const directPhoto = await this.getChatPhotoForLead(chatId, phoneHint, lead?.phone);
               resolvedPhoto = directPhoto || '';
               console.log('[PrinChat UI] 🔬 DIAG hydration: getChatPhotoForLead =', resolvedPhoto ? resolvedPhoto.substring(0, 60) + '...' : '(none)');
+            }
+            // Fallback: check refreshed sidebar cache
+            if (!resolvedPhoto) {
+              const cacheKeys = this.buildLeadChatVariants(chatId);
+              const leadIdentity = this.extractLeadIdentity(chatId);
+              if (leadIdentity) cacheKeys.push(leadIdentity);
+              if (phoneHint) cacheKeys.push(phoneHint);
+              // Also try name-based lookup (critical for contacts like "Bunker 707")
+              const leadName = info?.chatName || lead?.name || '';
+              if (leadName) cacheKeys.push(`name:${leadName.trim().toLowerCase()}`);
+              for (const key of cacheKeys) {
+                const cached = this.sidebarPhotoCache.get(key.toLowerCase());
+                if (cached && this.isRenderablePhotoUrl(cached)) {
+                  resolvedPhoto = cached;
+                  console.log('[PrinChat UI] 🔬 DIAG hydration: photo from sidebar cache, key =', key);
+                  break;
+                }
+              }
             }
             if (this.isRenderablePhotoUrl(resolvedPhoto)) {
               updates.photo = resolvedPhoto;
@@ -12353,6 +12375,13 @@ class WhatsAppUIOverlay {
         keys.add(titleDigits);
       }
 
+      // Cache by normalized name so contacts with few digits (e.g. "Bunker 707")
+      // can be found via name-based lookup
+      const normalizedTitle = title.trim().toLowerCase();
+      if (normalizedTitle.length >= 3) {
+        keys.add(`name:${normalizedTitle}`);
+      }
+
       const dataIds = new Set<string>();
       const rowDataId = row.getAttribute('data-id');
       if (rowDataId) {
@@ -12729,6 +12758,25 @@ class WhatsAppUIOverlay {
               resolvedPhoto = directPhoto || '';
             }
 
+            // Fallback: check sidebar cache by name when Store/WPP/sidebar-scraping all fail
+            if (!this.isRenderablePhotoUrl(resolvedPhoto)) {
+              const cacheKeys = this.buildLeadChatVariants(chatId);
+              const leadIdentity = this.extractLeadIdentity(chatId);
+              if (leadIdentity) cacheKeys.push(leadIdentity);
+              if (phoneHint) cacheKeys.push(phoneHint);
+              // Name-based lookup (critical for contacts like "Bunker 707")
+              const leadName = (info.chatName || currentLead.name || '').trim();
+              if (leadName) cacheKeys.push(`name:${leadName.toLowerCase()}`);
+              for (const key of cacheKeys) {
+                const cached = this.sidebarPhotoCache.get(key.toLowerCase());
+                if (cached && this.isRenderablePhotoUrl(cached)) {
+                  resolvedPhoto = cached;
+                  console.log('[PrinChat UI] 💧 hydration: photo from sidebar cache, key =', key);
+                  break;
+                }
+              }
+            }
+
             const nextLabels = hasFreshLabels
               ? labels
               : (Array.isArray((currentLead as any).labels) ? (currentLead as any).labels : []);
@@ -12999,10 +13047,10 @@ class WhatsAppUIOverlay {
         }, 12000);
         const responseData = response?.data;
         const photo = typeof responseData === 'string' ? responseData : responseData?.chatPhoto;
-        const photoSource = typeof responseData === 'string'
-          ? ''
-          : (responseData?.chatPhotoSource || responseData?.photoSource);
-        if (this.isRenderablePhotoUrl(photo) && this.isTrustedChatInfoPhotoSource(photoSource)) {
+        // GET_CHAT_PHOTO is a dedicated photo endpoint that already applies
+        // its own resolution strategies (Store, WPP API, sidebar, phone fallback).
+        // No need to re-check isTrustedChatInfoPhotoSource here.
+        if (this.isRenderablePhotoUrl(photo)) {
           return photo;
         }
       } catch (_error) {
