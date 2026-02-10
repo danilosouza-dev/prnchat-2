@@ -657,19 +657,6 @@
       return false;
     }
 
-    private isTrustedIncomingPhotoSource(source?: string): boolean {
-      const normalized = typeof source === 'string' ? source.trim().toLowerCase() : '';
-      if (!normalized) return false;
-
-      if (normalized === 'wpp') return true;
-      if (normalized === 'message_model') return true;
-      if (normalized === 'store_chat' || normalized === 'store_chat_find') return true;
-      if (normalized === 'store_contact' || normalized === 'store_profilepic_find_msg') return true;
-      if (normalized.startsWith('store_profilepic_')) return true;
-
-      return false;
-    }
-
     private isTrustedChatInfoPhotoSource(source?: string): boolean {
       const normalized = typeof source === 'string' ? source.trim().toLowerCase() : '';
       if (!normalized) return false;
@@ -890,26 +877,6 @@
       return { ...message, payload };
     }
 
-    private async resolveFallbackColumnIdForLead(existingLead: any): Promise<string | null> {
-      try {
-        const columnsResponse = await this.sendRuntimeMessage({ type: 'GET_KANBAN_COLUMNS' });
-        if (!columnsResponse?.success) {
-          return null;
-        }
-
-        const columns = columnsResponse?.data || [];
-        const hasValidColumn = !!existingLead?.columnId && columns.some((c: any) => c.id === existingLead.columnId);
-        if (hasValidColumn) {
-          return null;
-        }
-
-        const defaultColumn = columns.find((c: any) => c.isDefault === true);
-        return defaultColumn?.id || null;
-      } catch (_error) {
-        return null;
-      }
-    }
-
     private async sendRuntimeMessage(message: any): Promise<any> {
       const maxAttempts = 3;
       const messageType = String(message?.type || '');
@@ -1089,16 +1056,7 @@
             if (existingLead) {
               const updates: any = {};
 
-              // Self-heal hidden leads: if their column is missing/invalid, move back to default column.
-              const fallbackColumnId = await this.resolveFallbackColumnIdForLead(existingLead);
-              if (fallbackColumnId) {
-                console.log('[PrinChat Kanban] Lead with invalid/missing column detected. Moving to default column:', {
-                  leadId: existingLead.id,
-                  previousColumnId: existingLead.columnId,
-                  newColumnId: fallbackColumnId
-                });
-                updates.columnId = fallbackColumnId;
-              }
+              // Do not auto-move columns during send/message updates.
 
               // Reset unread count if > 0
               if (existingLead.unreadCount > 0) {
@@ -1201,8 +1159,6 @@
           chatId,
           timestamp,
           fromMe,
-          chatPhoto: eventChatPhoto,
-          chatPhotoSource: eventChatPhotoSource,
           chatName: eventChatName,
           chatLabels: eventChatLabels,
           chatTags: eventChatTags
@@ -1256,9 +1212,6 @@
           const chatVariantSet = new Set(chatIdVariants);
           const canonicalChatId = this.normalizeChatIdentifier(chatId);
           const canonicalChatIdentity = this.getCanonicalChatIdentity(chatId);
-          const canUseIncomingEventPhoto = !fromMe
-            && this.isRenderablePhotoUrl(eventChatPhoto)
-            && this.isTrustedIncomingPhotoSource(eventChatPhotoSource);
 
           const resolveBestChatInfo = async () => {
             let bestData: any = null;
@@ -1313,16 +1266,8 @@
               order: -Date.now()
             };
 
-            // Self-heal hidden leads: if their column is missing/invalid, move back to default column.
-            const fallbackColumnId = await this.resolveFallbackColumnIdForLead(existingLead);
-            if (fallbackColumnId) {
-              console.log('[PrinChat Kanban] Lead with invalid/missing column detected. Moving to default column:', {
-                leadId: existingLead.id,
-                previousColumnId: existingLead.columnId,
-                newColumnId: fallbackColumnId
-              });
-              updates.columnId = fallbackColumnId;
-            }
+            // Do not auto-move columns during message updates.
+            // Column placement must be preserved unless user explicitly drags/moves.
 
             // Only update lastMessage if this message is newer than what we have
             // This prevents old messages (ghosts) from overwriting newer ones
@@ -1398,13 +1343,6 @@
               updates.name = eventChatName;
             }
 
-            // Use message-level photo as immediate fallback for incoming events.
-            // Outgoing events can resolve to self context on some WA builds.
-            if (!updates.photo && canUseIncomingEventPhoto) {
-              updates.photo = eventChatPhoto;
-              this.logPhotoResolution(chatId, 'update', `event.${String(eventChatPhotoSource || 'unknown')}`, updates.photo);
-            }
-
             const updateResult = await this.sendRuntimeMessage({
               type: 'UPDATE_KANBAN_LEAD',
               payload: {
@@ -1474,11 +1412,6 @@
             }
           } else {
             console.warn('[PrinChat Kanban] Could not get chat info, using chatId as name');
-          }
-
-          if (!chatPhoto && canUseIncomingEventPhoto) {
-            chatPhoto = eventChatPhoto;
-            this.logPhotoResolution(chatId, 'create', `event.${String(eventChatPhotoSource || 'unknown')}`, chatPhoto);
           }
 
           // Get Recentes column ID
