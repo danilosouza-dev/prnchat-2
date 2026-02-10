@@ -205,6 +205,33 @@ class WhatsAppUIOverlay {
     this.init();
   }
 
+  private isDiagDebugEnabled(): boolean {
+    try {
+      const marker = document.getElementById('PrinChatInjected');
+      const markerFlag = marker?.getAttribute('data-princhat-debug-diag');
+      if (markerFlag === '1' || markerFlag === 'true') return true;
+
+      const windowAny = window as any;
+      if (windowAny.__PRINCHAT_DEBUG_DIAG__ === true) return true;
+
+      const localDebug = localStorage.getItem('princhat_debug_diag')
+        || localStorage.getItem('princhat_debug');
+      return localDebug === '1' || localDebug === 'true';
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  private diagDebug(message: string, ...args: any[]): void {
+    if (!this.isDiagDebugEnabled()) return;
+    console.debug(message, ...args);
+  }
+
+  private diagInfo(message: string, ...args: any[]): void {
+    if (!this.isDiagDebugEnabled()) return;
+    console.info(message, ...args);
+  }
+
   private async init() {
     try {
       console.log('[PrinChat UI] Initializing overlay...');
@@ -11320,7 +11347,7 @@ class WhatsAppUIOverlay {
       };
 
       if (!leadId) {
-        console.warn('[PrinChat UI] 🔴 DIAG: queueKanbanRender triggered by PrinChatKanbanLeadUpdated (NO leadId)', detail);
+        this.diagInfo('[PrinChat UI] 🔴 DIAG: queueKanbanRender triggered by PrinChatKanbanLeadUpdated (NO leadId)', detail);
         this.queueKanbanRender();
         return;
       }
@@ -11333,7 +11360,7 @@ class WhatsAppUIOverlay {
         // Only queue a re-render if one isn't already pending (e.g., from PrinChatKanbanLeadCreated).
         // Queuing again would reset the debounce timer and delay the existing render.
         if (!this.renderDebounceTimer) {
-          console.warn('[PrinChat UI] 🟠 DIAG: queueKanbanRender triggered by PrinChatKanbanLeadUpdated (card NOT FOUND for leadId):', leadId);
+          this.diagInfo('[PrinChat UI] 🟠 DIAG: queueKanbanRender triggered by PrinChatKanbanLeadUpdated (card NOT FOUND for leadId):', leadId);
           this.queueKanbanRender();
         } else {
           console.log('[PrinChat UI] ⏭️ Card not found but render already pending, skipping re-render for:', leadId);
@@ -11433,7 +11460,7 @@ class WhatsAppUIOverlay {
         }
 
         if (Object.prototype.hasOwnProperty.call(updates, 'columnId')) {
-          console.warn('[PrinChat UI] 🟡 DIAG: queueKanbanRender triggered by PrinChatKanbanLeadUpdated (columnId changed):', leadId);
+          this.diagInfo('[PrinChat UI] 🟡 DIAG: queueKanbanRender triggered by PrinChatKanbanLeadUpdated (columnId changed):', leadId);
           this.queueKanbanRender();
         }
 
@@ -11562,7 +11589,7 @@ class WhatsAppUIOverlay {
       console.log('[PrinChat UI] ➕ New lead created:', lead.name);
 
       // Re-render Kanban to show new card (might have empty photo/tags initially)
-      console.warn('[PrinChat UI] 🟢 DIAG: queueKanbanRender triggered by PrinChatKanbanLeadCreated:', lead?.name, lead?.id);
+      this.diagInfo('[PrinChat UI] 🟢 DIAG: queueKanbanRender triggered by PrinChatKanbanLeadCreated:', lead?.name, lead?.id);
       this.queueKanbanRender();
 
       // CRITICAL FIX: Schedule delayed hydration retries for the new lead.
@@ -11594,10 +11621,10 @@ class WhatsAppUIOverlay {
         // Refresh sidebar cache: WhatsApp bumps new-message chats to the top
         // of the sidebar WITH their profile pic. Re-caching captures these.
         this.cacheSidebarPhotos();
-        console.log('[PrinChat UI] 🔬 DIAG hydration: chatId =', chatId, 'leadId =', leadId, 'cache size =', this.sidebarPhotoCache.size);
+        this.diagDebug('[PrinChat UI] 🔬 DIAG hydration: chatId =', chatId, 'leadId =', leadId, 'cache size =', this.sidebarPhotoCache.size);
         try {
           const info = await this.getContactInfo(chatId);
-          console.log('[PrinChat UI] 🔬 DIAG hydration: getContactInfo returned:', JSON.stringify({
+          this.diagDebug('[PrinChat UI] 🔬 DIAG hydration: getContactInfo returned:', JSON.stringify({
             hasData: !!info,
             chatName: info?.chatName,
             chatPhoto: info?.chatPhoto ? info.chatPhoto.substring(0, 60) + '...' : '(none)',
@@ -11614,12 +11641,12 @@ class WhatsAppUIOverlay {
             const phoneHint = this.extractLeadIdentity(info?.phoneNumber || lead?.phone || '');
             if (this.isRenderablePhotoUrl(info?.chatPhoto)) {
               resolvedPhoto = String(info.chatPhoto);
-              console.log('[PrinChat UI] 🔬 DIAG hydration: photo from getContactInfo');
+              this.diagDebug('[PrinChat UI] 🔬 DIAG hydration: photo from getContactInfo');
             }
             if (!resolvedPhoto) {
               const directPhoto = await this.getChatPhotoForLead(chatId, phoneHint, lead?.phone);
               resolvedPhoto = directPhoto || '';
-              console.log('[PrinChat UI] 🔬 DIAG hydration: getChatPhotoForLead =', resolvedPhoto ? resolvedPhoto.substring(0, 60) + '...' : '(none)');
+              this.diagDebug('[PrinChat UI] 🔬 DIAG hydration: getChatPhotoForLead =', resolvedPhoto ? resolvedPhoto.substring(0, 60) + '...' : '(none)');
             }
             // Fallback: check refreshed sidebar cache
             if (!resolvedPhoto) {
@@ -11634,7 +11661,7 @@ class WhatsAppUIOverlay {
                 const cached = this.sidebarPhotoCache.get(key.toLowerCase());
                 if (cached && this.isRenderablePhotoUrl(cached)) {
                   resolvedPhoto = cached;
-                  console.log('[PrinChat UI] 🔬 DIAG hydration: photo from sidebar cache, key =', key);
+                  this.diagDebug('[PrinChat UI] 🔬 DIAG hydration: photo from sidebar cache, key =', key);
                   break;
                 }
               }
@@ -11647,7 +11674,7 @@ class WhatsAppUIOverlay {
           // Resolve tags/labels
           if (!hasTags) {
             const labels = Array.isArray(info?.labels) ? info.labels : [];
-            console.log('[PrinChat UI] 🔬 DIAG hydration: labels from getContactInfo:', labels);
+            this.diagDebug('[PrinChat UI] 🔬 DIAG hydration: labels from getContactInfo:', labels);
             if (labels.length > 0) {
               updates.tags = labels.map((l: any) => l.id).filter(Boolean);
               updates.labels = labels;
@@ -11682,7 +11709,7 @@ class WhatsAppUIOverlay {
               break;
             }
           } else {
-            console.log('[PrinChat UI] 🔬 DIAG hydration: NO useful data resolved at', delay, 'ms');
+            this.diagDebug('[PrinChat UI] 🔬 DIAG hydration: NO useful data resolved at', delay, 'ms');
           }
         } catch (err) {
           console.warn('[PrinChat UI] ⚠️ Delayed hydration attempt failed:', err);
@@ -11726,7 +11753,7 @@ class WhatsAppUIOverlay {
         // Only re-render if Kanban is currently open
         if (this.isKanbanOpen) {
           console.log('[PrinChat UI] 🔄 Kanban open - queuing re-render...');
-          console.warn('[PrinChat UI] 🔵 DIAG: queueKanbanRender triggered by PrinChatLabelsChanged:', event.detail?.reason, event.detail?.chatId);
+          this.diagInfo('[PrinChat UI] 🔵 DIAG: queueKanbanRender triggered by PrinChatLabelsChanged:', event.detail?.reason, event.detail?.chatId);
           this.queueKanbanRender();
         } else {
           console.log('[PrinChat UI] 💤 Kanban closed - will fetch fresh on next open');
@@ -12695,14 +12722,19 @@ class WhatsAppUIOverlay {
       allLeads.forEach((lead: any) => {
         const hasPhoto = this.isRenderablePhotoUrl(lead.photo);
         const hasTags = Array.isArray(lead.tags) && lead.tags.length > 0;
-        if (!hasPhoto || !hasTags) {
-          console.warn('[PrinChat UI] 🔍 DIAG RENDER: Lead missing data:', {
+        if (!hasPhoto) {
+          this.diagInfo('[PrinChat UI] 🔍 DIAG RENDER: Lead missing photo:', {
             id: lead.id,
             name: lead.name,
             hasPhoto,
             photoValue: lead.photo ? lead.photo.substring(0, 50) + '...' : '(empty)',
             hasTags,
             tags: lead.tags
+          });
+        } else if (!hasTags) {
+          this.diagDebug('[PrinChat UI] 🔍 DIAG RENDER: Lead without tags (expected on WhatsApp Web normal):', {
+            id: lead.id,
+            name: lead.name
           });
         }
       });
@@ -12757,10 +12789,10 @@ class WhatsAppUIOverlay {
         const columnLeads = leadsWithContactInfo.filter((l: any) => l.columnId === column.id)
           .sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
         // DIAGNOSTIC: Log globalLabels status at render time
-        console.log('[PrinChat UI] 🔍 DIAG RENDER: globalLabels.length =', this.globalLabels.length, 'sample:', this.globalLabels.slice(0, 3).map(l => `${l.id}=${l.name}(${l.color})`));
+        this.diagDebug('[PrinChat UI] 🔍 DIAG RENDER: globalLabels.length =', this.globalLabels.length, 'sample:', this.globalLabels.slice(0, 3).map(l => `${l.id}=${l.name}(${l.color})`));
         leadsWithContactInfo.forEach((lead: any) => {
           if (lead.tags && lead.tags.length > 0) {
-            console.log('[PrinChat UI] 🔍 DIAG RENDER: Lead', lead.name, 'tags:', lead.tags, 'labels:', JSON.stringify(lead.labels));
+            this.diagDebug('[PrinChat UI] 🔍 DIAG RENDER: Lead', lead.name, 'tags:', lead.tags, 'labels:', JSON.stringify(lead.labels));
           }
         });
         const columnEl = this.createColumnElement(column, columnLeads, this.globalLabels);
