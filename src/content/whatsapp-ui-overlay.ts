@@ -11230,38 +11230,41 @@ class WhatsAppUIOverlay {
         // PHOTO GUARANTEE ON INCOMING: if the card still has placeholder, force
         // hydration for this specific incoming chat (independent from active chat).
         const hydrationKey = cardLeadId || chatId;
-        const currentPhotoImg = card.querySelector('.princhat-kanban-lead-photo img') as HTMLImageElement | null;
-        if (hydrationKey && !currentPhotoImg && !this.incomingPhotoHydrationByLead.has(hydrationKey)) {
+        const hasUsablePhoto = this.cardHasUsablePhoto(card);
+        if (hydrationKey && !hasUsablePhoto && !this.incomingPhotoHydrationByLead.has(hydrationKey)) {
           const hydrationTask = (async () => {
-            const photoContainer = card.querySelector('.princhat-kanban-lead-photo');
-            if (!photoContainer) return;
-
             const resolvedName = (
               (card.querySelector('.princhat-kanban-lead-name')?.textContent || '')
               || incomingEventName
               || 'U'
             ).trim();
 
-            const applyPhoto = (photo: string, persistToDb: boolean): boolean => {
+            const applyPhoto = (targetCard: HTMLElement, photo: string, persistToDb: boolean): boolean => {
               if (!this.isRenderablePhotoUrl(photo)) return false;
-              photoContainer.innerHTML = `<img src="${photo}" alt="${this.escapeHtml(resolvedName)}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">`;
+              const finalPhoto = String(photo);
+              const photoApplied = this.setCardPhoto(targetCard, finalPhoto, resolvedName, {
+                preserveExistingUsablePhoto: true,
+              });
 
-              const identity = this.extractLeadIdentity(chatId);
-              if (identity) this.sidebarPhotoCache.set(identity.toLowerCase(), photo);
+              if (persistToDb) {
+                const identity = this.extractLeadIdentity(chatId);
+                if (identity) this.sidebarPhotoCache.set(identity.toLowerCase(), finalPhoto);
+              }
 
               if (persistToDb && cardLeadId) {
                 this.requestFromContentScript({
                   type: 'UPDATE_KANBAN_LEAD',
-                  payload: { leadId: cardLeadId, updates: { photo } }
+                  payload: { leadId: cardLeadId, updates: { photo: finalPhoto } }
                 }).catch(() => null);
               }
 
-              return true;
+              return photoApplied;
             };
 
             const trustedIncomingEventPhoto =
               this.isTrustedIncomingPhotoSource(incomingEventPhotoSource) ? incomingEventPhoto : '';
-            if (applyPhoto(trustedIncomingEventPhoto, true)) {
+            // Apply event photo as a visual hint only (do not persist fragile fallbacks).
+            if (applyPhoto(card, trustedIncomingEventPhoto, false)) {
               return;
             }
 
@@ -11272,7 +11275,7 @@ class WhatsAppUIOverlay {
 
               const currentCard = this.findKanbanCardElementByLeadId(cardLeadId || chatId);
               if (!currentCard) return;
-              if (currentCard.querySelector('.princhat-kanban-lead-photo img')) return;
+              if (this.cardHasUsablePhoto(currentCard)) return;
 
               let resolvedPhoto = '';
               let shouldPersistResolvedPhoto = false;
@@ -11282,23 +11285,11 @@ class WhatsAppUIOverlay {
                 shouldPersistResolvedPhoto = true;
               }
 
-              const currentPhotoContainer = currentCard.querySelector('.princhat-kanban-lead-photo');
-              if (!currentPhotoContainer) return;
               if (!this.isRenderablePhotoUrl(resolvedPhoto)) continue;
               const finalPhoto = String(resolvedPhoto);
 
-              currentPhotoContainer.innerHTML = `<img src="${finalPhoto}" alt="${this.escapeHtml(resolvedName)}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">`;
-              const identity = this.extractLeadIdentity(chatId);
-              if (identity) this.sidebarPhotoCache.set(identity.toLowerCase(), finalPhoto);
-
-              if (shouldPersistResolvedPhoto && cardLeadId) {
-                this.requestFromContentScript({
-                  type: 'UPDATE_KANBAN_LEAD',
-                  payload: { leadId: cardLeadId, updates: { photo: finalPhoto } }
-                }).catch(() => null);
-              }
-
-              return;
+              const photoApplied = applyPhoto(currentCard, finalPhoto, shouldPersistResolvedPhoto);
+              if (photoApplied) return;
             }
           })();
 
@@ -11366,20 +11357,9 @@ class WhatsAppUIOverlay {
 
         // Update photo
         if (Object.prototype.hasOwnProperty.call(updates, 'photo')) {
-          const photoContainer = card.querySelector('.princhat-kanban-lead-photo');
           const resolvedName =
             (card.querySelector('.princhat-kanban-lead-name')?.textContent || '').trim() || 'Desconhecido';
-          if (photoContainer) {
-            if (this.isRenderablePhotoUrl(updates.photo)) {
-              photoContainer.innerHTML = `<img src="${updates.photo}" alt="${this.escapeHtml(resolvedName)}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">`;
-            } else {
-              const currentImg = photoContainer.querySelector('img');
-              if (!currentImg) {
-                const initial = (resolvedName.charAt(0) || '?').toUpperCase();
-                photoContainer.innerHTML = `<div class="princhat-kanban-lead-photo-placeholder">${this.escapeHtml(initial)}</div>`;
-              }
-            }
-          }
+          this.setCardPhoto(card, updates.photo, resolvedName, { preserveExistingUsablePhoto: true });
         }
 
         // Update last message preview
@@ -11485,8 +11465,8 @@ class WhatsAppUIOverlay {
         // available at message-arrival time. After a short delay, WhatsApp updates
         // the sidebar (bumps new-message chats to the top WITH their profile pic)
         // and also populates the Store contact model.
-        const cardPhotoImg = card.querySelector('.princhat-kanban-lead-photo img') as HTMLImageElement | null;
-        if (!cardPhotoImg) {
+        const hasUsablePhotoOnCard = this.cardHasUsablePhoto(card);
+        if (!hasUsablePhotoOnCard) {
           const initialCardLeadId = card.getAttribute('data-lead-id') || leadId;
           const detailChatId = typeof detail?.chatId === 'string' ? detail.chatId : '';
           const updateChatId = typeof detail?.updates?.chatId === 'string' ? detail.updates.chatId : '';
@@ -11508,7 +11488,7 @@ class WhatsAppUIOverlay {
               // Check if photo was resolved by another path in the meantime
               const currentCard = this.findKanbanCardElementByLeadId(leadId || initialCardLeadId || chatId);
               if (!currentCard) return; // card removed
-              if (currentCard.querySelector('.princhat-kanban-lead-photo img')) {
+              if (this.cardHasUsablePhoto(currentCard)) {
                 console.log('[PrinChat UI] 📸 Photo already resolved for:', chatId);
                 return; // already has a photo
               }
@@ -11525,42 +11505,45 @@ class WhatsAppUIOverlay {
 
               // Apply the photo to the card
               if (resolvedPhoto && this.isRenderablePhotoUrl(resolvedPhoto)) {
-                const photoContainer = currentCard.querySelector('.princhat-kanban-lead-photo');
                 const resolvedName = (currentCard.querySelector('.princhat-kanban-lead-name')?.textContent || '').trim() || 'U';
-                if (photoContainer) {
-                  photoContainer.innerHTML = `<img src="${resolvedPhoto}" alt="${this.escapeHtml(resolvedName)}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">`;
+                const photoApplied = this.setCardPhoto(currentCard, resolvedPhoto, resolvedName, {
+                  preserveExistingUsablePhoto: true,
+                });
+                if (photoApplied) {
                   console.log('[PrinChat UI] 📸 ✅ Photo hydrated on card after', delay, 'ms for:', chatId);
+                }
 
-                  // Also update the sidebar photo cache for future use
-                  const identity = this.extractLeadIdentity(chatId);
-                  if (identity) this.sidebarPhotoCache.set(identity.toLowerCase(), resolvedPhoto);
+                // Also update the sidebar photo cache for future use
+                const identity = this.extractLeadIdentity(chatId);
+                if (identity) this.sidebarPhotoCache.set(identity.toLowerCase(), resolvedPhoto);
 
-                  // Also persist to DB
-                  const cardLeadId = currentCard.getAttribute('data-lead-id') || '';
-                  const persistLeadId = detail.leadId || cardLeadId;
-                  if (shouldPersistResolvedPhoto && persistLeadId) {
-                    this.requestFromContentScript({
-                      type: 'UPDATE_KANBAN_LEAD',
-                      payload: { leadId: persistLeadId, updates: { photo: resolvedPhoto } }
-                    }).then((persistResult) => {
-                      if (!persistResult?.success) {
-                        console.warn('[PrinChat UI] ⚠️ Failed to persist hydrated photo in DB:', {
-                          leadId: persistLeadId,
-                          chatId,
-                          error: persistResult?.error || 'unknown'
-                        });
-                      }
-                    }).catch((persistError) => {
+                // Also persist to DB
+                const cardLeadId = currentCard.getAttribute('data-lead-id') || '';
+                const persistLeadId = detail.leadId || cardLeadId;
+                if (shouldPersistResolvedPhoto && persistLeadId) {
+                  this.requestFromContentScript({
+                    type: 'UPDATE_KANBAN_LEAD',
+                    payload: { leadId: persistLeadId, updates: { photo: resolvedPhoto } }
+                  }).then((persistResult) => {
+                    if (!persistResult?.success) {
                       console.warn('[PrinChat UI] ⚠️ Failed to persist hydrated photo in DB:', {
                         leadId: persistLeadId,
                         chatId,
-                        error: persistError?.message || persistError
+                        error: persistResult?.error || 'unknown'
                       });
+                    }
+                  }).catch((persistError) => {
+                    console.warn('[PrinChat UI] ⚠️ Failed to persist hydrated photo in DB:', {
+                      leadId: persistLeadId,
+                      chatId,
+                      error: persistError?.message || persistError
                     });
-                  } else if (shouldPersistResolvedPhoto) {
-                    console.warn('[PrinChat UI] ⚠️ Could not persist hydrated photo: missing leadId', { chatId });
-                  }
+                  });
+                } else if (shouldPersistResolvedPhoto) {
+                  console.warn('[PrinChat UI] ⚠️ Could not persist hydrated photo: missing leadId', { chatId });
+                }
 
+                if (photoApplied || this.cardHasUsablePhoto(currentCard)) {
                   return; // Photo found, stop retrying
                 }
               }
@@ -11599,7 +11582,7 @@ class WhatsAppUIOverlay {
         const card = this.findKanbanCardElementByLeadId(leadId || chatId);
         if (!card) continue; // Card not in DOM yet/anymore
 
-        const hasPhoto = !!card.querySelector('.princhat-kanban-lead-photo img');
+        const hasPhoto = this.cardHasUsablePhoto(card);
         const hasTags = !!card.querySelector('.princhat-kanban-lead-tags');
         if (hasPhoto && hasTags) {
           console.log('[PrinChat UI] ✅ New lead fully hydrated after', delay, 'ms');
@@ -11692,7 +11675,9 @@ class WhatsAppUIOverlay {
             }
 
             // If we got everything, stop retrying
-            if (updates.photo && updates.tags) {
+            const hasPhotoNow = this.cardHasUsablePhoto(card);
+            const hasTagsNow = !!card.querySelector('.princhat-kanban-lead-tags');
+            if (hasPhotoNow && hasTagsNow) {
               console.log('[PrinChat UI] ✅ New lead fully hydrated after', delay, 'ms');
               break;
             }
@@ -12172,6 +12157,119 @@ class WhatsAppUIOverlay {
     if (/^data:image\//i.test(src) && !/^data:image\/svg/i.test(src)) return true;
     if (src.startsWith('//')) return true;
     return false;
+  }
+
+  private getCardLeadName(card: HTMLElement, fallbackName: string = 'Desconhecido'): string {
+    const currentName = (card.querySelector('.princhat-kanban-lead-name')?.textContent || '').trim();
+    return currentName || fallbackName;
+  }
+
+  private renderCardPhotoPlaceholder(card: HTMLElement, fallbackName?: string): void {
+    const photoContainer = card.querySelector('.princhat-kanban-lead-photo') as HTMLElement | null;
+    if (!photoContainer) return;
+
+    const resolvedName = (fallbackName || this.getCardLeadName(card, 'U')).trim() || 'U';
+    const initial = (resolvedName.charAt(0) || '?').toUpperCase();
+    const placeholder = document.createElement('div');
+    placeholder.className = 'princhat-kanban-lead-photo-placeholder';
+    placeholder.textContent = initial;
+    photoContainer.replaceChildren(placeholder);
+  }
+
+  private bindCardPhotoErrorFallback(img: HTMLImageElement): void {
+    const marker = '__princhatPhotoErrorBound';
+    if ((img as any)[marker]) return;
+    (img as any)[marker] = true;
+
+    img.addEventListener('error', () => {
+      const card = img.closest('.princhat-kanban-lead-card') as HTMLElement | null;
+      if (!card) return;
+      const fallbackName = (img.alt || '').trim() || this.getCardLeadName(card, 'U');
+      this.renderCardPhotoPlaceholder(card, fallbackName);
+    });
+  }
+
+  private setCardPhoto(
+    card: HTMLElement,
+    photo: any,
+    fallbackName?: string,
+    options: { preserveExistingUsablePhoto?: boolean } = {}
+  ): boolean {
+    const photoContainer = card.querySelector('.princhat-kanban-lead-photo') as HTMLElement | null;
+    if (!photoContainer) return false;
+
+    const preserveExistingUsablePhoto = !!options.preserveExistingUsablePhoto;
+    const hasUsablePhotoBeforeUpdate = this.cardHasUsablePhoto(card);
+    const existingImgBeforeUpdate = photoContainer.querySelector('img') as HTMLImageElement | null;
+    const existingSrcBeforeUpdate = existingImgBeforeUpdate
+      ? (existingImgBeforeUpdate.currentSrc || existingImgBeforeUpdate.src || existingImgBeforeUpdate.getAttribute('src') || '').trim()
+      : '';
+    const hasRenderablePhotoElementBeforeUpdate = this.isRenderablePhotoUrl(existingSrcBeforeUpdate);
+    if (!this.isRenderablePhotoUrl(photo)) {
+      if (!(preserveExistingUsablePhoto && (hasUsablePhotoBeforeUpdate || hasRenderablePhotoElementBeforeUpdate))) {
+        this.renderCardPhotoPlaceholder(card, fallbackName);
+      }
+      return false;
+    }
+
+    const resolvedName = (fallbackName || this.getCardLeadName(card, 'U')).trim() || 'U';
+    const nextPhoto = String(photo).trim();
+    const currentImg = photoContainer.querySelector('img') as HTMLImageElement | null;
+    const currentSrc = currentImg
+      ? (currentImg.currentSrc || currentImg.src || currentImg.getAttribute('src') || '').trim()
+      : '';
+
+    if (currentImg && currentSrc === nextPhoto) {
+      this.bindCardPhotoErrorFallback(currentImg);
+      return this.cardHasUsablePhoto(card);
+    }
+
+    const nextImg = document.createElement('img');
+    nextImg.src = nextPhoto;
+    nextImg.alt = resolvedName;
+    nextImg.style.width = '100%';
+    nextImg.style.height = '100%';
+    nextImg.style.borderRadius = '50%';
+    nextImg.style.objectFit = 'cover';
+    this.bindCardPhotoErrorFallback(nextImg);
+    photoContainer.replaceChildren(nextImg);
+
+    if (nextImg.complete && nextImg.naturalWidth <= 0) {
+      this.renderCardPhotoPlaceholder(card, resolvedName);
+      return false;
+    }
+
+    return nextImg.complete && nextImg.naturalWidth > 0 && nextImg.naturalHeight > 0;
+  }
+
+  private cardHasUsablePhoto(card: HTMLElement): boolean {
+    const img = card.querySelector('.princhat-kanban-lead-photo img') as HTMLImageElement | null;
+    if (!img) return false;
+
+    this.bindCardPhotoErrorFallback(img);
+    const currentSrc = (img.currentSrc || img.src || img.getAttribute('src') || '').trim();
+    if (!this.isRenderablePhotoUrl(currentSrc)) {
+      this.renderCardPhotoPlaceholder(card, img.alt || undefined);
+      return false;
+    }
+
+    if (!img.complete) return false;
+    if (img.naturalWidth > 0 && img.naturalHeight > 0) return true;
+
+    this.renderCardPhotoPlaceholder(card, img.alt || undefined);
+    return false;
+  }
+
+  private bindRenderedCardPhotoGuards(root: ParentNode): void {
+    const cards = Array.from(root.querySelectorAll('.princhat-kanban-lead-card')) as HTMLElement[];
+    cards.forEach((card) => {
+      const img = card.querySelector('.princhat-kanban-lead-photo img') as HTMLImageElement | null;
+      if (!img) return;
+      this.bindCardPhotoErrorFallback(img);
+      if (img.complete && img.naturalWidth <= 0) {
+        this.renderCardPhotoPlaceholder(card, img.alt || undefined);
+      }
+    });
   }
 
   private isLikelyPlaceholderPhotoUrl(value: any): boolean {
@@ -12672,6 +12770,7 @@ class WhatsAppUIOverlay {
       // Clear and Append in one go
       container.innerHTML = '';
       container.appendChild(fragment);
+      this.bindRenderedCardPhotoGuards(container);
 
       // 3. Post-Render Setup
       this.setupColumnDragAndDrop();
@@ -12898,21 +12997,7 @@ class WhatsAppUIOverlay {
     }
 
     // 2. Update Photo
-    const photoContainer = card.querySelector('.princhat-kanban-lead-photo');
-    const resolvedPhoto = this.isRenderablePhotoUrl(lead?.photo)
-      ? String(lead.photo)
-      : '';
-    if (photoContainer) {
-      if (this.isRenderablePhotoUrl(resolvedPhoto)) {
-        photoContainer.innerHTML = `<img src="${resolvedPhoto}" alt="${resolvedName}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">`;
-      } else {
-        const existingImage = photoContainer.querySelector('img');
-        if (!existingImage) {
-          const initial = (resolvedName || '?').charAt(0).toUpperCase();
-          photoContainer.innerHTML = `<div class="princhat-kanban-lead-photo-placeholder">${initial}</div>`;
-        }
-      }
-    }
+    this.setCardPhoto(card, lead?.photo, resolvedName, { preserveExistingUsablePhoto: true });
 
     // 3. Update Tags
     // IMPORTANT: only rewrite tags if caller explicitly sent tag/label payload.
