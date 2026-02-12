@@ -10370,12 +10370,19 @@ class WhatsAppUIOverlay {
 
   private renderMoveToColumnButton(button: HTMLElement, column: { name: string; color?: string } | null = null) {
     if (!column) {
-      button.classList.remove('has-column');
-      button.title = 'Mover este contato para uma coluna do Kanban';
-      button.innerHTML = `
-        ${this.getKanbanColumnsIconMarkup(14, 'princhat-move-column-icon')}
-        <span class="princhat-move-column-default-text">Mover para coluna</span>
-      `;
+      const stateKey = 'default';
+      if (button.dataset.moveColumnState !== stateKey) {
+        button.classList.remove('has-column');
+        button.title = 'Mover este contato para uma coluna do Kanban';
+        button.innerHTML = `
+          ${this.getKanbanColumnsIconMarkup(14, 'princhat-move-column-icon')}
+          <span class="princhat-move-column-default-text">Mover para coluna</span>
+        `;
+        button.dataset.moveColumnState = stateKey;
+      } else {
+        button.classList.remove('has-column');
+        button.title = 'Mover este contato para uma coluna do Kanban';
+      }
       return;
     }
 
@@ -10385,16 +10392,25 @@ class WhatsAppUIOverlay {
     const safeColor = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(rawColor)
       ? rawColor
       : '#8696a0';
+    const stateKey = `column:${rawName || 'Sem coluna'}:${safeColor}`;
+
+    if (button.dataset.moveColumnState !== stateKey) {
+      button.classList.add('has-column');
+      button.title = `Mover para outra coluna (atual: ${rawName || 'Sem coluna'})`;
+      button.innerHTML = `
+        ${this.getKanbanColumnsIconMarkup(14, 'princhat-move-column-icon')}
+        <span class="princhat-move-column-current">
+          <span class="princhat-move-column-current-dot" style="background-color: ${safeColor};"></span>
+          <span class="princhat-move-column-current-name">${safeName}</span>
+        </span>
+      `;
+      button.dataset.moveColumnState = stateKey;
+      return;
+    }
 
     button.classList.add('has-column');
     button.title = `Mover para outra coluna (atual: ${rawName || 'Sem coluna'})`;
-    button.innerHTML = `
-      ${this.getKanbanColumnsIconMarkup(14, 'princhat-move-column-icon')}
-      <span class="princhat-move-column-current">
-        <span class="princhat-move-column-current-dot" style="background-color: ${safeColor};"></span>
-        <span class="princhat-move-column-current-name">${safeName}</span>
-      </span>
-    `;
+    return;
   }
 
   private scheduleMoveColumnButtonRefresh(activeChatIdHint?: string, immediate: boolean = false) {
