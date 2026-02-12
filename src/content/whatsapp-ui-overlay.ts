@@ -129,6 +129,14 @@ class WhatsAppUIOverlay {
   private scheduleCreationModal: HTMLElement | null = null; // Schedule creation modal
   private scheduleDeleteConfirmationModal: HTMLElement | null = null; // Schedule delete confirmation modal
   private notesPopup: HTMLElement | null = null; // Notes popup
+  private moveColumnPopup: HTMLElement | null = null; // Move lead to column popup
+  private moveColumnPopupOutsideHandler: ((event: MouseEvent) => void) | null = null;
+  private moveColumnButtonRequestVersion: number = 0;
+  private moveColumnButtonRefreshTimer: NodeJS.Timeout | null = null;
+  private pendingMoveColumnButtonChatHint: string | undefined = undefined;
+  private readonly MOVE_COLUMN_BUTTON_REFRESH_DEBOUNCE_MS = 150;
+  private moveColumnButtonColumnsCache: { data: any[]; timestamp: number } | null = null;
+  private readonly MOVE_COLUMN_BUTTON_COLUMNS_CACHE_TTL = 3000;
   private noteEditorModal: HTMLElement | null = null; // Note editor modal
   private tooltip: HTMLElement | null = null;
   private scripts: Script[] = [];
@@ -345,18 +353,23 @@ class WhatsAppUIOverlay {
       this.injectScheduleButton();
       console.log('[PrinChat UI] ✓ Schedule button injected');
 
+      // Inject move-to-column button into chat header
+      console.log('[PrinChat UI] Step 12.1: Injecting move-to-column button...');
+      this.injectMoveToColumnButton();
+      console.log('[PrinChat UI] ✓ Move-to-column button injected');
+
       // Inject notes button into chat header
-      console.log('[PrinChat UI] Step 12.1: Injecting notes button...');
+      console.log('[PrinChat UI] Step 12.2: Injecting notes button...');
       this.injectNotesButton();
       console.log('[PrinChat UI] ✓ Notes button injected');
 
       // Inject Kanban button into WhatsApp sidebar
-      console.log('[PrinChat UI] Step 12.2: Injecting Kanban button in sidebar...');
+      console.log('[PrinChat UI] Step 12.3: Injecting Kanban button in sidebar...');
       this.injectKanbanButton();
       console.log('[PrinChat UI] ✓ Kanban button injected');
 
       // Inject critical Kanban styles (Time badge fix)
-      console.log('[PrinChat UI] Step 12.3: Injecting Kanban styles...');
+      console.log('[PrinChat UI] Step 12.4: Injecting Kanban styles...');
       this.injectKanbanStyles();
       console.log('[PrinChat UI] ✓ Kanban styles injected');
 
@@ -941,15 +954,23 @@ class WhatsAppUIOverlay {
    * Called by monitorChatChanges when chat changes are detected
    */
 
-  private invalidateChatCache() {
+  private invalidateChatCache(immediate: boolean = false) {
     if (this.chatCacheInvalidateTimer) {
       clearTimeout(this.chatCacheInvalidateTimer);
+      this.chatCacheInvalidateTimer = null;
+    }
+
+    if (immediate) {
+      this.cachedChatId = null;
+      this.cachedChatTimestamp = 0;
+      return;
     }
 
     this.chatCacheInvalidateTimer = setTimeout(() => {
       console.log('[PrinChat UI] Invalidating chat cache (Debounced)');
       this.cachedChatId = null;
       this.cachedChatTimestamp = 0;
+      this.chatCacheInvalidateTimer = null;
     }, 500); // 500ms debounce
   }
 
@@ -3841,6 +3862,8 @@ class WhatsAppUIOverlay {
     }
     document.querySelectorAll('.princhat-global-notes-popup-unique').forEach(el => el.remove());
 
+    this.closeMoveToColumnPopup();
+
     // Also close the main header popup (iframe) unless excluded
     if (!excludeHeaderPopup && this.headerPopup && this.isHeaderPopupOpen) {
       this.toggleHeaderPopup(false);
@@ -3966,6 +3989,11 @@ class WhatsAppUIOverlay {
     if (this.notesPopup) {
       this.notesPopup.remove();
       this.notesPopup = null;
+    }
+
+    // Close move-to-column popup if open
+    if (this.moveColumnPopup) {
+      this.closeMoveToColumnPopup();
     }
 
     // Close header global popups
@@ -4403,6 +4431,11 @@ class WhatsAppUIOverlay {
     if (this.scheduleListPopup) {
       this.scheduleListPopup.remove();
       this.scheduleListPopup = null;
+    }
+
+    // Close move-to-column popup if open
+    if (this.moveColumnPopup) {
+      this.closeMoveToColumnPopup();
     }
 
     // Close header global popups (including executions unless pinned)
@@ -9792,20 +9825,21 @@ class WhatsAppUIOverlay {
     const currentChatElement = main?.querySelector('[data-tab]');
     if (currentChatElement && currentChatElement !== this.lastKnownChatElement) {
       console.log('[PrinChat UI] Chat changed detected, invalidating cache');
-      this.invalidateChatCache();
+      this.invalidateChatCache(true);
       this.lastKnownChatElement = currentChatElement;
+      this.closeMoveToColumnPopup();
+      this.setButtonsLoadingState(true);
+      this.checkAndInjectButtons(true);
 
-      // Re-inject schedule button when chat changes
-      setTimeout(() => {
-        console.log('[PrinChat UI] Attempting to inject schedule button after chat change...');
-        this.injectScheduleButton();
-        this.injectNotesButton();
-      }, 500); // Wait for DOM to stabilize
+      // Retry once shortly after to handle WhatsApp header recreation race
+      setTimeout(() => this.checkAndInjectButtons(true), 180);
     } else if (!currentChatElement && this.lastKnownChatElement) {
       // Chat closed
       console.log('[PrinChat UI] Chat closed, invalidating cache');
-      this.invalidateChatCache();
+      this.invalidateChatCache(true);
       this.lastKnownChatElement = null;
+      this.closeMoveToColumnPopup();
+      this.checkAndInjectButtons(true);
     }
 
     if (currentValue !== newValue) {
@@ -10232,6 +10266,659 @@ class WhatsAppUIOverlay {
     });
   }
 
+  private getKanbanColumnsIconShapeMarkup(): string {
+    return `
+      <rect x="3" y="3" width="6" height="18" rx="1" stroke="currentColor" stroke-width="2" fill="none" />
+      <rect x="12" y="3" width="3" height="18" rx="1" stroke="currentColor" stroke-width="2" fill="none" />
+      <rect x="18" y="3" width="3" height="18" rx="1" stroke="currentColor" stroke-width="2" fill="none" />
+    `;
+  }
+
+  private getKanbanColumnsIconMarkup(size: number = 24, extraClass: string = ''): string {
+    const classAttr = extraClass ? ` class="${extraClass}"` : '';
+    return `
+      <svg viewBox="0 0 24 24" height="${size}" width="${size}" preserveAspectRatio="xMidYMid meet" fill="none" aria-hidden="true"${classAttr}>
+        ${this.getKanbanColumnsIconShapeMarkup()}
+      </svg>
+    `;
+  }
+
+  /**
+   * Inject move-to-column button into WhatsApp chat header
+   */
+  private injectMoveToColumnButton() {
+    try {
+      const chatHeader = document.querySelector('#main > header');
+      if (!chatHeader) {
+        return;
+      }
+
+      if (chatHeader.querySelector('.princhat-move-column-button')) {
+        return;
+      }
+
+      let actionsContainer: Element | null = null;
+      let insertRef: Node | null = null;
+
+      const scheduleButton = chatHeader.querySelector('.princhat-schedule-button');
+      if (scheduleButton && scheduleButton.parentElement) {
+        actionsContainer = scheduleButton.parentElement;
+        insertRef = scheduleButton;
+      } else {
+        const menuBtn = chatHeader.querySelector('[data-icon="menu"]') ||
+          chatHeader.querySelector('[aria-label="Mais opções"]') ||
+          chatHeader.querySelector('[aria-label="More options"]');
+
+        if (menuBtn) {
+          let parent = menuBtn.parentElement;
+          while (parent && parent !== chatHeader) {
+            const hasSearch = parent.querySelector('[aria-label="Pesquisar"]') ||
+              parent.querySelector('[data-icon="search"]');
+            if (hasSearch && parent.tagName === 'DIV') {
+              actionsContainer = parent;
+              break;
+            }
+            parent = parent.parentElement;
+          }
+        }
+
+        if (!actionsContainer) {
+          actionsContainer = chatHeader.querySelector('div.x78zum5.x6s0dn4.x1afcbsf.x14ug900');
+        }
+
+        if (!actionsContainer) {
+          const headerChildren = Array.from(chatHeader.children);
+          actionsContainer = headerChildren[headerChildren.length - 1];
+        }
+      }
+
+      if (!actionsContainer) {
+        console.error('[PrinChat UI] CRITICAL: Actions container not found for move-to-column button');
+        return;
+      }
+
+      const moveButton = document.createElement('button');
+      moveButton.className = 'princhat-move-column-button';
+      moveButton.title = 'Mover este contato para uma coluna do Kanban';
+      moveButton.innerHTML = `
+        ${this.getKanbanColumnsIconMarkup(14, 'princhat-move-column-icon')}
+        <span class="princhat-move-column-default-text">Mover para coluna</span>
+      `;
+
+      moveButton.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.toggleMoveToColumnPopup(moveButton).catch((error: any) => {
+          console.error('[PrinChat UI] Error toggling move-to-column popup:', error?.message || error);
+        });
+      });
+
+      if (insertRef) {
+        actionsContainer.insertBefore(moveButton, insertRef);
+      } else if (actionsContainer.firstChild) {
+        actionsContainer.insertBefore(moveButton, actionsContainer.firstChild);
+      } else {
+        actionsContainer.appendChild(moveButton);
+      }
+
+      this.scheduleMoveColumnButtonRefresh(undefined, true);
+
+      console.log('[PrinChat UI] ✅ Move-to-column button injected successfully');
+    } catch (error: any) {
+      console.error('[PrinChat UI] Error injecting move-to-column button:', error?.message || error);
+    }
+  }
+
+  private renderMoveToColumnButton(button: HTMLElement, column: { name: string; color?: string } | null = null) {
+    if (!column) {
+      button.classList.remove('has-column');
+      button.title = 'Mover este contato para uma coluna do Kanban';
+      button.innerHTML = `
+        ${this.getKanbanColumnsIconMarkup(14, 'princhat-move-column-icon')}
+        <span class="princhat-move-column-default-text">Mover para coluna</span>
+      `;
+      return;
+    }
+
+    const rawName = (column.name || '').trim();
+    const safeName = this.escapeHtml(rawName || 'Sem coluna');
+    const rawColor = typeof column.color === 'string' ? column.color.trim() : '';
+    const safeColor = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(rawColor)
+      ? rawColor
+      : '#8696a0';
+
+    button.classList.add('has-column');
+    button.title = `Mover para outra coluna (atual: ${rawName || 'Sem coluna'})`;
+    button.innerHTML = `
+      ${this.getKanbanColumnsIconMarkup(14, 'princhat-move-column-icon')}
+      <span class="princhat-move-column-current">
+        <span class="princhat-move-column-current-dot" style="background-color: ${safeColor};"></span>
+        <span class="princhat-move-column-current-name">${safeName}</span>
+      </span>
+    `;
+  }
+
+  private scheduleMoveColumnButtonRefresh(activeChatIdHint?: string, immediate: boolean = false) {
+    // Invalidate in-flight renders as soon as a newer refresh is requested.
+    this.moveColumnButtonRequestVersion++;
+
+    const button = document.querySelector('.princhat-move-column-button') as HTMLElement | null;
+    button?.classList.add('loading');
+
+    this.pendingMoveColumnButtonChatHint = activeChatIdHint || undefined;
+
+    if (this.moveColumnButtonRefreshTimer) {
+      clearTimeout(this.moveColumnButtonRefreshTimer);
+      this.moveColumnButtonRefreshTimer = null;
+    }
+
+    const runRefresh = () => {
+      const hint = this.pendingMoveColumnButtonChatHint;
+      this.pendingMoveColumnButtonChatHint = undefined;
+      this.moveColumnButtonRefreshTimer = null;
+
+      this.updateMoveToColumnButton(hint).catch((error: any) => {
+        console.error('[PrinChat UI] Error updating move-to-column button state:', error?.message || error);
+      });
+    };
+
+    if (immediate) {
+      runRefresh();
+      return;
+    }
+
+    this.moveColumnButtonRefreshTimer = setTimeout(
+      runRefresh,
+      this.MOVE_COLUMN_BUTTON_REFRESH_DEBOUNCE_MS
+    );
+  }
+
+  private async getCachedKanbanColumnsForMoveButton(forceRefresh: boolean = false): Promise<any[]> {
+    const now = Date.now();
+    if (
+      !forceRefresh &&
+      this.moveColumnButtonColumnsCache &&
+      (now - this.moveColumnButtonColumnsCache.timestamp) < this.MOVE_COLUMN_BUTTON_COLUMNS_CACHE_TTL
+    ) {
+      return this.moveColumnButtonColumnsCache.data;
+    }
+
+    const columnsResponse = await this.requestKanbanDataWithRetry({ type: 'GET_KANBAN_COLUMNS' }, 8000, 4);
+    if (!columnsResponse?.success) {
+      throw new Error(columnsResponse?.error || 'Erro ao carregar colunas do Kanban');
+    }
+
+    const columns = Array.isArray(columnsResponse?.data) ? columnsResponse.data : [];
+    this.moveColumnButtonColumnsCache = { data: columns, timestamp: now };
+    return columns;
+  }
+
+  private async updateMoveToColumnButton(activeChatIdHint?: string) {
+    const initialButton = document.querySelector('.princhat-move-column-button') as HTMLElement | null;
+    if (!initialButton) return;
+
+    const requestVersion = ++this.moveColumnButtonRequestVersion;
+
+    const renderIfCurrent = (column: { name: string; color?: string } | null = null) => {
+      if (requestVersion !== this.moveColumnButtonRequestVersion) return;
+      const liveButton = document.querySelector('.princhat-move-column-button') as HTMLElement | null;
+      if (!liveButton) return;
+      this.renderMoveToColumnButton(liveButton, column);
+      liveButton.classList.remove('loading');
+    };
+
+    try {
+      initialButton.classList.add('loading');
+      const activeChatId = activeChatIdHint || await this.getActiveChatId() || '';
+      const normalizedActiveChatId = this.normalizeLeadChatId(activeChatId) || this.stripScopedChatId(activeChatId) || activeChatId;
+      const activeIdentity = this.extractLeadIdentity(normalizedActiveChatId);
+      const isGroupChat = normalizedActiveChatId.includes('@g.us');
+      const isSystemChat = activeIdentity === 'status' || normalizedActiveChatId.endsWith('@broadcast');
+
+      if (!normalizedActiveChatId || isGroupChat || isSystemChat) {
+        renderIfCurrent(null);
+        return;
+      }
+
+      const leadsResponse = await this.requestKanbanDataWithRetry({ type: 'GET_ALL_KANBAN_LEADS' }, 8000, 4);
+      if (!leadsResponse?.success) {
+        renderIfCurrent(null);
+        return;
+      }
+
+      const leads = Array.isArray(leadsResponse?.data) ? leadsResponse.data : [];
+      const existingLead = this.findKanbanLeadByActiveChat(leads, normalizedActiveChatId);
+      const currentColumnId = typeof existingLead?.columnId === 'string' ? existingLead.columnId : '';
+      if (!currentColumnId) {
+        renderIfCurrent(null);
+        return;
+      }
+
+      let columns = await this.getCachedKanbanColumnsForMoveButton();
+      let currentColumn = columns.find((column: any) => column?.id === currentColumnId);
+      if (!currentColumn) {
+        columns = await this.getCachedKanbanColumnsForMoveButton(true);
+        currentColumn = columns.find((column: any) => column?.id === currentColumnId);
+      }
+      if (!currentColumn) {
+        renderIfCurrent(null);
+        return;
+      }
+
+      renderIfCurrent({
+        name: String(currentColumn?.name || 'Sem coluna'),
+        color: typeof currentColumn?.color === 'string' ? currentColumn.color : ''
+      });
+    } catch (error: any) {
+      console.error('[PrinChat UI] Error updating move-to-column button:', error?.message || error);
+      renderIfCurrent(null);
+    }
+  }
+
+  private closeMoveToColumnPopup() {
+    if (this.moveColumnPopupOutsideHandler) {
+      document.removeEventListener('mousedown', this.moveColumnPopupOutsideHandler, true);
+      this.moveColumnPopupOutsideHandler = null;
+    }
+
+    if (this.moveColumnPopup) {
+      this.moveColumnPopup.remove();
+      this.moveColumnPopup = null;
+    }
+
+    document.querySelectorAll('.princhat-move-column-button.active').forEach((btn) => {
+      btn.classList.remove('active');
+    });
+  }
+
+  private findKanbanLeadByActiveChat(leads: any[], activeChatId: string): any | null {
+    if (!Array.isArray(leads) || !activeChatId) return null;
+
+    const activeVariants = this.buildLeadChatVariants(activeChatId);
+    const activeIdentity = this.extractLeadIdentity(activeChatId);
+
+    const match = leads.find((lead: any) => {
+      const leadCandidates = [lead?.id, lead?.chatId, lead?.phone];
+      for (const candidate of leadCandidates) {
+        const leadVariants = this.buildLeadChatVariants(candidate);
+        if (leadVariants.some((variant) => activeVariants.includes(variant))) {
+          return true;
+        }
+
+        const leadIdentity = this.extractLeadIdentity(candidate);
+        if (leadIdentity && activeIdentity && leadIdentity === activeIdentity) {
+          return true;
+        }
+      }
+      return false;
+    });
+
+    return match || null;
+  }
+
+  private buildMoveColumnPopupContent(options: {
+    columns: any[];
+    selectedColumnId: string;
+    hasExistingLead: boolean;
+    leadName: string;
+    isUnsupportedChat: boolean;
+    unsupportedMessage: string;
+  }): string {
+    const {
+      columns,
+      selectedColumnId,
+      hasExistingLead,
+      leadName,
+      isUnsupportedChat,
+      unsupportedMessage,
+    } = options;
+
+    const safeLeadName = this.escapeHtml((leadName || 'este contato').trim());
+    const hintText = hasExistingLead
+      ? `Selecione a nova coluna para ${safeLeadName}.`
+      : 'Este contato ainda não está no Kanban. Ao mover, um card será criado automaticamente.';
+
+    const hasColumns = Array.isArray(columns) && columns.length > 0;
+    const canMove = !!selectedColumnId && hasColumns && !isUnsupportedChat;
+
+    const rowsHtml = hasColumns ? columns.map((column: any) => {
+      const columnId = typeof column?.id === 'string' ? column.id : '';
+      const columnName = this.escapeHtml((column?.name || 'Sem nome').trim());
+      const isSelected = columnId === selectedColumnId;
+      const rawColor = typeof column?.color === 'string' ? column.color.trim() : '';
+      const safeColor = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(rawColor)
+        ? rawColor
+        : '#8696a0';
+      const safeColumnId = this.escapeHtml(columnId);
+
+      return `
+        <button type="button" class="princhat-item-row princhat-move-column-item ${isSelected ? 'active' : ''}" data-column-id="${safeColumnId}">
+          <span class="princhat-move-column-dot" style="background-color: ${safeColor};"></span>
+          <span class="princhat-item-text">${columnName}</span>
+          <svg class="princhat-move-column-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+        </button>
+      `;
+    }).join('') : '';
+
+    return `
+      <div class="princhat-popup-header">
+        <div class="princhat-popup-header-content">
+          <div class="princhat-move-column-header-icon">
+            ${this.getKanbanColumnsIconMarkup(18)}
+          </div>
+          <div>
+            <div class="princhat-popup-title">Mover para coluna</div>
+            <div class="princhat-popup-subtitle">Organize este contato no Kanban</div>
+          </div>
+        </div>
+        <button class="princhat-popup-close-btn" title="Fechar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="princhat-move-column-body">
+        ${isUnsupportedChat
+        ? `<div class="princhat-move-column-warning">${this.escapeHtml(unsupportedMessage)}</div>`
+        : `<p class="princhat-move-column-hint">${this.escapeHtml(hintText)}</p>`
+      }
+        ${!isUnsupportedChat && !hasColumns
+        ? '<div class="princhat-item-empty">Nenhuma coluna disponível</div>'
+        : ''
+      }
+        ${!isUnsupportedChat && hasColumns
+        ? `<div class="princhat-item-list princhat-move-column-list">${rowsHtml}</div>`
+        : ''
+      }
+        <p class="princhat-move-column-error" data-role="move-column-error"></p>
+      </div>
+      <div class="princhat-move-column-footer">
+        <button class="princhat-kanban-btn princhat-kanban-btn-secondary" data-action="cancel">Cancelar</button>
+        <button class="princhat-kanban-btn princhat-kanban-btn-primary" data-action="move" ${canMove ? '' : 'disabled'}>Mover</button>
+      </div>
+    `;
+  }
+
+  private async createLeadForMoveToColumn(activeChatId: string, columnId: string, newOrder: number): Promise<any> {
+    const chatInfoResponse = await this.requestFromContentScript({
+      type: 'GET_CHAT_INFO',
+      payload: { chatId: activeChatId }
+    }, 15000);
+
+    const activeChatResponse = await this.requestFromContentScript({
+      type: 'GET_ACTIVE_CHAT'
+    }, 10000);
+
+    const chatInfoData = chatInfoResponse?.data || {};
+    const activeChatData = activeChatResponse?.data || {};
+
+    const normalizedChatId = this.normalizeLeadChatId(
+      chatInfoData?.chatId || activeChatData?.chatId || activeChatId
+    ) || this.normalizeLeadChatId(activeChatId) || activeChatId;
+
+    const phoneIdentity = this.extractLeadIdentity(
+      chatInfoData?.phoneNumber || normalizedChatId || activeChatId
+    ) || this.extractLeadIdentity(normalizedChatId) || normalizedChatId;
+
+    const labels = Array.isArray(chatInfoData?.labels)
+      ? chatInfoData.labels.filter(Boolean)
+      : [];
+    const tags = labels.length > 0
+      ? labels.map((label: any) => label?.id || label?.name).filter(Boolean)
+      : [];
+
+    const fallbackName = phoneIdentity || 'Novo contato';
+    const contactName =
+      (chatInfoData?.chatName || chatInfoData?.name || activeChatData?.chatName || activeChatData?.name || '').trim()
+      || fallbackName;
+
+    const infoPhoto = typeof chatInfoData?.chatPhoto === 'string' ? chatInfoData.chatPhoto : '';
+    const activePhoto = typeof activeChatData?.chatPhoto === 'string' ? activeChatData.chatPhoto : '';
+    const contactPhoto = this.isRenderablePhotoUrl(infoPhoto)
+      ? infoPhoto
+      : (this.isRenderablePhotoUrl(activePhoto) ? activePhoto : '');
+
+    const createResult = await this.requestFromContentScript({
+      type: 'CREATE_KANBAN_LEAD',
+      payload: {
+        phone: phoneIdentity,
+        chatId: normalizedChatId,
+        name: contactName,
+        photo: contactPhoto,
+        columnId,
+        order: newOrder,
+        lastMessage: '',
+        lastMessageTime: Date.now(),
+        unreadCount: 0,
+        tags,
+        labels
+      }
+    });
+
+    if (!createResult?.success) {
+      throw new Error(createResult?.error || 'Erro ao criar lead no Kanban');
+    }
+
+    return createResult?.data || null;
+  }
+
+  /**
+   * Toggle move-to-column popup
+   */
+  private async toggleMoveToColumnPopup(button: HTMLElement) {
+    if (this.moveColumnPopup) {
+      this.closeMoveToColumnPopup();
+      return;
+    }
+
+    if (this.scheduleListPopup) {
+      this.scheduleListPopup.remove();
+      this.scheduleListPopup = null;
+    }
+
+    if (this.notesPopup) {
+      this.notesPopup.remove();
+      this.notesPopup = null;
+    }
+
+    this.closeHeaderPopups();
+
+    const popup = document.createElement('div');
+    popup.className = 'princhat-move-column-popup';
+    this.moveColumnPopup = popup;
+    button.classList.add('active');
+
+    const activeChatId = await this.getActiveChatId() || '';
+    const normalizedActiveChatId = this.normalizeLeadChatId(activeChatId) || this.stripScopedChatId(activeChatId) || activeChatId;
+    const activeIdentity = this.extractLeadIdentity(normalizedActiveChatId);
+    const isGroupChat = normalizedActiveChatId.includes('@g.us');
+    const isSystemChat = activeIdentity === 'status' || normalizedActiveChatId.endsWith('@broadcast');
+    const isUnsupportedChat = !normalizedActiveChatId || isGroupChat || isSystemChat;
+    const unsupportedMessage = !normalizedActiveChatId
+      ? 'Abra uma conversa para mover o lead.'
+      : (isGroupChat
+        ? 'Conversas em grupo não podem ser movidas para colunas.'
+        : 'Este tipo de conversa não pode ser adicionado ao Kanban.');
+
+    const columnsResponse = await this.requestKanbanDataWithRetry({ type: 'GET_KANBAN_COLUMNS' }, 8000, 4);
+    const leadsResponse = await this.requestKanbanDataWithRetry({ type: 'GET_ALL_KANBAN_LEADS' }, 8000, 4);
+
+    if (!columnsResponse?.success) {
+      throw new Error(columnsResponse?.error || 'Erro ao carregar colunas do Kanban');
+    }
+    if (!leadsResponse?.success) {
+      throw new Error(leadsResponse?.error || 'Erro ao carregar leads do Kanban');
+    }
+
+    const columnsRaw = Array.isArray(columnsResponse?.data) ? columnsResponse.data : [];
+    const columnsMap = new Map<string, any>();
+    columnsRaw.forEach((column: any) => {
+      if (typeof column?.id === 'string' && !columnsMap.has(column.id)) {
+        columnsMap.set(column.id, column);
+      }
+    });
+    const columns = Array.from(columnsMap.values()).sort((a: any, b: any) => (a?.order || 0) - (b?.order || 0));
+
+    const allLeads = Array.isArray(leadsResponse?.data) ? leadsResponse.data : [];
+    const existingLead = isUnsupportedChat ? null : this.findKanbanLeadByActiveChat(allLeads, normalizedActiveChatId);
+    let selectedColumnId =
+      typeof existingLead?.columnId === 'string' &&
+        columns.some((column: any) => column.id === existingLead.columnId)
+        ? existingLead.columnId
+        : '';
+
+    const leadName = existingLead
+      ? this.resolveLeadDisplayName(existingLead)
+      : (activeIdentity || 'este contato');
+
+    const renderPopup = () => {
+      popup.innerHTML = this.buildMoveColumnPopupContent({
+        columns,
+        selectedColumnId,
+        hasExistingLead: !!existingLead,
+        leadName,
+        isUnsupportedChat,
+        unsupportedMessage
+      });
+
+      const closeBtn = popup.querySelector('.princhat-popup-close-btn') as HTMLButtonElement | null;
+      const cancelBtn = popup.querySelector('[data-action="cancel"]') as HTMLButtonElement | null;
+      const moveBtn = popup.querySelector('[data-action="move"]') as HTMLButtonElement | null;
+      const columnItems = popup.querySelectorAll('.princhat-move-column-item');
+      const errorEl = popup.querySelector('[data-role="move-column-error"]') as HTMLElement | null;
+
+      closeBtn?.addEventListener('click', () => this.closeMoveToColumnPopup());
+      cancelBtn?.addEventListener('click', () => this.closeMoveToColumnPopup());
+
+      columnItems.forEach((item) => {
+        item.addEventListener('click', () => {
+          const nextId = (item as HTMLElement).getAttribute('data-column-id') || '';
+          if (!nextId) return;
+
+          selectedColumnId = nextId;
+          popup.querySelectorAll('.princhat-move-column-item').forEach((row) => {
+            row.classList.toggle('active', row === item);
+          });
+
+          if (moveBtn) {
+            moveBtn.disabled = false;
+          }
+
+          if (errorEl) {
+            errorEl.textContent = '';
+            errorEl.style.display = 'none';
+          }
+        });
+      });
+
+      moveBtn?.addEventListener('click', async () => {
+        if (!selectedColumnId || isUnsupportedChat) return;
+
+        if (errorEl) {
+          errorEl.textContent = '';
+          errorEl.style.display = 'none';
+        }
+
+        moveBtn.disabled = true;
+        const originalText = moveBtn.textContent || 'Mover';
+        moveBtn.textContent = 'Movendo...';
+
+        try {
+          const newOrder = -Date.now();
+
+          if (existingLead?.id) {
+            if (existingLead.columnId === selectedColumnId) {
+              await this.updateMoveToColumnButton(normalizedActiveChatId);
+              this.closeMoveToColumnPopup();
+              return;
+            }
+
+            const moveResult = await this.requestFromContentScript({
+              type: 'MOVE_KANBAN_LEAD',
+              payload: {
+                leadId: existingLead.id,
+                newColumnId: selectedColumnId,
+                newOrder
+              }
+            });
+
+            if (!moveResult?.success) {
+              throw new Error(moveResult?.error || 'Erro ao mover lead');
+            }
+
+            document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
+              detail: {
+                leadId: existingLead.id,
+                updates: {
+                  columnId: selectedColumnId,
+                  order: newOrder
+                },
+                chatId: this.resolveLeadChatId(existingLead)
+              }
+            }));
+          } else {
+            const createdLead = await this.createLeadForMoveToColumn(
+              normalizedActiveChatId,
+              selectedColumnId,
+              newOrder
+            );
+
+            document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadCreated', {
+              detail: {
+                lead: createdLead || {
+                  chatId: normalizedActiveChatId,
+                  columnId: selectedColumnId,
+                  order: newOrder
+                }
+              }
+            }));
+          }
+
+          await this.updateMoveToColumnButton(normalizedActiveChatId);
+          this.closeMoveToColumnPopup();
+        } catch (error: any) {
+          const errorMessage = String(error?.message || 'Erro ao mover lead');
+          console.error('[PrinChat UI] Error moving lead to column:', errorMessage);
+          if (errorEl) {
+            errorEl.textContent = errorMessage;
+            errorEl.style.display = 'block';
+          }
+          moveBtn.disabled = false;
+          moveBtn.textContent = originalText;
+        }
+      });
+    };
+
+    renderPopup();
+
+    const rect = button.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.top = `${rect.bottom + 8}px`;
+    popup.style.right = `${window.innerWidth - rect.right}px`;
+
+    document.body.appendChild(popup);
+
+    this.moveColumnPopupOutsideHandler = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      const isModal = target.closest('.princhat-modal-overlay') ||
+        target.closest('.princhat-note-editor-modal') ||
+        target.closest('.princhat-calendar-modal-overlay') ||
+        target.closest('.princhat-schedule-modal') ||
+        target.closest('.princhat-confirmation-modal');
+
+      if (!popup.contains(target) && !button.contains(target) && !isModal) {
+        this.closeMoveToColumnPopup();
+      }
+    };
+
+    setTimeout(() => {
+      if (this.moveColumnPopupOutsideHandler) {
+        document.addEventListener('mousedown', this.moveColumnPopupOutsideHandler, true);
+      }
+    }, 100);
+  }
+
   /**
    * Inject schedule button into WhatsApp chat header
    */
@@ -10314,8 +11001,15 @@ class WhatsAppUIOverlay {
         this.toggleScheduleListPopup(scheduleButton);
       });
 
-      // Insert button at the beginning of actions container
-      if (actionsContainer.firstChild) {
+      // Insert after move-to-column button when present to preserve intended order
+      const moveButton = actionsContainer.querySelector('.princhat-move-column-button');
+      if (moveButton && moveButton.parentElement === actionsContainer) {
+        if (moveButton.nextSibling) {
+          actionsContainer.insertBefore(scheduleButton, moveButton.nextSibling);
+        } else {
+          actionsContainer.appendChild(scheduleButton);
+        }
+      } else if (actionsContainer.firstChild) {
         actionsContainer.insertBefore(scheduleButton, actionsContainer.firstChild);
       } else {
         actionsContainer.appendChild(scheduleButton);
@@ -10441,7 +11135,7 @@ class WhatsAppUIOverlay {
 
       // If forcing refresh, invalidate cache first
       if (forceRefresh) {
-        this.invalidateChatCache();
+        this.invalidateChatCache(true);
       }
 
       const chatId = await this.getActiveChatId();
@@ -10531,7 +11225,7 @@ class WhatsAppUIOverlay {
 
       // If forcing refresh, invalidate cache first
       if (forceRefresh) {
-        this.invalidateChatCache();
+        this.invalidateChatCache(true);
       }
 
       // Get active chat ID
@@ -10613,12 +11307,16 @@ class WhatsAppUIOverlay {
           // Check if mutation is related to our buttons or badges
           return target.classList?.contains('princhat-schedule-button') ||
             target.classList?.contains('princhat-notes-button') ||
+            target.classList?.contains('princhat-move-column-button') ||
             target.closest?.('.princhat-schedule-button') ||
             target.closest?.('.princhat-notes-button') ||
+            target.closest?.('.princhat-move-column-button') ||
             target.classList?.contains('princhat-schedule-badge') ||
             // Check added nodes
             (m.type === 'childList' && Array.from(m.addedNodes).some((n: any) =>
-              n.classList?.contains('princhat-schedule-button') || n.classList?.contains('princhat-notes-button')
+              n.classList?.contains('princhat-schedule-button') ||
+              n.classList?.contains('princhat-notes-button') ||
+              n.classList?.contains('princhat-move-column-button')
             ));
         });
 
@@ -10640,23 +11338,33 @@ class WhatsAppUIOverlay {
 
         // Chat header changed
         const oldChatId = this.currentChatId; // Capture current known ID
-        this.invalidateChatCache();
 
         if (debounceTimer) clearTimeout(debounceTimer);
         debounceTimer = setTimeout(async () => {
           // 1. Inject buttons blindly (visuals)
           this.checkAndInjectButtons(false);
+          this.invalidateChatCache(true);
+          this.setButtonsLoadingState(true);
 
           // 2. Wait for data sync (Logic)
           // We wait until the Chat ID actually changes from the old one
           const newChatId = await this.waitForChatIdChange(oldChatId);
           this.currentChatId = newChatId;
 
+          if ((newChatId || '') !== (oldChatId || '')) {
+            this.closeMoveToColumnPopup();
+          }
+
           // 3. Now update data (force refresh)
           if (newChatId) {
+            this.scheduleMoveColumnButtonRefresh(newChatId, true);
             this.updateScheduleButton(true);
             this.updateNotesBadge(true);
+          } else {
+            this.scheduleMoveColumnButtonRefresh(undefined, true);
           }
+
+          this.setButtonsLoadingState(false);
         }, this.isWhatsAppBusiness() ? 300 : 50); // Slower debounce for Business
       });
 
@@ -10707,6 +11415,14 @@ class WhatsAppUIOverlay {
           await this.refreshScheduleListPopup();
         }
       });
+
+      document.addEventListener('PrinChatKanbanLeadUpdated', () => {
+        this.scheduleMoveColumnButtonRefresh();
+      });
+
+      document.addEventListener('PrinChatKanbanLeadCreated', () => {
+        this.scheduleMoveColumnButtonRefresh();
+      });
     } catch (error: any) {
       console.error('[PrinChat UI] Error setting up chat header monitor:', error?.message || error);
     }
@@ -10720,6 +11436,12 @@ class WhatsAppUIOverlay {
     const chatHeader = document.querySelector('#main > header');
     if (chatHeader) {
       let injected = false;
+
+      // Check Move-to-column button
+      if (!chatHeader.querySelector('.princhat-move-column-button')) {
+        this.injectMoveToColumnButton();
+        injected = true;
+      }
 
       // Check Schedule Button
       if (!chatHeader.querySelector('.princhat-schedule-button')) {
@@ -10739,8 +11461,10 @@ class WhatsAppUIOverlay {
       if (injected || forceRefresh) {
         // Add small delay to allow chat ID to update if this is a navigation event
         setTimeout(() => {
+          this.scheduleMoveColumnButtonRefresh();
           this.updateScheduleButton();
           this.updateNotesBadge();
+          this.setButtonsLoadingState(false);
         }, 100);
       }
     }
@@ -10914,24 +11638,9 @@ class WhatsAppUIOverlay {
       iconInner.style.flexGrow = '1';
 
       const iconWrapper = document.createElement('div');
-
-      // Columns3 icon (Kanban representation)
-      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      icon.setAttribute('viewBox', '0 0 24 24');
-      icon.setAttribute('height', '24');
-      icon.setAttribute('width', '24');
-      icon.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-      icon.setAttribute('fill', 'none');
-      icon.setAttribute('aria-hidden', 'true');
-      icon.setAttribute('data-icon', 'kanban');
-
-      icon.innerHTML = `
-        <rect x="3" y="3" width="6" height="18" rx="1" stroke="currentColor" stroke-width="2" fill="none" />
-        <rect x="12" y="3" width="3" height="18" rx="1" stroke="currentColor" stroke-width="2" fill="none" />
-        <rect x="18" y="3" width="3" height="18" rx="1" stroke="currentColor" stroke-width="2" fill="none" />
-      `;
-
-      iconWrapper.appendChild(icon);
+      iconWrapper.innerHTML = this.getKanbanColumnsIconMarkup(24);
+      const icon = iconWrapper.querySelector('svg');
+      icon?.setAttribute('data-icon', 'kanban');
       iconInner.appendChild(iconWrapper);
       iconContainer.appendChild(iconInner);
       button.appendChild(iconContainer);
@@ -14864,8 +15573,9 @@ class WhatsAppUIOverlay {
 
     // Also listen for KeyDown (Alt+Tab or Arrow keys could switch chat)
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'PageDown' || e.key === 'PageUp') {
         // Potential navigation via keyboard
+        this.handleNavigationStart();
       }
     });
   }
@@ -14880,7 +15590,8 @@ class WhatsAppUIOverlay {
     document.querySelectorAll('.princhat-kanban-tags-tooltip').forEach(el => el.remove());
     document.querySelectorAll('.princhat-kanban-lead-card.active-menu').forEach(c => c.classList.remove('active-menu'));
 
-    this.invalidateChatCache();
+    this.invalidateChatCache(true);
+    this.closeMoveToColumnPopup();
     this.setButtonsLoadingState(true);
   }
 
@@ -14895,7 +15606,7 @@ class WhatsAppUIOverlay {
       const check = async () => {
         attempts++;
         // Force fetch current ID from store (bypassing our cache)
-        this.invalidateChatCache();
+        this.invalidateChatCache(true);
         const newId = await this.getActiveChatId();
 
         // If ID is different and valid, WE ARE SYNCED
@@ -14927,6 +15638,9 @@ class WhatsAppUIOverlay {
 
     const scheduleBtn = document.querySelector('.princhat-schedule-button');
     if (scheduleBtn) scheduleBtn.classList.toggle('loading', isLoading);
+
+    const moveColumnBtn = document.querySelector('.princhat-move-column-button');
+    if (moveColumnBtn) moveColumnBtn.classList.toggle('loading', isLoading);
   }
 
 }
