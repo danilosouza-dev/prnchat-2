@@ -192,6 +192,7 @@ class WhatsAppUIOverlay {
   private activeKanbanCardMenuOutsideHandler: ((event: MouseEvent) => void) | null = null;
   private sidebarPhotoCache: Map<string, string> = new Map(); // Cache sidebar photos before overlay hides them
   private incomingPhotoHydrationByLead: Map<string, Promise<void>> = new Map();
+  private brokenPhotoUrlSet: Set<string> = new Set();
   private kanbanBootstrapRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private kanbanBootstrapRetryCount: number = 0;
   private readonly MAX_KANBAN_BOOTSTRAP_RETRIES = 5;
@@ -11267,7 +11268,7 @@ class WhatsAppUIOverlay {
             ).trim();
 
             const applyPhoto = (targetCard: HTMLElement, photo: string, persistToDb: boolean): boolean => {
-              if (!this.isRenderablePhotoUrl(photo)) return false;
+              if (!this.isRenderablePhotoUrl(photo) || this.isBrokenPhotoUrl(photo)) return false;
               const finalPhoto = String(photo);
               const photoApplied = this.setCardPhoto(targetCard, finalPhoto, resolvedName, {
                 preserveExistingUsablePhoto: true,
@@ -11307,12 +11308,12 @@ class WhatsAppUIOverlay {
               let resolvedPhoto = '';
               let shouldPersistResolvedPhoto = false;
               const chatInfoResolvedPhoto = await this.getChatPhotoForLead(chatId, cardLeadId);
-              if (this.isRenderablePhotoUrl(chatInfoResolvedPhoto)) {
+              if (this.isRenderablePhotoUrl(chatInfoResolvedPhoto) && !this.isBrokenPhotoUrl(chatInfoResolvedPhoto)) {
                 resolvedPhoto = String(chatInfoResolvedPhoto);
                 shouldPersistResolvedPhoto = true;
               }
 
-              if (!this.isRenderablePhotoUrl(resolvedPhoto)) continue;
+              if (!this.isRenderablePhotoUrl(resolvedPhoto) || this.isBrokenPhotoUrl(resolvedPhoto)) continue;
               const finalPhoto = String(resolvedPhoto);
 
               const photoApplied = applyPhoto(currentCard, finalPhoto, shouldPersistResolvedPhoto);
@@ -11525,13 +11526,13 @@ class WhatsAppUIOverlay {
 
               // Try GET_CHAT_PHOTO (goes through page script Store/WPP strategies)
               resolvedPhoto = await this.getChatPhotoForLead(chatId, phoneHint, initialCardLeadId);
-              if (resolvedPhoto) {
+              if (resolvedPhoto && !this.isBrokenPhotoUrl(resolvedPhoto)) {
                 shouldPersistResolvedPhoto = true;
                 console.log('[PrinChat UI] 📸 Got photo from GET_CHAT_PHOTO after', delay, 'ms for:', chatId);
               }
 
               // Apply the photo to the card
-              if (resolvedPhoto && this.isRenderablePhotoUrl(resolvedPhoto)) {
+              if (resolvedPhoto && this.isRenderablePhotoUrl(resolvedPhoto) && !this.isBrokenPhotoUrl(resolvedPhoto)) {
                 const resolvedName = (currentCard.querySelector('.princhat-kanban-lead-name')?.textContent || '').trim() || 'U';
                 const photoApplied = this.setCardPhoto(currentCard, resolvedPhoto, resolvedName, {
                   preserveExistingUsablePhoto: true,
@@ -11638,14 +11639,30 @@ class WhatsAppUIOverlay {
           // Resolve photo
           if (!hasPhoto) {
             let resolvedPhoto = '';
+            let resolvedPhotoSource = info?.chatPhotoSource || '';
+            let resolvedPhotoStability: 'stable' | 'volatile' | '' =
+              this.normalizePhotoStability(info?.chatPhotoStability)
+              || this.classifyPhotoStabilityByUrl(info?.chatPhoto || '');
+            let resolvedPhotoValidated = info?.chatPhotoValidated === true;
             const phoneHint = this.extractLeadIdentity(info?.phoneNumber || lead?.phone || '');
-            if (this.isRenderablePhotoUrl(info?.chatPhoto)) {
+            const canUseInfoPhoto = this.isChatInfoPhotoCandidateUsable(
+              info?.chatPhoto,
+              info?.chatPhotoSource,
+              info?.chatPhotoStability,
+              info?.chatPhotoValidated === true
+            );
+            if (canUseInfoPhoto) {
               resolvedPhoto = String(info.chatPhoto);
               this.diagDebug('[PrinChat UI] 🔬 DIAG hydration: photo from getContactInfo');
             }
             if (!resolvedPhoto) {
               const directPhoto = await this.getChatPhotoForLead(chatId, phoneHint, lead?.phone);
               resolvedPhoto = directPhoto || '';
+              if (resolvedPhoto) {
+                resolvedPhotoSource = 'chatInfo.get_chat_photo';
+                resolvedPhotoStability = this.classifyPhotoStabilityByUrl(resolvedPhoto);
+                resolvedPhotoValidated = true;
+              }
               this.diagDebug('[PrinChat UI] 🔬 DIAG hydration: getChatPhotoForLead =', resolvedPhoto ? resolvedPhoto.substring(0, 60) + '...' : '(none)');
             }
             // Fallback: check refreshed sidebar cache
@@ -11659,14 +11676,27 @@ class WhatsAppUIOverlay {
               if (leadName) cacheKeys.push(`name:${leadName.trim().toLowerCase()}`);
               for (const key of cacheKeys) {
                 const cached = this.sidebarPhotoCache.get(key.toLowerCase());
-                if (cached && this.isRenderablePhotoUrl(cached)) {
-                  resolvedPhoto = cached;
+                const cachedStability = this.classifyPhotoStabilityByUrl(cached || '');
+                const cachedValidated = cachedStability === 'stable';
+                if (this.isChatInfoPhotoCandidateUsable(cached, 'chatInfo.sidebar', cachedStability, cachedValidated, { allowUnknownSource: true })) {
+                  resolvedPhoto = String(cached);
+                  resolvedPhotoSource = 'chatInfo.sidebar';
+                  resolvedPhotoStability = cachedStability;
+                  resolvedPhotoValidated = cachedValidated;
                   this.diagDebug('[PrinChat UI] 🔬 DIAG hydration: photo from sidebar cache, key =', key);
                   break;
                 }
               }
             }
-            if (this.isRenderablePhotoUrl(resolvedPhoto)) {
+            if (
+              this.isChatInfoPhotoCandidateUsable(
+                resolvedPhoto,
+                resolvedPhotoSource || 'chatInfo.sidebar',
+                resolvedPhotoStability || this.classifyPhotoStabilityByUrl(resolvedPhoto),
+                resolvedPhotoValidated === true,
+                { allowUnknownSource: true }
+              )
+            ) {
               updates.photo = resolvedPhoto;
             }
           }
@@ -12186,6 +12216,101 @@ class WhatsAppUIOverlay {
     return false;
   }
 
+  private normalizeTrackedPhotoUrl(value: any): string {
+    if (typeof value !== 'string') return '';
+    const src = value.trim();
+    if (!src) return '';
+    if (src.startsWith('//')) return `https:${src}`;
+    return src;
+  }
+
+  private markBrokenPhotoUrl(value: any): void {
+    const normalized = this.normalizeTrackedPhotoUrl(value);
+    if (!normalized) return;
+    this.brokenPhotoUrlSet.add(normalized);
+  }
+
+  private isBrokenPhotoUrl(value: any): boolean {
+    const normalized = this.normalizeTrackedPhotoUrl(value);
+    if (!normalized) return false;
+    return this.brokenPhotoUrlSet.has(normalized);
+  }
+
+  private normalizePhotoStability(value: any): 'stable' | 'volatile' | '' {
+    if (typeof value !== 'string') return '';
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'stable') return 'stable';
+    if (normalized === 'volatile') return 'volatile';
+    return '';
+  }
+
+  private classifyPhotoStabilityByUrl(value: any): 'stable' | 'volatile' {
+    if (typeof value !== 'string') return 'volatile';
+    const src = value.trim();
+    if (!src) return 'volatile';
+
+    if (src.startsWith('blob:') || /^data:image\//i.test(src)) {
+      return 'stable';
+    }
+
+    try {
+      const parsed = new URL(src.startsWith('//') ? `https:${src}` : src, window.location.origin);
+      const host = parsed.hostname.toLowerCase();
+      const full = `${parsed.pathname.toLowerCase()}${parsed.search.toLowerCase()}`;
+
+      if (host.includes('pps.whatsapp.net')) return 'stable';
+      if (host.includes('media-for') && host.includes('cdn.whatsapp.net')) return 'volatile';
+      if (host.includes('cdn.whatsapp.net')) return 'volatile';
+      if (host.includes('mmg.whatsapp.net')) return 'volatile';
+      if (full.includes('/o1/v/t24') || full.includes('__wa-mms') || full.includes('/dl2') || full.includes('/dl3')) {
+        return 'volatile';
+      }
+    } catch (_error) {
+      return 'volatile';
+    }
+
+    return 'volatile';
+  }
+
+  private isChatInfoPhotoCandidateUsable(
+    photo: any,
+    source?: any,
+    stability?: any,
+    validated?: boolean,
+    options: { allowUnknownSource?: boolean } = {}
+  ): boolean {
+    if (!this.isRenderablePhotoUrl(photo)) return false;
+    if (this.isBrokenPhotoUrl(photo)) return false;
+
+    const normalizedSource = typeof source === 'string' ? source : '';
+    const sourceTrusted = this.isTrustedChatInfoPhotoSource(normalizedSource);
+    if (!sourceTrusted && !options.allowUnknownSource) return false;
+
+    const normalizedStability = this.normalizePhotoStability(stability)
+      || this.classifyPhotoStabilityByUrl(photo);
+    if (normalizedStability === 'volatile') {
+      return validated === true;
+    }
+
+    return true;
+  }
+
+  private shouldHydrateLeadPhoto(
+    photo: any,
+    options: { stability?: any; validated?: boolean } = {}
+  ): boolean {
+    if (!this.isRenderablePhotoUrl(photo)) return true;
+    if (this.isBrokenPhotoUrl(photo)) return true;
+
+    const normalizedStability = this.normalizePhotoStability(options.stability)
+      || this.classifyPhotoStabilityByUrl(photo);
+    if (normalizedStability === 'volatile') {
+      return options.validated !== true;
+    }
+
+    return false;
+  }
+
   private getCardLeadName(card: HTMLElement, fallbackName: string = 'Desconhecido'): string {
     const currentName = (card.querySelector('.princhat-kanban-lead-name')?.textContent || '').trim();
     return currentName || fallbackName;
@@ -12211,6 +12336,10 @@ class WhatsAppUIOverlay {
     img.addEventListener('error', () => {
       const card = img.closest('.princhat-kanban-lead-card') as HTMLElement | null;
       if (!card) return;
+      const failingSrc = (img.currentSrc || img.src || img.getAttribute('src') || '').trim();
+      if (failingSrc) {
+        this.markBrokenPhotoUrl(failingSrc);
+      }
       const fallbackName = (img.alt || '').trim() || this.getCardLeadName(card, 'U');
       this.renderCardPhotoPlaceholder(card, fallbackName);
     });
@@ -12231,8 +12360,9 @@ class WhatsAppUIOverlay {
     const existingSrcBeforeUpdate = existingImgBeforeUpdate
       ? (existingImgBeforeUpdate.currentSrc || existingImgBeforeUpdate.src || existingImgBeforeUpdate.getAttribute('src') || '').trim()
       : '';
-    const hasRenderablePhotoElementBeforeUpdate = this.isRenderablePhotoUrl(existingSrcBeforeUpdate);
-    if (!this.isRenderablePhotoUrl(photo)) {
+    const hasRenderablePhotoElementBeforeUpdate =
+      this.isRenderablePhotoUrl(existingSrcBeforeUpdate) && !this.isBrokenPhotoUrl(existingSrcBeforeUpdate);
+    if (!this.isRenderablePhotoUrl(photo) || this.isBrokenPhotoUrl(photo)) {
       if (!(preserveExistingUsablePhoto && (hasUsablePhotoBeforeUpdate || hasRenderablePhotoElementBeforeUpdate))) {
         this.renderCardPhotoPlaceholder(card, fallbackName);
       }
@@ -12275,7 +12405,7 @@ class WhatsAppUIOverlay {
 
     this.bindCardPhotoErrorFallback(img);
     const currentSrc = (img.currentSrc || img.src || img.getAttribute('src') || '').trim();
-    if (!this.isRenderablePhotoUrl(currentSrc)) {
+    if (!this.isRenderablePhotoUrl(currentSrc) || this.isBrokenPhotoUrl(currentSrc)) {
       this.renderCardPhotoPlaceholder(card, img.alt || undefined);
       return false;
     }
@@ -12293,6 +12423,11 @@ class WhatsAppUIOverlay {
       const img = card.querySelector('.princhat-kanban-lead-photo img') as HTMLImageElement | null;
       if (!img) return;
       this.bindCardPhotoErrorFallback(img);
+      const currentSrc = (img.currentSrc || img.src || img.getAttribute('src') || '').trim();
+      if (this.isBrokenPhotoUrl(currentSrc)) {
+        this.renderCardPhotoPlaceholder(card, img.alt || undefined);
+        return;
+      }
       if (img.complete && img.naturalWidth <= 0) {
         this.renderCardPhotoPlaceholder(card, img.alt || undefined);
       }
@@ -12352,8 +12487,16 @@ class WhatsAppUIOverlay {
 
     if (normalized === 'chatinfo.local') return true;
     if (normalized === 'chatinfo.profilepicthumb.find') return true;
+    if (normalized === 'chatinfo.profilepicthumb.find.genurl') return true;
+    if (normalized === 'chatinfo.profilepicthumb.find.geturl') return true;
     if (normalized === 'chatinfo.profilepicthumb.get') return true;
+    if (normalized === 'chatinfo.profilepicthumb.get.genurl') return true;
+    if (normalized === 'chatinfo.profilepicthumb.get.geturl') return true;
     if (normalized === 'chatinfo.wpp') return true;
+    if (normalized === 'chatinfo.wpp_whatsapp_pptstore') return true;
+    if (normalized === 'chatinfo.wpp_whatsapp_profilepicfind') return true;
+    if (normalized === 'chatinfo.store') return true;
+    if (normalized === 'chatinfo.get_chat_photo') return true;
     if (normalized === 'chatinfo.phone_fallback') return true;
     if (normalized === 'chatinfo.sidebar') return true;
     if (normalized === 'chatinfo.dom.header') return true;
@@ -12861,7 +13004,7 @@ class WhatsAppUIOverlay {
         if (!chatId) return;
 
         let currentLead = { ...lead, chatId };
-        const requiresPhotoHydration = !this.isRenderablePhotoUrl(currentLead.photo);
+        const requiresPhotoHydration = this.shouldHydrateLeadPhoto(currentLead.photo);
         const requiresTagHydration = !Array.isArray(currentLead.tags) || currentLead.tags.length === 0;
         const maxAttempts = requiresPhotoHydration
           ? RETRY_DELAYS_MS.length
@@ -12880,17 +13023,36 @@ class WhatsAppUIOverlay {
             const phoneHint = this.extractLeadIdentity(info.phoneNumber || currentLead?.phone || '');
 
             let resolvedPhoto = '';
-            if (this.isRenderablePhotoUrl(info.chatPhoto)) {
+            let resolvedPhotoSource = info.chatPhotoSource || '';
+            let resolvedPhotoStability: 'stable' | 'volatile' | '' =
+              this.normalizePhotoStability(info.chatPhotoStability)
+              || this.classifyPhotoStabilityByUrl(info.chatPhoto || '');
+            let resolvedPhotoValidated = info.chatPhotoValidated === true;
+            const canUseInfoPhoto = this.isChatInfoPhotoCandidateUsable(
+              info.chatPhoto,
+              info.chatPhotoSource,
+              info.chatPhotoStability,
+              info.chatPhotoValidated === true
+            );
+            if (canUseInfoPhoto) {
               resolvedPhoto = String(info.chatPhoto);
-            } else if (this.isRenderablePhotoUrl(currentLead.photo)) {
+            } else if (this.isRenderablePhotoUrl(currentLead.photo) && !this.shouldHydrateLeadPhoto(currentLead.photo)) {
               resolvedPhoto = currentLead.photo;
+              resolvedPhotoSource = 'chatInfo.persisted';
+              resolvedPhotoStability = this.classifyPhotoStabilityByUrl(currentLead.photo || '');
+              resolvedPhotoValidated = resolvedPhotoStability === 'stable';
             } else {
               const directPhoto = await this.getChatPhotoForLead(chatId, phoneHint, currentLead?.phone);
               resolvedPhoto = directPhoto || '';
+              if (resolvedPhoto) {
+                resolvedPhotoSource = 'chatInfo.get_chat_photo';
+                resolvedPhotoStability = this.classifyPhotoStabilityByUrl(resolvedPhoto);
+                resolvedPhotoValidated = true;
+              }
             }
 
             // Fallback: check sidebar cache by name when Store/WPP/sidebar-scraping all fail
-            if (!this.isRenderablePhotoUrl(resolvedPhoto)) {
+            if (!this.isRenderablePhotoUrl(resolvedPhoto) || this.isBrokenPhotoUrl(resolvedPhoto)) {
               const cacheKeys = this.buildLeadChatVariants(chatId);
               const leadIdentity = this.extractLeadIdentity(chatId);
               if (leadIdentity) cacheKeys.push(leadIdentity);
@@ -12900,8 +13062,13 @@ class WhatsAppUIOverlay {
               if (leadName) cacheKeys.push(`name:${leadName.toLowerCase()}`);
               for (const key of cacheKeys) {
                 const cached = this.sidebarPhotoCache.get(key.toLowerCase());
-                if (cached && this.isRenderablePhotoUrl(cached)) {
-                  resolvedPhoto = cached;
+                const cachedStability = this.classifyPhotoStabilityByUrl(cached || '');
+                const cachedValidated = cachedStability === 'stable';
+                if (this.isChatInfoPhotoCandidateUsable(cached, 'chatInfo.sidebar', cachedStability, cachedValidated, { allowUnknownSource: true })) {
+                  resolvedPhoto = String(cached);
+                  resolvedPhotoSource = 'chatInfo.sidebar';
+                  resolvedPhotoStability = cachedStability;
+                  resolvedPhotoValidated = cachedValidated;
                   console.log('[PrinChat UI] 💧 hydration: photo from sidebar cache, key =', key);
                   break;
                 }
@@ -12925,7 +13092,16 @@ class WhatsAppUIOverlay {
               updates.phone = phoneHint;
             }
 
-            if (this.isRenderablePhotoUrl(resolvedPhoto) && resolvedPhoto !== currentLead.photo) {
+            if (
+              this.isChatInfoPhotoCandidateUsable(
+                resolvedPhoto,
+                resolvedPhotoSource || 'chatInfo.sidebar',
+                resolvedPhotoStability || this.classifyPhotoStabilityByUrl(resolvedPhoto),
+                resolvedPhotoValidated === true,
+                { allowUnknownSource: true }
+              )
+              && resolvedPhoto !== currentLead.photo
+            ) {
               updates.photo = resolvedPhoto;
             }
 
@@ -12987,7 +13163,7 @@ class WhatsAppUIOverlay {
               }
             }
 
-            const hasPhotoNow = this.isRenderablePhotoUrl(currentLead.photo);
+            const hasPhotoNow = this.isRenderablePhotoUrl(currentLead.photo) && !this.shouldHydrateLeadPhoto(currentLead.photo);
             const hasTagsNow = Array.isArray(currentLead.tags) && currentLead.tags.length > 0;
             const canStopByPhoto = !requiresPhotoHydration || hasPhotoNow;
             const canStopByTags = !requiresTagHydration || hasTagsNow;
@@ -13110,25 +13286,63 @@ class WhatsAppUIOverlay {
   /**
    * Get contact info for a specific chat (used for Kanban hydration)
    */
-  private async getContactInfo(chatId: string): Promise<{ chatName?: string, chatPhoto?: string, labels?: any[], phoneNumber?: string }> {
+  private async getContactInfo(chatId: string): Promise<{
+    chatName?: string,
+    chatPhoto?: string,
+    chatPhotoSource?: string,
+    chatPhotoValidated?: boolean,
+    chatPhotoStability?: 'stable' | 'volatile' | '',
+    chatPhotoCheckedAt?: number,
+    labels?: any[],
+    phoneNumber?: string
+  }> {
     try {
       const response = await this.requestFromContentScript({
         type: 'GET_CHAT_INFO',
         payload: { chatId }
       }, 15000);
 
-      let chatPhoto = response?.data?.chatPhoto;
-      const chatPhotoSource = response?.data?.chatPhotoSource || response?.data?.photoSource;
-      const phoneNumber = response?.data?.phoneNumber;
-      if (!this.isRenderablePhotoUrl(chatPhoto) || !this.isTrustedChatInfoPhotoSource(chatPhotoSource)) {
-        chatPhoto = await this.getChatPhotoForLead(chatId, phoneNumber);
+      const data = response?.data || {};
+      const phoneNumber = data?.phoneNumber;
+      let chatPhoto = data?.chatPhoto;
+      let chatPhotoSource = data?.chatPhotoSource || data?.photoSource;
+      let chatPhotoStability: 'stable' | 'volatile' | '' =
+        this.normalizePhotoStability(data?.chatPhotoStability)
+        || this.classifyPhotoStabilityByUrl(chatPhoto || '');
+      let chatPhotoValidated = data?.chatPhotoValidated === true;
+      let chatPhotoCheckedAt = typeof data?.chatPhotoCheckedAt === 'number'
+        ? data.chatPhotoCheckedAt
+        : undefined;
+
+      const canUsePrimaryPhoto = this.isChatInfoPhotoCandidateUsable(
+        chatPhoto,
+        chatPhotoSource,
+        chatPhotoStability,
+        chatPhotoValidated
+      );
+
+      if (!canUsePrimaryPhoto) {
+        const fallbackPhoto = await this.getChatPhotoForLead(chatId, phoneNumber);
+        if (this.isRenderablePhotoUrl(fallbackPhoto) && !this.isBrokenPhotoUrl(fallbackPhoto)) {
+          chatPhoto = fallbackPhoto;
+          chatPhotoSource = 'chatInfo.get_chat_photo';
+          chatPhotoStability = this.classifyPhotoStabilityByUrl(fallbackPhoto || '');
+          chatPhotoValidated = true;
+          chatPhotoCheckedAt = Date.now();
+        } else {
+          chatPhoto = undefined;
+        }
       }
 
       return {
-        chatName: response?.data?.chatName || response?.data?.name,
+        chatName: data?.chatName || data?.name,
         chatPhoto,
-        labels: response?.data?.labels || [],
-        phoneNumber
+        chatPhotoSource,
+        chatPhotoValidated,
+        chatPhotoStability,
+        chatPhotoCheckedAt,
+        labels: data?.labels || [],
+        phoneNumber,
       };
     } catch (error) {
       console.error('[PrinChat UI] Error fetching contact info:', error);
@@ -13164,10 +13378,32 @@ class WhatsAppUIOverlay {
         }, 12000);
         const responseData = response?.data;
         const photo = typeof responseData === 'string' ? responseData : responseData?.chatPhoto;
-        // GET_CHAT_PHOTO is a dedicated photo endpoint that already applies
-        // its own resolution strategies (Store, WPP API, sidebar, phone fallback).
-        // No need to re-check isTrustedChatInfoPhotoSource here.
-        if (this.isRenderablePhotoUrl(photo)) {
+        const source = typeof responseData === 'string'
+          ? 'chatInfo.get_chat_photo'
+          : (responseData?.chatPhotoSource || responseData?.photoSource);
+        const stability = typeof responseData === 'string'
+          ? this.classifyPhotoStabilityByUrl(photo || '')
+          : responseData?.chatPhotoStability;
+        const validated = typeof responseData === 'string'
+          ? (this.classifyPhotoStabilityByUrl(photo || '') === 'stable')
+          : (responseData?.chatPhotoValidated === true);
+        const hasMetadata =
+          !!(responseData && typeof responseData === 'object' && (
+            Object.prototype.hasOwnProperty.call(responseData, 'chatPhotoSource')
+            || Object.prototype.hasOwnProperty.call(responseData, 'photoSource')
+            || Object.prototype.hasOwnProperty.call(responseData, 'chatPhotoStability')
+            || Object.prototype.hasOwnProperty.call(responseData, 'chatPhotoValidated')
+          ));
+
+        const canUseCandidate = hasMetadata
+          ? this.isChatInfoPhotoCandidateUsable(photo, source, stability, validated, { allowUnknownSource: true })
+          : (
+            this.isRenderablePhotoUrl(photo)
+            && !this.isBrokenPhotoUrl(photo)
+            && this.classifyPhotoStabilityByUrl(photo || '') === 'stable'
+          );
+
+        if (canUseCandidate) {
           return photo;
         }
       } catch (_error) {
@@ -13256,7 +13492,7 @@ class WhatsAppUIOverlay {
       const safeMessage = this.escapeHtml(lead.lastMessage || '');
       const safeId = this.escapeHtml(lead.id || lead.leadId || '');
       const safeChatId = this.escapeHtml(this.resolveLeadChatId(lead));
-      const resolvedPhoto = this.isRenderablePhotoUrl(lead.photo)
+      const resolvedPhoto = this.isRenderablePhotoUrl(lead.photo) && !this.isBrokenPhotoUrl(lead.photo)
         ? lead.photo
         : '';
 

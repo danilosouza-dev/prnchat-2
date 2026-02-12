@@ -523,6 +523,372 @@
     return undefined;
   };
 
+  type ChatPhotoStability = 'stable' | 'volatile';
+  type ChatPhotoCandidate = { url: string; source: string };
+  type ResolvedChatPhotoMeta = {
+    chatPhoto?: string;
+    chatPhotoSource?: string;
+    chatPhotoValidated: boolean;
+    chatPhotoStability?: ChatPhotoStability;
+    chatPhotoCheckedAt: number;
+  };
+
+  const PHOTO_PROBE_TIMEOUT_MS = 1500;
+  const PHOTO_PROBE_SUCCESS_TTL_MS = 30 * 60 * 1000;
+  const PHOTO_PROBE_FAILURE_TTL_MS = 5 * 60 * 1000;
+  const PHOTO_PROBE_MAX_CONCURRENCY = 3;
+  const PHOTO_LOG_DEDUPE_TTL_MS = 8000;
+
+  const photoProbeCache = new Map<string, { ok: boolean; checkedAt: number; expiresAt: number }>();
+  const inFlightPhotoProbes = new Map<string, Promise<{ ok: boolean; checkedAt: number }>>();
+  const photoProbeWaitQueue: Array<() => void> = [];
+  const photoLogDedupeCache = new Map<string, number>();
+  let activePhotoProbeCount = 0;
+
+  const normalizePhotoSourceLabel = (value: any): string => {
+    if (typeof value !== 'string') return 'unknown';
+    const normalized = value.trim();
+    return normalized || 'unknown';
+  };
+
+  const classifyChatPhotoStability = (value: string): ChatPhotoStability => {
+    const src = String(value || '').trim();
+    if (!src) return 'volatile';
+
+    if (src.startsWith('blob:') || /^data:image\//i.test(src)) {
+      return 'stable';
+    }
+
+    let parsed: URL | null = null;
+    try {
+      parsed = new URL(src.startsWith('//') ? `https:${src}` : src, window.location.origin);
+    } catch (_error) {
+      return 'volatile';
+    }
+
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    const full = `${path}${parsed.search.toLowerCase()}`;
+
+    if (host.includes('pps.whatsapp.net')) {
+      return 'stable';
+    }
+
+    if (host.includes('media-for') && host.includes('cdn.whatsapp.net')) {
+      return 'volatile';
+    }
+
+    if (host.includes('cdn.whatsapp.net')) {
+      return 'volatile';
+    }
+
+    if (host.includes('mmg.whatsapp.net')) {
+      return 'volatile';
+    }
+
+    if (full.includes('/o1/v/t24') || full.includes('__wa-mms') || full.includes('/dl2') || full.includes('/dl3')) {
+      return 'volatile';
+    }
+
+    return 'volatile';
+  };
+
+  const logPhotoDecisionDedup = (entry: {
+    phase: string;
+    chatId: string;
+    url: string;
+    source: string;
+    stability: ChatPhotoStability;
+    validated: boolean;
+    accepted: boolean;
+    reason: string;
+  }): void => {
+    const key = `${entry.chatId}::${entry.phase}::${entry.url}::${entry.reason}`;
+    const now = Date.now();
+    const lastLogAt = photoLogDedupeCache.get(key) || 0;
+    if (now - lastLogAt < PHOTO_LOG_DEDUPE_TTL_MS) {
+      return;
+    }
+    photoLogDedupeCache.set(key, now);
+    console.log('[PrinChat Page] 📸 Photo decision', {
+      chatId: entry.chatId,
+      phase: entry.phase,
+      source: entry.source,
+      stability: entry.stability,
+      validated: entry.validated,
+      accepted: entry.accepted,
+      reason: entry.reason,
+    });
+  };
+
+  const acquirePhotoProbeSlot = async (): Promise<void> => {
+    if (activePhotoProbeCount < PHOTO_PROBE_MAX_CONCURRENCY) {
+      activePhotoProbeCount += 1;
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      photoProbeWaitQueue.push(() => {
+        activePhotoProbeCount += 1;
+        resolve();
+      });
+    });
+  };
+
+  const releasePhotoProbeSlot = (): void => {
+    activePhotoProbeCount = Math.max(0, activePhotoProbeCount - 1);
+    const next = photoProbeWaitQueue.shift();
+    if (next) next();
+  };
+
+  const probeChatPhotoUrl = async (url: string): Promise<{ ok: boolean; checkedAt: number }> => {
+    const normalized = normalizeImageSourceCandidate(url);
+    const checkedAtNow = Date.now();
+    if (!normalized) {
+      return { ok: false, checkedAt: checkedAtNow };
+    }
+
+    if (normalized.startsWith('blob:') || /^data:image\//i.test(normalized)) {
+      return { ok: true, checkedAt: checkedAtNow };
+    }
+
+    const cached = photoProbeCache.get(normalized);
+    if (cached && cached.expiresAt > checkedAtNow) {
+      return { ok: cached.ok, checkedAt: cached.checkedAt };
+    }
+
+    const inFlight = inFlightPhotoProbes.get(normalized);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const task = (async (): Promise<{ ok: boolean; checkedAt: number }> => {
+      await acquirePhotoProbeSlot();
+      try {
+        const ok = await new Promise<boolean>((resolve) => {
+          let settled = false;
+          const img = new Image();
+          let timeoutHandle: number | null = null;
+
+          const finalize = (result: boolean) => {
+            if (settled) return;
+            settled = true;
+            if (timeoutHandle !== null) {
+              window.clearTimeout(timeoutHandle);
+            }
+            img.onload = null;
+            img.onerror = null;
+            resolve(result);
+          };
+
+          img.onload = () => finalize(true);
+          img.onerror = () => finalize(false);
+          timeoutHandle = window.setTimeout(() => finalize(false), PHOTO_PROBE_TIMEOUT_MS);
+
+          try {
+            img.src = normalized;
+          } catch (_error) {
+            finalize(false);
+          }
+        });
+
+        const checkedAt = Date.now();
+        photoProbeCache.set(normalized, {
+          ok,
+          checkedAt,
+          expiresAt: checkedAt + (ok ? PHOTO_PROBE_SUCCESS_TTL_MS : PHOTO_PROBE_FAILURE_TTL_MS),
+        });
+        return { ok, checkedAt };
+      } finally {
+        inFlightPhotoProbes.delete(normalized);
+        releasePhotoProbeSlot();
+      }
+    })();
+
+    inFlightPhotoProbes.set(normalized, task);
+    return task;
+  };
+
+  const pushChatPhotoCandidate = (
+    list: ChatPhotoCandidate[],
+    seenUrls: Set<string>,
+    url: any,
+    source: string
+  ): void => {
+    const normalizedUrl = normalizeImageSourceCandidate(url);
+    if (!normalizedUrl) return;
+
+    if (seenUrls.has(normalizedUrl)) return;
+    seenUrls.add(normalizedUrl);
+    list.push({
+      url: normalizedUrl,
+      source: normalizePhotoSourceLabel(source),
+    });
+  };
+
+  const resolveBestChatPhotoCandidate = async (
+    candidates: ChatPhotoCandidate[],
+    options: { chatId: string; phase: string }
+  ): Promise<ResolvedChatPhotoMeta> => {
+    const chatId = normalizeChatIdWithDomain(options.chatId) || sanitizeScopedChatId(options.chatId) || options.chatId;
+    const prepared = candidates
+      .map((candidate) => ({
+        url: normalizeImageSourceCandidate(candidate.url) || '',
+        source: normalizePhotoSourceLabel(candidate.source),
+      }))
+      .filter((candidate) => !!candidate.url);
+
+    const checkedAtNow = Date.now();
+    if (prepared.length === 0) {
+      return {
+        chatPhotoValidated: false,
+        chatPhotoCheckedAt: checkedAtNow,
+      };
+    }
+
+    // First pass: stable URLs are preferred and accepted without probe.
+    for (const candidate of prepared) {
+      const stability = classifyChatPhotoStability(candidate.url);
+      if (stability !== 'stable') continue;
+
+      const cached = photoProbeCache.get(candidate.url);
+      const hasFreshNegativeCache = !!(cached && cached.expiresAt > checkedAtNow && !cached.ok);
+      if (hasFreshNegativeCache) {
+        logPhotoDecisionDedup({
+          phase: options.phase,
+          chatId,
+          url: candidate.url,
+          source: candidate.source,
+          stability,
+          validated: false,
+          accepted: false,
+          reason: 'stable_cached_fail',
+        });
+        continue;
+      }
+
+      const validated = !!(cached && cached.expiresAt > checkedAtNow && cached.ok);
+      const checkedAt = cached?.checkedAt || checkedAtNow;
+      logPhotoDecisionDedup({
+        phase: options.phase,
+        chatId,
+        url: candidate.url,
+        source: candidate.source,
+        stability,
+        validated,
+        accepted: true,
+        reason: 'stable_preferred',
+      });
+      return {
+        chatPhoto: candidate.url,
+        chatPhotoSource: candidate.source,
+        chatPhotoValidated: validated,
+        chatPhotoStability: stability,
+        chatPhotoCheckedAt: checkedAt,
+      };
+    }
+
+    // Second pass: volatile URLs are accepted only after successful probe.
+    for (const candidate of prepared) {
+      const stability = classifyChatPhotoStability(candidate.url);
+      if (stability !== 'volatile') continue;
+
+      const probe = await probeChatPhotoUrl(candidate.url);
+      const accepted = probe.ok;
+      logPhotoDecisionDedup({
+        phase: options.phase,
+        chatId,
+        url: candidate.url,
+        source: candidate.source,
+        stability,
+        validated: probe.ok,
+        accepted,
+        reason: accepted ? 'volatile_probe_success' : 'volatile_probe_fail',
+      });
+      if (!accepted) continue;
+
+      return {
+        chatPhoto: candidate.url,
+        chatPhotoSource: candidate.source,
+        chatPhotoValidated: true,
+        chatPhotoStability: stability,
+        chatPhotoCheckedAt: probe.checkedAt,
+      };
+    }
+
+    return {
+      chatPhotoValidated: false,
+      chatPhotoCheckedAt: Date.now(),
+    };
+  };
+
+  const resolveChatPhotoWithMetadata = async (options: {
+    phase: string;
+    chatId: string;
+    canonicalChatId?: string;
+    chatName?: string;
+    contact?: any;
+    chat?: any;
+    preferredPhoto?: string;
+    preferredPhotoSource?: string;
+    phoneNumber?: string;
+    phoneFallbackProvider?: (phone: string) => Promise<string | undefined>;
+  }): Promise<ResolvedChatPhotoMeta> => {
+    const baseChatId = options.canonicalChatId || options.chatId;
+    const normalizedBaseChatId = normalizeChatIdWithDomain(baseChatId) || sanitizeScopedChatId(baseChatId);
+    const normalizedChatId = normalizedBaseChatId || sanitizeScopedChatId(options.chatId);
+    const candidateChatId = normalizedChatId || sanitizeScopedChatId(options.chatId);
+    if (!candidateChatId) {
+      return {
+        chatPhotoValidated: false,
+        chatPhotoCheckedAt: Date.now(),
+      };
+    }
+
+    const candidates: ChatPhotoCandidate[] = [];
+    const seenUrls = new Set<string>();
+
+    pushChatPhotoCandidate(candidates, seenUrls, options.preferredPhoto, options.preferredPhotoSource || 'chatInfo.local');
+    pushChatPhotoCandidate(candidates, seenUrls, extractPhotoUrl(options.contact), 'chatInfo.local');
+    pushChatPhotoCandidate(candidates, seenUrls, extractPhotoUrl(options.chat), 'chatInfo.local');
+    pushChatPhotoCandidate(candidates, seenUrls, extractPhotoUrl(options.chat?.contact), 'chatInfo.local');
+
+    const sidebarPhoto =
+      findSidebarPhotoByChat(candidateChatId, options.chatName)
+      || findSidebarPhotoByChat(options.chatId, options.chatName);
+    pushChatPhotoCandidate(candidates, seenUrls, sidebarPhoto, 'chatInfo.sidebar');
+
+    let resolved = await resolveBestChatPhotoCandidate(candidates, {
+      chatId: candidateChatId,
+      phase: options.phase,
+    });
+    if (resolved.chatPhoto) {
+      return resolved;
+    }
+
+    const lookupIds = collectChatLookupIds(
+      candidateChatId,
+      options.chat,
+      options.contact,
+      ...buildChatIdLookupVariants(candidateChatId)
+    );
+    if (lookupIds.length > 0) {
+      const wppPhoto = await fetchWppProfilePhotoByIds(lookupIds);
+      pushChatPhotoCandidate(candidates, seenUrls, wppPhoto, 'chatInfo.wpp');
+    }
+
+    if (options.phoneFallbackProvider && options.phoneNumber) {
+      const phonePhoto = await options.phoneFallbackProvider(options.phoneNumber);
+      pushChatPhotoCandidate(candidates, seenUrls, phonePhoto, 'chatInfo.phone_fallback');
+    }
+
+    resolved = await resolveBestChatPhotoCandidate(candidates, {
+      chatId: candidateChatId,
+      phase: options.phase,
+    });
+    return resolved;
+  };
+
   const findImageInElement = (element: Element | null): string | undefined => {
     if (!element) return undefined;
 
@@ -2507,6 +2873,21 @@
               fallbackPhotoSource = 'chatInfo.phone_fallback';
             }
           }
+
+          const fallbackPhotoResolution = await resolveChatPhotoWithMetadata({
+            phase: 'fallback',
+            chatId,
+            canonicalChatId: resolvedChatId || chatId,
+            preferredPhoto: fallbackPhoto,
+            preferredPhotoSource: fallbackPhotoSource,
+            phoneNumber: fallbackPhoneNumber,
+            phoneFallbackProvider: tryPhoneBasedPhotoFallback,
+          });
+          fallbackPhoto = fallbackPhotoResolution.chatPhoto || '';
+          fallbackPhotoSource = fallbackPhoto
+            ? (fallbackPhotoResolution.chatPhotoSource || fallbackPhotoSource || 'unknown')
+            : 'not_found';
+
           // Retorna sucesso parcial para não quebrar a UI
           document.dispatchEvent(new CustomEvent('PrinChatChatInfoResult', {
             detail: {
@@ -2514,6 +2895,10 @@
               chatName: getCanonicalChatIdentity(chatId) || chatId,
               chatId: normalizeChatIdWithDomain(resolvedChatId || chatId) || (resolvedChatId || chatId),
               chatPhoto: fallbackPhoto || undefined,
+              chatPhotoSource: fallbackPhoto ? fallbackPhotoSource : undefined,
+              chatPhotoValidated: fallbackPhotoResolution.chatPhotoValidated === true,
+              chatPhotoStability: fallbackPhotoResolution.chatPhotoStability,
+              chatPhotoCheckedAt: fallbackPhotoResolution.chatPhotoCheckedAt,
               photoSource: fallbackPhotoSource,
               phoneNumber: fallbackPhoneNumber || getCanonicalChatIdentity(chatId) || chatId,
               isFallback: true,
@@ -2580,6 +2965,9 @@
         // Get profile picture URL
         let chatPhoto: string | undefined = undefined;
         let photoSource: string = '';
+        let chatPhotoValidated = false;
+        let chatPhotoStability: ChatPhotoStability | undefined;
+        let chatPhotoCheckedAt = Date.now();
         try {
 
 
@@ -2889,6 +3277,26 @@
           }
         }
 
+        const resolvedPhotoMeta = await resolveChatPhotoWithMetadata({
+          phase: 'rehydrate',
+          chatId,
+          canonicalChatId: resolvedChatId || chatId,
+          chatName,
+          contact,
+          chat,
+          preferredPhoto: chatPhoto,
+          preferredPhotoSource: photoSource || 'chatInfo.local',
+          phoneNumber: resolvedPhoneNumberForLookup,
+          phoneFallbackProvider: tryPhoneBasedPhotoFallback,
+        });
+        chatPhoto = resolvedPhotoMeta.chatPhoto;
+        photoSource = chatPhoto
+          ? (resolvedPhotoMeta.chatPhotoSource || photoSource || 'unknown')
+          : 'not_found';
+        chatPhotoValidated = resolvedPhotoMeta.chatPhotoValidated === true;
+        chatPhotoStability = resolvedPhotoMeta.chatPhotoStability;
+        chatPhotoCheckedAt = resolvedPhotoMeta.chatPhotoCheckedAt;
+
         // Final Name Fallback: DOM Scraping
         // Only if we are on the active chat (same reason as photo)
         const activeChatModelName =
@@ -3097,6 +3505,10 @@
             chatName,
             chatId: normalizeChatIdWithDomain(resolvedChatId || chatId) || (resolvedChatId || chatId),
             chatPhoto,
+            chatPhotoSource: chatPhoto ? photoSource || 'unknown' : undefined,
+            chatPhotoValidated: chatPhotoValidated === true,
+            chatPhotoStability,
+            chatPhotoCheckedAt,
             photoSource: chatPhoto ? photoSource || 'unknown' : 'not_found',
             phoneNumber,
             requestId,
@@ -4086,13 +4498,17 @@
           const phoneChatId = `${phoneIdentity}@c.us`;
           let phonePhoto = '';
 
-          if (!phonePhoto && (window as any).WPP?.contact?.getProfilePictureUrl) {
+          if (!phonePhoto) {
             const phoneVariants = buildChatIdLookupVariants(phoneChatId);
             const lookupIds = collectChatLookupIds(phoneChatId, phoneIdentity, ...phoneVariants);
             const fetchedByPhone = await fetchWppProfilePhotoByIds(lookupIds);
             if (fetchedByPhone) {
               phonePhoto = fetchedByPhone;
             }
+          }
+
+          if (!phonePhoto) {
+            phonePhoto = findSidebarPhotoByChat(phoneChatId) || '';
           }
 
           return phonePhoto || '';
@@ -4147,54 +4563,55 @@
           if (chat) {
             const displayName = chat.contact?.pushname || chat.name || chat.formattedTitle || '';
             const phoneNumber = resolveChatPhoneNumber(chat, chatId);
-            let chatPhoto = extractPhotoUrl(chat?.contact) || extractPhotoUrl(chat) || '';
-            let chatPhotoSource = chatPhoto ? 'chatinfo.store' : '';
-            if (!chatPhoto && (window as any).WPP?.contact?.getProfilePictureUrl) {
-              const lookupIds = collectChatLookupIds(chatId, chat, chat?.contact, ...lookupVariants);
-              const fetched = await fetchWppProfilePhotoByIds(lookupIds);
-              if (fetched) {
-                chatPhoto = fetched;
-                chatPhotoSource = 'chatinfo.wpp';
-              }
-            }
-            if (!chatPhoto) {
-              chatPhoto = findSidebarPhotoByChat(chatId, displayName) || '';
-              if (chatPhoto) chatPhotoSource = 'chatinfo.sidebar';
-            }
-            if (!chatPhoto) {
-              chatPhoto = await tryPhonePhotoFallback(phoneNumber);
-              if (chatPhoto) chatPhotoSource = 'chatinfo.phone_fallback';
-            }
+            const preferredPhoto = extractPhotoUrl(chat?.contact) || extractPhotoUrl(chat) || '';
+            const photoMeta = await resolveChatPhotoWithMetadata({
+              phase: 'ui_get_chat_photo',
+              chatId,
+              canonicalChatId: extractSerializedChatId(chat) || chatId,
+              chatName: displayName,
+              contact: chat?.contact,
+              chat,
+              preferredPhoto,
+              preferredPhotoSource: preferredPhoto ? 'chatInfo.store' : 'not_found',
+              phoneNumber,
+              phoneFallbackProvider: tryPhonePhotoFallback,
+            });
             response = {
               success: true,
               data: {
-                chatPhoto: chatPhoto || undefined,
-                chatPhotoSource: chatPhoto ? chatPhotoSource : undefined
+                chatPhoto: photoMeta.chatPhoto || undefined,
+                chatPhotoSource: photoMeta.chatPhoto ? (photoMeta.chatPhotoSource || 'unknown') : undefined,
+                chatPhotoValidated: photoMeta.chatPhotoValidated === true,
+                chatPhotoStability: photoMeta.chatPhotoStability,
+                chatPhotoCheckedAt: photoMeta.chatPhotoCheckedAt,
+                photoSource: photoMeta.chatPhoto ? (photoMeta.chatPhotoSource || 'unknown') : 'not_found',
               }
             };
           } else {
-            const sidebarPhoto = findSidebarPhotoByChat(chatId);
-            if (sidebarPhoto) {
+            const phoneNumber = getCanonicalChatIdentity(chatId) || chatId;
+            const photoMeta = await resolveChatPhotoWithMetadata({
+              phase: 'ui_get_chat_photo',
+              chatId,
+              canonicalChatId: chatId,
+              preferredPhoto: findSidebarPhotoByChat(chatId),
+              preferredPhotoSource: 'chatInfo.sidebar',
+              phoneNumber,
+              phoneFallbackProvider: tryPhonePhotoFallback,
+            });
+            if (photoMeta.chatPhoto) {
               response = {
                 success: true,
                 data: {
-                  chatPhoto: sidebarPhoto,
-                  chatPhotoSource: 'chatinfo.sidebar'
+                  chatPhoto: photoMeta.chatPhoto,
+                  chatPhotoSource: photoMeta.chatPhotoSource || 'unknown',
+                  chatPhotoValidated: photoMeta.chatPhotoValidated === true,
+                  chatPhotoStability: photoMeta.chatPhotoStability,
+                  chatPhotoCheckedAt: photoMeta.chatPhotoCheckedAt,
+                  photoSource: photoMeta.chatPhotoSource || 'unknown',
                 }
               };
             } else {
-              const phoneFallbackPhoto = await tryPhonePhotoFallback(chatId);
-              if (phoneFallbackPhoto) {
-                response = {
-                  success: true,
-                  data: {
-                    chatPhoto: phoneFallbackPhoto,
-                    chatPhotoSource: 'chatinfo.phone_fallback'
-                  }
-                };
-              } else {
-                response = { success: false, error: 'Chat not found' };
-              }
+              response = { success: false, error: 'Chat not found' };
             }
           }
         } else if (message.type === 'GET_CHAT_INFO') {
@@ -4214,33 +4631,21 @@
             const displayName = chat.contact?.pushname || chat.name || chat.formattedTitle;
             const phoneNumber = resolveChatPhoneNumber(chat, chatId);
 
-            // Try multiple sources for photo
-            let chatPhoto = extractPhotoUrl(chat?.contact) || extractPhotoUrl(chat);
-            let chatPhotoSource = chatPhoto ? 'chatInfo.local' : '';
-
-            // If Store doesn't have photo, try WPP API
-            if (!chatPhoto && (window as any).WPP?.contact?.getProfilePictureUrl) {
-              const lookupIds = collectChatLookupIds(chatId, chat, chat?.contact, ...lookupVariants);
-              const fetched = await fetchWppProfilePhotoByIds(lookupIds);
-              if (fetched) {
-                chatPhoto = fetched;
-                chatPhotoSource = 'chatInfo.wpp';
-              }
-            }
-            if (!chatPhoto) {
-              const sidebarPhoto = findSidebarPhotoByChat(chatId, displayName);
-              if (sidebarPhoto) {
-                chatPhoto = sidebarPhoto;
-                chatPhotoSource = 'chatInfo.sidebar';
-              }
-            }
-            if (!chatPhoto) {
-              const phonePhoto = await tryPhonePhotoFallback(phoneNumber);
-              if (phonePhoto) {
-                chatPhoto = phonePhoto;
-                chatPhotoSource = 'chatInfo.phone_fallback';
-              }
-            }
+            const preferredPhoto = extractPhotoUrl(chat?.contact) || extractPhotoUrl(chat) || '';
+            const photoMeta = await resolveChatPhotoWithMetadata({
+              phase: 'ui_get_chat_info',
+              chatId,
+              canonicalChatId: extractSerializedChatId(chat) || chatId,
+              chatName: displayName,
+              contact: chat?.contact,
+              chat,
+              preferredPhoto,
+              preferredPhotoSource: preferredPhoto ? 'chatInfo.local' : 'not_found',
+              phoneNumber,
+              phoneFallbackProvider: tryPhonePhotoFallback,
+            });
+            const chatPhoto = photoMeta.chatPhoto;
+            const chatPhotoSource = chatPhoto ? (photoMeta.chatPhotoSource || 'unknown') : 'not_found';
 
             // Fetch labels with full details (id, name, color)
             let chatLabels: { id: string, name: string, color?: string }[] = [];
@@ -4271,7 +4676,11 @@
               data: {
                 chatName: displayName,
                 chatPhoto: chatPhoto,
-                photoSource: chatPhoto ? chatPhotoSource || 'unknown' : 'not_found',
+                chatPhotoSource: chatPhoto ? chatPhotoSource : undefined,
+                chatPhotoValidated: photoMeta.chatPhotoValidated === true,
+                chatPhotoStability: photoMeta.chatPhotoStability,
+                chatPhotoCheckedAt: photoMeta.chatPhotoCheckedAt,
+                photoSource: chatPhoto ? chatPhotoSource : 'not_found',
                 chatId: normalizeChatIdWithDomain(chat.id?._serialized || chat.id || chatId) || chatId,
                 isGroup: chat.isGroup,
                 labels: chatLabels,
@@ -4279,17 +4688,29 @@
               }
             };
           } else {
-            const sidebarPhoto = findSidebarPhotoByChat(chatId);
-            const phoneFallbackPhoto = await tryPhonePhotoFallback(chatId);
-            const chatPhoto = sidebarPhoto || phoneFallbackPhoto || undefined;
-            const photoSource = sidebarPhoto
-              ? 'chatInfo.sidebar'
-              : (phoneFallbackPhoto ? 'chatInfo.phone_fallback' : 'not_found');
+            const phoneNumber = getCanonicalChatIdentity(chatId) || chatId;
+            const photoMeta = await resolveChatPhotoWithMetadata({
+              phase: 'ui_get_chat_info',
+              chatId,
+              canonicalChatId: chatId,
+              preferredPhoto: findSidebarPhotoByChat(chatId),
+              preferredPhotoSource: 'chatInfo.sidebar',
+              phoneNumber,
+              phoneFallbackProvider: tryPhonePhotoFallback,
+            });
+            const chatPhoto = photoMeta.chatPhoto || undefined;
+            const photoSource = chatPhoto
+              ? (photoMeta.chatPhotoSource || 'unknown')
+              : 'not_found';
             response = {
               success: true,
               data: {
                 chatName: getCanonicalChatIdentity(chatId) || chatId,
                 chatPhoto,
+                chatPhotoSource: chatPhoto ? (photoMeta.chatPhotoSource || 'unknown') : undefined,
+                chatPhotoValidated: photoMeta.chatPhotoValidated === true,
+                chatPhotoStability: photoMeta.chatPhotoStability,
+                chatPhotoCheckedAt: photoMeta.chatPhotoCheckedAt,
                 photoSource,
                 chatId: normalizeChatIdWithDomain(chatId) || chatId,
                 isGroup: false,
