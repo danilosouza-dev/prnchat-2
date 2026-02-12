@@ -663,8 +663,14 @@
 
       if (normalized === 'chatinfo.local') return true;
       if (normalized === 'chatinfo.profilepicthumb.find') return true;
+      if (normalized === 'chatinfo.profilepicthumb.find.genurl') return true;
+      if (normalized === 'chatinfo.profilepicthumb.find.geturl') return true;
       if (normalized === 'chatinfo.profilepicthumb.get') return true;
+      if (normalized === 'chatinfo.profilepicthumb.get.genurl') return true;
+      if (normalized === 'chatinfo.profilepicthumb.get.geturl') return true;
       if (normalized === 'chatinfo.wpp') return true;
+      if (normalized === 'chatinfo.wpp_whatsapp_pptstore') return true;
+      if (normalized === 'chatinfo.wpp_whatsapp_profilepicfind') return true;
       if (normalized === 'chatinfo.store') return true;
       if (normalized === 'chatinfo.phone_fallback') return true;
       if (normalized === 'chatinfo.sidebar') return true;
@@ -672,6 +678,48 @@
       if (normalized === 'chatinfo.dom.background') return true;
 
       return false;
+    }
+
+    private normalizePhotoStability(stability?: string): 'stable' | 'volatile' | '' {
+      if (typeof stability !== 'string') return '';
+      const normalized = stability.trim().toLowerCase();
+      if (normalized === 'stable') return 'stable';
+      if (normalized === 'volatile') return 'volatile';
+      return '';
+    }
+
+    private isChatInfoPhotoPersistable(
+      photo: string,
+      source?: string,
+      stability?: string,
+      validated?: boolean,
+      options: { allowUnknownSource?: boolean } = {}
+    ): boolean {
+      if (!this.isRenderablePhotoUrl(photo)) return false;
+
+      const sourceTrusted = this.isTrustedChatInfoPhotoSource(source);
+      if (!sourceTrusted && !options.allowUnknownSource) return false;
+
+      const normalizedStability = this.normalizePhotoStability(stability);
+      if (normalizedStability === 'volatile') {
+        return validated === true;
+      }
+
+      // stable/unknown are allowed for trusted (or explicitly allowed unknown-source) candidates
+      return true;
+    }
+
+    private isChatInfoPayloadPhotoPersistable(
+      payload: any,
+      options: { allowUnknownSource?: boolean } = {}
+    ): boolean {
+      const photo = typeof payload?.chatPhoto === 'string' ? payload.chatPhoto : '';
+      const source = typeof payload?.chatPhotoSource === 'string'
+        ? payload.chatPhotoSource
+        : (typeof payload?.photoSource === 'string' ? payload.photoSource : '');
+      const stability = typeof payload?.chatPhotoStability === 'string' ? payload.chatPhotoStability : '';
+      const validated = payload?.chatPhotoValidated === true;
+      return this.isChatInfoPhotoPersistable(photo, source, stability, validated, options);
     }
 
     private async refreshLeadPhotoFromChat(leadId: string, chatId: string): Promise<void> {
@@ -706,9 +754,15 @@
               const infoData = info?.success ? info.data : null;
               const candidatePhoto = infoData?.chatPhoto || '';
               const candidatePhotoSource = infoData?.chatPhotoSource;
+              const candidatePhotoStability = infoData?.chatPhotoStability;
+              const candidatePhotoValidated = infoData?.chatPhotoValidated === true;
               if (
-                this.isRenderablePhotoUrl(candidatePhoto)
-                && this.isTrustedChatInfoPhotoSource(candidatePhotoSource)
+                this.isChatInfoPhotoPersistable(
+                  candidatePhoto,
+                  candidatePhotoSource,
+                  candidatePhotoStability,
+                  candidatePhotoValidated
+                )
               ) {
                 photo = candidatePhoto;
                 this.logPhotoResolution(
@@ -759,9 +813,23 @@
                     ? responseData
                     : (responseData?.chatPhoto || ''))
                   : '';
-                // GET_CHAT_PHOTO is a dedicated photo endpoint that already applies
-                // its own resolution strategies. No need to re-check isTrustedChatInfoPhotoSource.
-                if (this.isRenderablePhotoUrl(candidatePhoto)) {
+                const hasPhotoMetadata =
+                  !!(responseData && typeof responseData === 'object' && (
+                    Object.prototype.hasOwnProperty.call(responseData, 'chatPhotoSource')
+                    || Object.prototype.hasOwnProperty.call(responseData, 'photoSource')
+                    || Object.prototype.hasOwnProperty.call(responseData, 'chatPhotoStability')
+                    || Object.prototype.hasOwnProperty.call(responseData, 'chatPhotoValidated')
+                  ));
+                const canUsePhoto = hasPhotoMetadata
+                  ? this.isChatInfoPhotoPersistable(
+                    candidatePhoto,
+                    responseData?.chatPhotoSource || responseData?.photoSource,
+                    responseData?.chatPhotoStability,
+                    responseData?.chatPhotoValidated === true,
+                    { allowUnknownSource: true }
+                  )
+                  : this.isRenderablePhotoUrl(candidatePhoto);
+                if (canUsePhoto) {
                   photo = candidatePhoto;
                   const candidatePhotoSource = typeof responseData === 'string'
                     ? 'get_chat_photo'
@@ -1222,8 +1290,7 @@
               if (!info?.success || !info?.data) continue;
 
               const hasName = typeof info.data.chatName === 'string' && info.data.chatName.trim().length > 0;
-              const hasPhoto = this.isRenderablePhotoUrl(info.data.chatPhoto)
-                && this.isTrustedChatInfoPhotoSource(info.data.chatPhotoSource);
+              const hasPhoto = this.isChatInfoPayloadPhotoPersistable(info.data);
               const hasTags = Array.isArray(info.data.tags) && info.data.tags.length > 0;
               const score = (hasPhoto ? 4 : 0) + (hasName ? 2 : 0) + (hasTags ? 1 : 0);
 
@@ -1298,10 +1365,7 @@
             const chatInfo = await resolveBestChatInfo();
             if (chatInfo) {
               if (chatInfo.chatName) updates.name = chatInfo.chatName;
-              if (
-                this.isRenderablePhotoUrl(chatInfo.chatPhoto)
-                && this.isTrustedChatInfoPhotoSource(chatInfo.chatPhotoSource)
-              ) {
+              if (this.isChatInfoPayloadPhotoPersistable(chatInfo)) {
                 updates.photo = chatInfo.chatPhoto;
                 this.logPhotoResolution(
                   chatId,
@@ -1388,10 +1452,7 @@
 
           if (chatInfo) {
             chatName = chatInfo.chatName || '';
-            if (
-              this.isRenderablePhotoUrl(chatInfo.chatPhoto)
-              && this.isTrustedChatInfoPhotoSource(chatInfo.chatPhotoSource)
-            ) {
+            if (this.isChatInfoPayloadPhotoPersistable(chatInfo)) {
               chatPhoto = chatInfo.chatPhoto;
               this.logPhotoResolution(
                 chatId,
@@ -2395,7 +2456,10 @@
               success: true,
               data: {
                 chatPhoto: chatInfo.data.chatPhoto,
-                chatPhotoSource: chatInfo.data.chatPhotoSource
+                chatPhotoSource: chatInfo.data.chatPhotoSource,
+                chatPhotoValidated: chatInfo.data.chatPhotoValidated === true,
+                chatPhotoStability: chatInfo.data.chatPhotoStability,
+                chatPhotoCheckedAt: chatInfo.data.chatPhotoCheckedAt
               }
             };
           }
@@ -3087,7 +3151,10 @@
                   chatName: event.detail.chatName,
                   chatId: event.detail.chatId,
                   chatPhoto,
-                  chatPhotoSource: event.detail.photoSource,
+                  chatPhotoSource: event.detail.chatPhotoSource || event.detail.photoSource,
+                  chatPhotoValidated: event.detail.chatPhotoValidated === true,
+                  chatPhotoStability: event.detail.chatPhotoStability,
+                  chatPhotoCheckedAt: event.detail.chatPhotoCheckedAt,
                   phoneNumber: event.detail.phoneNumber,
                   tags: event.detail.tags,
                   labels: event.detail.labels

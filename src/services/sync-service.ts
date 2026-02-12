@@ -155,15 +155,44 @@ class SyncService {
                 }
 
                 if (!columnCheck) {
-                    console.warn(`[PrinChat Sync] ⚠️ Column ${validColumnId} not found in Supabase. Setting to NULL to prevent foreign key error.`);
-                    validColumnId = undefined;
-
-                    // Also update local DB to reflect this change
+                    console.warn(`[PrinChat Sync] ⚠️ Column ${validColumnId} not found in Supabase. Attempting name-based repair before syncing lead.`);
+                    let repairedColumnId: string | undefined;
                     try {
-                        await db.updateLead(lead.id, { columnId: undefined }, scope);
-                        console.log(`[PrinChat Sync] 🔄 Updated local lead ${lead.name} to have NULL column_id`);
-                    } catch (localUpdateError) {
-                        console.warn('[PrinChat Sync] Could not update local column_id:', localUpdateError);
+                        const localColumn = await db.getKanbanColumn(validColumnId, scope);
+                        const localColumnName = String(localColumn?.name || '').trim();
+                        if (localColumnName) {
+                            const { data: sameNameColumn, error: sameNameColumnError } = await supabase
+                                .from('kanban_columns')
+                                .select('id')
+                                .eq(this.scopedColumnName, scope)
+                                .eq('name', localColumnName)
+                                .limit(1)
+                                .maybeSingle();
+
+                            if (sameNameColumnError && this.isMissingScopedColumn(sameNameColumnError)) {
+                                console.warn('[PrinChat Sync] Scoped columns not migrated yet during repair. Skipping lead sync to avoid column loss.');
+                                return;
+                            }
+                            if (sameNameColumnError && this.handlePermissionDenied('leads.column-repair', sameNameColumnError)) {
+                                return;
+                            }
+
+                            if (sameNameColumn?.id) {
+                                repairedColumnId = sameNameColumn.id;
+                                console.log(`[PrinChat Sync] ✅ Repaired column mapping for lead ${lead.name}: ${validColumnId} -> ${repairedColumnId}`);
+                            }
+                        }
+                    } catch (repairError) {
+                        console.warn('[PrinChat Sync] Column repair attempt failed:', repairError);
+                    }
+
+                    if (repairedColumnId) {
+                        validColumnId = repairedColumnId;
+                    } else {
+                        // Safety first: do not erase local column assignment or send NULL column_id.
+                        // This prevents mass fallback to default column after login/session transitions.
+                        console.warn(`[PrinChat Sync] 🛑 Skipping lead sync for ${lead.name} because column could not be validated/repaired. Local column preserved.`);
+                        return;
                     }
                 }
             }
@@ -913,11 +942,22 @@ class SyncService {
                                 ? localLead?.photo
                                 : (incomingPhoto || undefined);
 
+                            const incomingColumnId = typeof s.column_id === 'string' && s.column_id.trim()
+                                ? s.column_id
+                                : undefined;
+                            const shouldPreserveLocalColumn =
+                                !incomingColumnId &&
+                                typeof localLead?.columnId === 'string' &&
+                                !!localLead.columnId.trim();
+                            const mergedColumnId = shouldPreserveLocalColumn
+                                ? localLead?.columnId
+                                : incomingColumnId;
+
                             await database.put('kanban_leads', {
                                 id: scopedLeadId,
                                 instanceId: scope,
                                 chatId: leadIdentity,
-                                columnId: s.column_id,
+                                columnId: mergedColumnId,
                                 order: s.order,
                                 name: s.name,
                                 phone: s.phone || leadIdentity,
