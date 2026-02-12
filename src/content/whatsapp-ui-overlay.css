@@ -2579,6 +2579,11 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
   cursor: not-allowed;
 }
 
+.princhat-schedule-button.loading {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
 .princhat-schedule-button svg {
   width: 14px;
   height: 14px;
@@ -2644,6 +2649,105 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
+/* Move to Column button - injected into chat header */
+.princhat-move-column-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 12px;
+  height: 32px;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, sans-serif;
+  background: #e91e63;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  margin-right: 8px;
+}
+
+.princhat-move-column-button:hover {
+  background: #c2185b;
+}
+
+.princhat-move-column-button:active,
+.princhat-move-column-button.active {
+  background: #ad1457;
+}
+
+.princhat-move-column-button.loading {
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+.princhat-move-column-button .princhat-move-column-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.princhat-move-column-button > span {
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.princhat-move-column-button.has-column {
+  background: #1f2a30;
+  border: 1px solid #2f3c44;
+  color: #dfe5e8;
+  max-width: 230px;
+}
+
+.princhat-move-column-button.has-column:hover {
+  background: #25323a;
+  border-color: #3a4a54;
+}
+
+.princhat-move-column-button.has-column:active,
+.princhat-move-column-button.has-column.active {
+  background: #2b3942;
+  border-color: #e91e63;
+  color: #ffffff;
+}
+
+.princhat-move-column-default-text {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.princhat-move-column-current {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 170px;
+}
+
+.princhat-move-column-current-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+
+.princhat-move-column-current-name {
+  display: inline-block;
+  min-width: 0;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+}
+
 /* Notes button - icon only with pink color */
 .princhat-notes-button {
   display: inline-flex;
@@ -2676,6 +2780,156 @@ body:not([data-princhat-chat-active="true"]) .princhat-fab {
 .princhat-notes-button:hover svg {
   color: #e91e63;
   stroke: #e91e63;
+}
+
+/* ==================== MOVE TO COLUMN POPUP ==================== */
+.princhat-move-column-popup {
+  position: fixed;
+  width: min(420px, calc(100vw - 24px));
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 2147483601 !important;
+  display: flex;
+  flex-direction: column;
+  max-height: min(560px, calc(100vh - 120px));
+  overflow: hidden;
+}
+
+.princhat-move-column-popup .princhat-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.princhat-move-column-popup .princhat-popup-header-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.princhat-move-column-header-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: rgba(233, 30, 99, 0.12);
+  color: #e91e63;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.princhat-move-column-header-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.princhat-move-column-popup .princhat-popup-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: #fff;
+  margin: 0 0 2px 0;
+}
+
+.princhat-move-column-popup .princhat-popup-subtitle {
+  font-size: 12px;
+  color: #888;
+  margin: 0;
+}
+
+.princhat-move-column-body {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.princhat-move-column-hint {
+  margin: 0;
+  font-size: 13px;
+  color: #9e9e9e;
+  line-height: 1.5;
+}
+
+.princhat-move-column-warning {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: #ffcc80;
+  line-height: 1.5;
+  border-radius: 8px;
+  background: rgba(255, 152, 0, 0.1);
+  border: 1px solid rgba(255, 152, 0, 0.24);
+}
+
+.princhat-move-column-list {
+  margin-bottom: 0;
+  max-height: 260px;
+}
+
+.princhat-move-column-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+}
+
+.princhat-move-column-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.princhat-move-column-check {
+  width: 16px;
+  height: 16px;
+  color: #e91e63;
+  opacity: 0;
+  transform: scale(0.9);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.princhat-move-column-item.active .princhat-move-column-check {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.princhat-move-column-error {
+  margin: 0;
+  font-size: 13px;
+  color: #ef5350;
+  min-height: 18px;
+  display: none;
+}
+
+.princhat-move-column-footer {
+  padding: 14px 18px;
+  border-top: 1px solid #2a2a2a;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.princhat-move-column-footer .princhat-kanban-btn {
+  min-width: 96px;
+}
+
+.princhat-move-column-footer .princhat-kanban-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.princhat-move-column-footer .princhat-kanban-btn-primary:disabled:hover {
+  background: #e91e63;
 }
 
 /* ==================== NOTES POPUP ==================== */
