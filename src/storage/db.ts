@@ -1,16 +1,30 @@
 /**
  * IndexedDB wrapper for PrinChat
- * Handles storage of messages (including audio blobs), scripts, triggers, and tags
+ * Orchestrator — delegates to domain-specific stores
+ *
+ * Story 1.3: Modularizado — schema, init, migrations, e façade.
+ * Stores individuais em src/storage/stores/
+ * Utilitários de leads em src/storage/lead-utils.ts
  */
 
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
 import type { Message, Script, Trigger, Tag, Folder, Settings, Signature, Schedule, Note } from '@/types';
 import type { KanbanColumn, LeadContact } from '../types/kanban';
-import { DEFAULT_KANBAN_COLUMNS } from '../types/kanban';
-import { syncService } from '../services/sync-service';
-import { buildScopedLeadId, normalizeChatIdentity, normalizeInstanceId } from '../utils/instance-scope';
 
-interface PrinChatDB extends DBSchema {
+// Store imports
+import * as messagesStore from './stores/messages-store';
+import * as scriptsStore from './stores/scripts-store';
+import * as triggersStore from './stores/triggers-store';
+import * as tagsStore from './stores/tags-store';
+import * as foldersStore from './stores/folders-store';
+import * as settingsStore from './stores/settings-store';
+import * as signaturesStore from './stores/signatures-store';
+import * as schedulesStore from './stores/schedules-store';
+import * as notesStore from './stores/notes-store';
+import * as kanbanColumnsStore from './stores/kanban-columns-store';
+import * as kanbanLeadsStore from './stores/kanban-leads-store';
+
+export interface PrinChatDB extends DBSchema {
   messages: {
     key: string;
     value: Message;
@@ -89,7 +103,7 @@ interface PrinChatDB extends DBSchema {
 class DatabaseService {
   private db: IDBPDatabase<PrinChatDB> | null = null;
   private readonly DB_NAME = 'princhat-db';
-  private readonly DB_VERSION = 8; // Updated to version 8 for Kanban support
+  private readonly DB_VERSION = 8;
   private kanbanInitLocks = new Map<string, Promise<void>>();
   private kanbanColumnNormalizationLocks = new Map<string, Promise<void>>();
   private leadNormalizationLocks = new Map<string, Promise<void>>();
@@ -148,7 +162,7 @@ class DatabaseService {
           signatureStore.createIndex('by-created', 'createdAt');
         }
 
-        // Audio blobs store (separate for better performance)
+        // Audio blobs store
         if (!db.objectStoreNames.contains('audioBlobs')) {
           const audioBlobStore = db.createObjectStore('audioBlobs', { keyPath: 'messageId' });
           audioBlobStore.createIndex('by-messageId', 'messageId');
@@ -182,9 +196,9 @@ class DatabaseService {
 
         // Notes store
         if (!db.objectStoreNames.contains('notes')) {
-          const notesStore = db.createObjectStore('notes', { keyPath: 'id' });
-          notesStore.createIndex('by-chatId', 'chatId');
-          notesStore.createIndex('by-created', 'createdAt');
+          const noteStore = db.createObjectStore('notes', { keyPath: 'id' });
+          noteStore.createIndex('by-chatId', 'chatId');
+          noteStore.createIndex('by-created', 'createdAt');
         }
 
         // Kanban columns store
@@ -208,1787 +222,334 @@ class DatabaseService {
     return this.db;
   }
 
-  private normalizeScope(instanceId?: string): string {
-    return normalizeInstanceId(instanceId);
-  }
-
-  private normalizeRecordScope(record: any): string {
-    return normalizeInstanceId(record?.instanceId);
-  }
-
-  private matchesScope(record: any, instanceId?: string): boolean {
-    if (!instanceId) return true;
-    return this.normalizeRecordScope(record) === this.normalizeScope(instanceId);
-  }
-
-  private normalizeLeadIdentity(value?: string): string {
-    return normalizeChatIdentity(value);
-  }
-
-  private normalizeLeadChatId(value?: string): string {
-    const raw = typeof value === 'string' ? value.trim() : '';
-    if (!raw) return '';
-
-    let normalized = raw;
-    const scopedSeparator = normalized.lastIndexOf('::');
-    if (scopedSeparator >= 0) {
-      normalized = normalized.slice(scopedSeparator + 2);
-    }
-
-    normalized = normalized.replace(/^waid?:/i, '');
-
-    const atIndex = normalized.indexOf('@');
-    const domain = atIndex >= 0 ? normalized.slice(atIndex).toLowerCase() : '';
-    const identity = this.normalizeLeadIdentity(normalized);
-    if (!identity) return '';
-
-    if (domain) return `${identity}${domain}`;
-    if (/^\d+$/.test(identity)) return `${identity}@c.us`;
-    return identity;
-  }
-
-  private hasRenderablePhoto(photo?: string): boolean {
-    if (typeof photo !== 'string') return false;
-    const src = photo.trim();
-    if (!src) return false;
-    if (src === 'data:' || src === 'about:blank') return false;
-    if (this.isLikelyPlaceholderPhotoUrl(src)) return false;
-    if (/^https?:\/\//i.test(src)) return true;
-    if (src.startsWith('blob:')) return true;
-    if (/^data:image\//i.test(src) && !/^data:image\/svg/i.test(src)) return true;
-    if (src.startsWith('//')) return true;
-    return false;
-  }
-
-  private isLikelyPlaceholderPhotoUrl(photo?: string): boolean {
-    if (typeof photo !== 'string') return true;
-    const src = photo.trim();
-    if (!src) return true;
-
-    const lower = src.toLowerCase();
-    if (lower.includes('ui-avatars.com')) return true;
-
-    try {
-      const parsed = new URL(
-        src.startsWith('//') ? `https:${src}` : src
-      );
-      const host = parsed.hostname.toLowerCase();
-      const path = parsed.pathname.toLowerCase();
-      const looksAvatarPath =
-        path.includes('avatar')
-        || path.includes('default-user')
-        || path.includes('default-group')
-        || path.includes('profile-placeholder');
-
-      if (host === 'web.whatsapp.com' && (looksAvatarPath || path.endsWith('.svg'))) {
-        return true;
-      }
-      if (looksAvatarPath && path.endsWith('.svg')) {
-        return true;
-      }
-    } catch (_error) {
-      if (lower.includes('avatar') && lower.includes('.svg')) return true;
-    }
-
-    return false;
-  }
-
-  private hasValidLeadName(value?: string): boolean {
-    if (typeof value !== 'string') return false;
-    const normalized = value.trim();
-    if (!normalized) return false;
-    if (normalized.includes('::') || normalized.startsWith('wa:') || normalized.startsWith('waid:')) {
-      return false;
-    }
-    return normalized.toLowerCase() !== 'desconhecido';
-  }
-
-  private getLeadQualityScore(lead: LeadContact): number {
-    let score = 0;
-    if (this.hasRenderablePhoto(lead.photo)) score += 40;
-    if (this.hasValidLeadName(lead.name)) score += 25;
-    if (typeof lead.lastMessageTime === 'number' && lead.lastMessageTime > 0) score += 15;
-    if (typeof lead.lastMessage === 'string' && lead.lastMessage.trim()) score += 10;
-    if ((lead.unreadCount || 0) > 0) score += 5;
-    score += Math.min(Math.max(lead.updatedAt || 0, 0), Number.MAX_SAFE_INTEGER) / 1e13;
-    return score;
-  }
-
-  private buildCanonicalChatIdForLead(identity: string, candidates: LeadContact[]): string {
-    const preferredDomains = ['@c.us', '@s.whatsapp.net', '@lid', '@g.us'];
-
-    for (const domain of preferredDomains) {
-      const matching = candidates.find((lead) => {
-        const normalized = this.normalizeLeadChatId(lead.chatId || lead.phone || lead.id);
-        return normalized.endsWith(domain);
-      });
-      if (matching) return `${identity}${domain}`;
-    }
-
-    if (/^\d+$/.test(identity)) {
-      return `${identity}@c.us`;
-    }
-
-    return identity;
-  }
-
-  private async normalizeAndMergeKanbanColumns(instanceId?: string): Promise<void> {
-    const scope = this.normalizeScope(instanceId);
-    const lockKey = scope || '__all__';
-
-    const pending = this.kanbanColumnNormalizationLocks.get(lockKey);
-    if (pending) {
-      await pending;
-      return;
-    }
-
-    const run = (async () => {
-      const db = await this.init();
-      const allColumns = await db.getAll('kanban_columns');
-      const scopedColumns = allColumns.filter((column) => this.matchesScope(column, scope));
-      if (scopedColumns.length <= 1) return;
-
-      const groupedByName = new Map<string, KanbanColumn[]>();
-      for (const column of scopedColumns) {
-        const key = (column.name || '')
-          .trim()
-          .toLowerCase() || column.id;
-        const group = groupedByName.get(key) || [];
-        group.push(column);
-        groupedByName.set(key, group);
-      }
-
-      const allLeads = await db.getAll('kanban_leads');
-      const scopedLeads = allLeads.filter((lead) => this.matchesScope(lead, scope));
-
-      const replacementByColumnId = new Map<string, string>();
-      const duplicateColumnIds = new Set<string>();
-      let changed = false;
-
-      for (const group of groupedByName.values()) {
-        if (group.length <= 1) continue;
-
-        const sorted = [...group].sort((a, b) => {
-          if (!!a.isDefault !== !!b.isDefault) return a.isDefault ? -1 : 1;
-          const orderDiff = (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER);
-          if (orderDiff !== 0) return orderDiff;
-          const createdDiff = (a.createdAt || 0) - (b.createdAt || 0);
-          if (createdDiff !== 0) return createdDiff;
-          return String(a.id).localeCompare(String(b.id));
-        });
-
-        const primary = sorted[0];
-        if (!primary) continue;
-
-        const desiredOrder = Math.min(...sorted.map((col) => col.order ?? Number.MAX_SAFE_INTEGER));
-        const shouldBeDefault = sorted.some((col) => !!col.isDefault);
-        const primaryNeedsUpdate =
-          primary.order !== desiredOrder ||
-          (!!primary.isDefault) !== shouldBeDefault ||
-          this.normalizeScope(primary.instanceId) !== scope;
-
-        if (primaryNeedsUpdate) {
-          await db.put('kanban_columns', {
-            ...primary,
-            instanceId: scope,
-            order: desiredOrder,
-            isDefault: shouldBeDefault,
-            updatedAt: Date.now(),
-          });
-          changed = true;
-        }
-
-        for (const duplicate of sorted.slice(1)) {
-          replacementByColumnId.set(duplicate.id, primary.id);
-          duplicateColumnIds.add(duplicate.id);
-        }
-      }
-
-      for (const lead of scopedLeads) {
-        const replacementColumnId = replacementByColumnId.get(lead.columnId);
-        if (!replacementColumnId) continue;
-
-        await db.put('kanban_leads', {
-          ...lead,
-          columnId: replacementColumnId,
-          updatedAt: Date.now(),
-        });
-        changed = true;
-      }
-
-      for (const duplicateId of duplicateColumnIds) {
-        await db.delete('kanban_columns', duplicateId);
-        changed = true;
-      }
-
-      const refreshedColumns = (await db.getAll('kanban_columns'))
-        .filter((column) => this.matchesScope(column, scope))
-        .sort((a, b) => a.order - b.order);
-      const validColumnIds = new Set(refreshedColumns.map((column) => column.id));
-      const fallbackColumnId =
-        refreshedColumns.find((column) => column.isDefault)?.id
-        || refreshedColumns[0]?.id
-        || null;
-
-      if (fallbackColumnId) {
-        for (const lead of scopedLeads) {
-          if (lead.columnId && validColumnIds.has(lead.columnId)) continue;
-          await db.put('kanban_leads', {
-            ...lead,
-            columnId: fallbackColumnId,
-            updatedAt: Date.now(),
-          });
-          changed = true;
-        }
-      }
-
-      if (changed && typeof chrome !== 'undefined' && chrome.storage) {
-        await chrome.storage.local.set({
-          kanban_columns: Date.now(),
-          kanban_leads: Date.now(),
-        });
-      }
-    })();
-
-    this.kanbanColumnNormalizationLocks.set(lockKey, run);
-    try {
-      await run;
-    } finally {
-      this.kanbanColumnNormalizationLocks.delete(lockKey);
-    }
-  }
-
-  private async normalizeAndMergeLeads(instanceId?: string): Promise<void> {
-    const scope = this.normalizeScope(instanceId);
-    const lockKey = scope || '__all__';
-
-    const pending = this.leadNormalizationLocks.get(lockKey);
-    if (pending) {
-      await pending;
-      return;
-    }
-
-    const run = (async () => {
-      const db = await this.init();
-      const allLeads = await db.getAll('kanban_leads');
-      const scopedLeads = allLeads.filter((lead) => this.matchesScope(lead, scope));
-      if (scopedLeads.length <= 1) return;
-
-      const groups = new Map<string, LeadContact[]>();
-      for (const lead of scopedLeads) {
-        const identity = this.normalizeLeadIdentity(lead.chatId || lead.phone || lead.id);
-        if (!identity) continue;
-        const group = groups.get(identity) || [];
-        group.push(lead);
-        groups.set(identity, group);
-      }
-
-      let changed = false;
-      for (const [identity, leads] of groups.entries()) {
-        const canonicalId = buildScopedLeadId(scope, identity);
-        const mustNormalize =
-          leads.length > 1 ||
-          leads.some((lead) => lead.id !== canonicalId) ||
-          leads.some((lead) => {
-            const normalizedChatId = this.normalizeLeadChatId(lead.chatId || lead.phone || lead.id);
-            return !!normalizedChatId && normalizedChatId !== lead.chatId;
-          }) ||
-          leads.some((lead) => {
-            const normalizedPhone = this.normalizeLeadIdentity(lead.phone || lead.chatId || lead.id);
-            return !!normalizedPhone && normalizedPhone !== lead.phone;
-          });
-        if (!mustNormalize) continue;
-
-        const sortedByQuality = [...leads].sort((a, b) => {
-          const scoreDiff = this.getLeadQualityScore(b) - this.getLeadQualityScore(a);
-          if (scoreDiff !== 0) return scoreDiff;
-          return (b.lastMessageTime || b.updatedAt || 0) - (a.lastMessageTime || a.updatedAt || 0);
-        });
-        const primary = sortedByQuality[0];
-        if (!primary) continue;
-
-        const newestMessageLead = [...leads]
-          .filter((lead) => typeof lead.lastMessageTime === 'number' && lead.lastMessageTime! > 0)
-          .sort((a, b) => (b.lastMessageTime || 0) - (a.lastMessageTime || 0))[0];
-        const bestNamedLead = sortedByQuality.find((lead) => this.hasValidLeadName(lead.name));
-        const bestPhotoLead = sortedByQuality.find((lead) => this.hasRenderablePhoto(lead.photo));
-
-        const mergedTags = Array.from(
-          new Set(
-            leads.flatMap((lead) => (Array.isArray(lead.tags) ? lead.tags : []))
-          )
-        );
-
-        const mergedLead: LeadContact = {
-          ...primary,
-          id: canonicalId,
-          instanceId: scope,
-          chatId: this.buildCanonicalChatIdForLead(identity, leads),
-          phone: identity,
-          name: bestNamedLead?.name || primary.name || identity,
-          photo: bestPhotoLead?.photo || primary.photo,
-          tags: mergedTags.length > 0 ? mergedTags : primary.tags,
-          unreadCount: Math.max(...leads.map((lead) => lead.unreadCount || 0)),
-          notesCount: Math.max(...leads.map((lead) => lead.notesCount || 0)),
-          schedulesCount: Math.max(...leads.map((lead) => lead.schedulesCount || 0)),
-          scriptsCount: Math.max(...leads.map((lead) => lead.scriptsCount || 0)),
-          lastMessage: newestMessageLead?.lastMessage || primary.lastMessage,
-          lastMessageTime: newestMessageLead?.lastMessageTime || primary.lastMessageTime,
-          order: Math.min(...leads.map((lead) => lead.order ?? Number.MAX_SAFE_INTEGER)),
-          createdAt: Math.min(...leads.map((lead) => lead.createdAt || Date.now())),
-          updatedAt: Date.now()
-        };
-
-        await db.put('kanban_leads', mergedLead);
-
-        const duplicateKeys = new Set<string>();
-        for (const lead of leads) {
-          if (lead.id !== canonicalId) {
-            duplicateKeys.add(lead.id);
-          }
-        }
-
-        for (const duplicateKey of duplicateKeys) {
-          await db.delete('kanban_leads', duplicateKey);
-        }
-
-        changed = true;
-
-        // Best-effort cloud consistency.
-        syncService.syncLead(mergedLead).catch(console.warn);
-        for (const duplicateLead of leads) {
-          if (!duplicateKeys.has(duplicateLead.id)) continue;
-          syncService
-            .deleteLead(duplicateLead.id, scope, duplicateLead.chatId || duplicateLead.phone || duplicateLead.id)
-            .catch(console.warn);
-        }
-      }
-
-      if (changed && typeof chrome !== 'undefined' && chrome.storage) {
-        await chrome.storage.local.set({
-          kanban_leads: Date.now()
-        });
-      }
-    })();
-
-    this.leadNormalizationLocks.set(lockKey, run);
-
-    try {
-      await run;
-    } finally {
-      this.leadNormalizationLocks.delete(lockKey);
-    }
-  }
-
-  private async resolveLeadStorageKey(dbHandle: IDBPDatabase<PrinChatDB>, leadId: string, instanceId?: string): Promise<string | null> {
-    if (!leadId) return null;
-
-    const leads = await dbHandle.getAll('kanban_leads');
-    const scope = this.normalizeScope(instanceId);
-    const normalizedInput = this.normalizeLeadIdentity(leadId) || leadId;
-    const scopedCandidate = buildScopedLeadId(scope, normalizedInput);
-
-    const directMatch = leads.find((lead) => {
-      if (instanceId && !this.matchesScope(lead, instanceId)) return false;
-      return lead.id === leadId || lead.id === scopedCandidate;
-    });
-    if (directMatch) return directMatch.id;
-
-    const byIdentity = leads.find((lead) => {
-      if (instanceId && !this.matchesScope(lead, instanceId)) return false;
-      const leadIdentity = this.normalizeLeadIdentity(lead.chatId || lead.phone || lead.id);
-      return leadIdentity === normalizedInput;
-    });
-    if (byIdentity) return byIdentity.id;
-
-    return null;
-  }
-
-  private async resolveScopedLeadAliases(
-    dbHandle: IDBPDatabase<PrinChatDB>,
-    leadId: string,
-    instanceId?: string
-  ): Promise<{
-    scope: string;
-    canonicalIdentity: string;
-    canonicalLeadId: string;
-    canonicalChatId: string;
-    aliases: LeadContact[];
-  } | null> {
-    if (!leadId) return null;
-
-    const scope = this.normalizeScope(instanceId);
-    const storageKey = await this.resolveLeadStorageKey(dbHandle, leadId, scope);
-    if (!storageKey) return null;
-
-    const allLeads = await dbHandle.getAll('kanban_leads');
-    const targetLead = allLeads.find((lead) => lead.id === storageKey);
-    if (!targetLead) return null;
-
-    const canonicalIdentity = this.normalizeLeadIdentity(
-      targetLead.chatId || targetLead.phone || targetLead.id
-    );
-    if (!canonicalIdentity) return null;
-
-    const aliases = allLeads.filter((lead) => {
-      if (!this.matchesScope(lead, scope)) return false;
-      const identity = this.normalizeLeadIdentity(lead.chatId || lead.phone || lead.id);
-      return identity === canonicalIdentity;
-    });
-
-    const canonicalLeadId = buildScopedLeadId(scope, canonicalIdentity);
-    const canonicalChatId = this.buildCanonicalChatIdForLead(canonicalIdentity, aliases.length > 0 ? aliases : [targetLead]);
-
-    return {
-      scope,
-      canonicalIdentity,
-      canonicalLeadId,
-      canonicalChatId,
-      aliases: aliases.length > 0 ? aliases : [targetLead]
-    };
-  }
-
   private async initializeDefaults(): Promise<void> {
     const settings = await this.getSettings();
     if (!settings) {
       await this.saveSettings({
         storageType: 'local',
         autoBackup: false,
-        defaultDelay: 2000, // 2 seconds default delay
-        requireSendConfirmation: true, // Require two clicks to send messages
-        showShortcuts: true, // Show shortcut bar in WhatsApp Web
-        showFloatingButton: true, // Show floating action button in WhatsApp Web
+        defaultDelay: 2000,
+        requireSendConfirmation: true,
+        showShortcuts: true,
+        showFloatingButton: true,
       });
     }
-
-    // Kanban defaults are now initialized lazily per WhatsApp instance.
   }
 
   // ==================== MESSAGES ====================
-
   async saveMessage(message: Message): Promise<void> {
     const db = await this.init();
-
-    // Helper to handle media upload logic
-    const handleMediaUpload = async (
-      blob: Blob,
-      type: 'audio' | 'image' | 'video' | 'file',
-      filename?: string
-    ): Promise<string | null> => {
-      try {
-        console.log(`[PrinChat DB] Uploading ${type} to cloud...`);
-        // Import dynamically to avoid circular dependencies just in case
-        const { mediaService } = await import('../services/media-service');
-        const url = await mediaService.uploadMedia(blob, filename);
-        console.log(`[PrinChat DB] Upload successful: ${url}`);
-        return url;
-      } catch (error) {
-        console.warn(`[PrinChat DB] Upload failed for ${type}, falling back to local storage:`, error);
-        return null;
-      }
-    };
-
-    // 1. AUDIO
-    if (message.audioData && message.audioData instanceof Blob) {
-      const url = await handleMediaUpload(message.audioData, 'audio', `audio-${message.id}.mp3`); // Extension estimation
-      if (url) {
-        message.audioUrl = url;
-        message.audioData = null; // Don't store local blob
-      } else {
-        // Fallback: Save to local IDB
-        await db.put('audioBlobs', {
-          messageId: message.id,
-          blob: message.audioData,
-          createdAt: Date.now(),
-        });
-      }
-    }
-
-    // 2. IMAGE
-    if (message.imageData && message.imageData instanceof Blob) {
-      const url = await handleMediaUpload(message.imageData, 'image', `image-${message.id}`);
-      if (url) {
-        message.imageUrl = url;
-        message.imageData = null;
-      } else {
-        await db.put('imageBlobs', {
-          messageId: message.id,
-          blob: message.imageData,
-          createdAt: Date.now(),
-        });
-      }
-    }
-
-    // 3. VIDEO
-    if (message.videoData && message.videoData instanceof Blob) {
-      const url = await handleMediaUpload(message.videoData, 'video', `video-${message.id}`);
-      if (url) {
-        message.videoUrl = url;
-        message.videoData = null;
-      } else {
-        await db.put('videoBlobs', {
-          messageId: message.id,
-          blob: message.videoData,
-          createdAt: Date.now(),
-        });
-      }
-    }
-
-    // 4. FILE
-    if (message.fileData && message.fileData instanceof Blob) {
-      const url = await handleMediaUpload(message.fileData, 'file', message.fileName || `file-${message.id}`);
-      if (url) {
-        message.fileUrl = url;
-        message.fileData = null;
-      } else {
-        await db.put('fileBlobs', {
-          messageId: message.id,
-          blob: message.fileData,
-          fileName: message.fileName || 'file',
-          createdAt: Date.now(),
-        });
-      }
-    }
-
-    // Don't store blobs in the message object (just references)
-    const messageToSave = {
-      ...message,
-      audioData: null,
-      imageData: null,
-      videoData: null,
-      fileData: null
-    };
-    await db.put('messages', messageToSave);
-
-    // Trigger chrome.storage change event to notify other components
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        messages: Date.now() // Use timestamp to ensure value changes
-      });
-    }
+    return messagesStore.saveMessage(db, message);
   }
 
   async getMessage(id: string): Promise<Message | undefined> {
     const db = await this.init();
-    const message = await db.get('messages', id);
-
-    if (message) {
-      // Retrieve audio blob if exists
-      if (message.type === 'audio') {
-        const audioData = await db.get('audioBlobs', id);
-        if (audioData) {
-          message.audioData = audioData.blob;
-        }
-      }
-
-      // Retrieve image blob if exists
-      if (message.type === 'image') {
-        const imageData = await db.get('imageBlobs', id);
-        if (imageData) {
-          message.imageData = imageData.blob;
-        }
-      }
-
-      // Retrieve video blob if exists
-      if (message.type === 'video') {
-        const videoData = await db.get('videoBlobs', id);
-        if (videoData) {
-          message.videoData = videoData.blob;
-        }
-      }
-
-      // Retrieve file blob if exists
-      if (message.type === 'file') {
-        const fileData = await db.get('fileBlobs', id);
-        if (fileData) {
-          message.fileData = fileData.blob;
-          message.fileName = fileData.fileName;
-        }
-      }
-    }
-
-    return message;
+    return messagesStore.getMessage(db, id);
   }
 
   async getAllMessages(): Promise<Message[]> {
     const db = await this.init();
-    console.log('[PrinChat DB] getAllMessages calling db.getAll...');
-    const messages = await db.getAll('messages');
-    console.log(`[PrinChat DB] getAllMessages raw count: ${messages.length}`);
-
-    // Load media blobs for all message types
-    const messagesWithMedia = await Promise.all(
-      messages.map(async (msg) => {
-        if (msg.type === 'audio') {
-          const audioData = await db.get('audioBlobs', msg.id);
-          if (audioData) {
-            msg.audioData = audioData.blob;
-          }
-        }
-
-        if (msg.type === 'image') {
-          const imageData = await db.get('imageBlobs', msg.id);
-          if (imageData) {
-            msg.imageData = imageData.blob;
-          }
-        }
-
-        if (msg.type === 'video') {
-          const videoData = await db.get('videoBlobs', msg.id);
-          if (videoData) {
-            msg.videoData = videoData.blob;
-          }
-        }
-
-        if (msg.type === 'file') {
-          console.log('[PrinChat DB] 🔍 Loading file for message:', msg.id);
-          const fileData = await db.get('fileBlobs', msg.id);
-          console.log('[PrinChat DB] 🔍 fileData from IndexedDB:', fileData ? 'FOUND' : 'NOT FOUND');
-          if (fileData) {
-            console.log('[PrinChat DB] 🔍 fileData.blob type:', typeof fileData.blob);
-            console.log('[PrinChat DB] 🔍 fileData.blob instanceof Blob:', fileData.blob instanceof Blob);
-            console.log('[PrinChat DB] 🔍 fileData.blob size:', fileData.blob?.size);
-            msg.fileData = fileData.blob;
-            msg.fileName = fileData.fileName;
-          }
-          // Note: If no blob found, file is in Bunny CDN (expected behavior)
-        }
-
-        return msg;
-      })
-    );
-
-    return messagesWithMedia;
+    return messagesStore.getAllMessages(db);
   }
 
   async deleteMessage(id: string): Promise<void> {
     const db = await this.init();
-
-    // CLEANUP: Delete file from Bunny CDN before deleting from DB
-    try {
-      const message = await db.get('messages', id);
-
-      if (message) {
-        // Check if message has media URLs (uploaded to Bunny)
-        const mediaUrls: string[] = [];
-
-        if (message.audioUrl) mediaUrls.push(message.audioUrl);
-        if (message.imageUrl) mediaUrls.push(message.imageUrl);
-        if (message.videoUrl) mediaUrls.push(message.videoUrl);
-        if (message.fileUrl) mediaUrls.push(message.fileUrl);
-
-        if (mediaUrls.length > 0) {
-          console.log(`[PrinChat DB] Message ${id} has ${mediaUrls.length} media file(s) in Bunny. Deleting...`);
-
-          // Import media service and delete files
-          const { mediaService } = await import('../services/media-service');
-
-          for (const url of mediaUrls) {
-            const deleted = await mediaService.deleteMedia(url);
-            if (deleted) {
-              console.log(`[PrinChat DB] ✅ Deleted from Bunny: ${url}`);
-            } else {
-              console.warn(`[PrinChat DB] ⚠️ Failed to delete from Bunny: ${url}`);
-            }
-          }
-        }
-      }
-    } catch (cleanupError) {
-      console.warn('[PrinChat DB] Error cleaning up Bunny files (continuing with deletion):', cleanupError);
-      // Don't throw - we still want to delete from DB even if Bunny cleanup fails
-    }
-
-    // Delete from IndexedDB
-    await db.delete('messages', id);
-    // Delete associated media blobs if they exist
-    await db.delete('audioBlobs', id);
-    await db.delete('imageBlobs', id);
-    await db.delete('videoBlobs', id);
-    await db.delete('fileBlobs', id);
-
-    // Trigger chrome.storage change event to notify other components
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        messages: Date.now() // Use timestamp to ensure value changes
-      });
-    }
+    return messagesStore.deleteMessage(db, id);
   }
 
   async getMessagesByType(type: 'text' | 'audio' | 'image' | 'video'): Promise<Message[]> {
     const db = await this.init();
-    const messages = await db.getAllFromIndex('messages', 'by-type', type);
-
-    // Load media blobs for messages
-    const messagesWithMedia = await Promise.all(
-      messages.map(async (msg) => {
-        if (msg.type === 'audio') {
-          const audioData = await db.get('audioBlobs', msg.id);
-          if (audioData) {
-            msg.audioData = audioData.blob;
-          }
-        }
-
-        if (msg.type === 'image') {
-          const imageData = await db.get('imageBlobs', msg.id);
-          if (imageData) {
-            msg.imageData = imageData.blob;
-          }
-        }
-
-        if (msg.type === 'video') {
-          const videoData = await db.get('videoBlobs', msg.id);
-          if (videoData) {
-            msg.videoData = videoData.blob;
-          }
-        }
-
-        return msg;
-      })
-    );
-
-    return messagesWithMedia;
+    return messagesStore.getMessagesByType(db, type);
   }
 
   // ==================== SCRIPTS ====================
   async saveScript(script: Script): Promise<void> {
     const db = await this.init();
-    await db.put('scripts', script);
-
-    // Trigger chrome.storage change event to notify other components
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        scripts: Date.now() // Use timestamp to ensure value changes
-      });
-    }
+    return scriptsStore.saveScript(db, script);
   }
 
   async getScript(id: string): Promise<Script | undefined> {
     const db = await this.init();
-    return db.get('scripts', id);
+    return scriptsStore.getScript(db, id);
   }
 
   async getAllScripts(): Promise<Script[]> {
     const db = await this.init();
-    return db.getAll('scripts');
+    return scriptsStore.getAllScripts(db);
   }
 
   async deleteScript(id: string): Promise<void> {
     const db = await this.init();
-    await db.delete('scripts', id);
-
-    // Trigger chrome.storage change event to notify other components
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        scripts: Date.now() // Use timestamp to ensure value changes
-      });
-    }
+    return scriptsStore.deleteScript(db, id);
   }
 
   // ==================== TRIGGERS ====================
   async saveTrigger(trigger: Trigger): Promise<void> {
     const db = await this.init();
-    await db.put('triggers', trigger);
+    return triggersStore.saveTrigger(db, trigger);
   }
 
   async getTrigger(id: string): Promise<Trigger | undefined> {
     const db = await this.init();
-    return db.get('triggers', id);
+    return triggersStore.getTrigger(db, id);
   }
 
   async getAllTriggers(): Promise<Trigger[]> {
     const db = await this.init();
-    return db.getAll('triggers');
+    return triggersStore.getAllTriggers(db);
   }
 
   async getEnabledTriggers(): Promise<Trigger[]> {
     const db = await this.init();
-    return db.getAllFromIndex('triggers', 'by-enabled', 1);
+    return triggersStore.getEnabledTriggers(db);
   }
 
   async deleteTrigger(id: string): Promise<void> {
     const db = await this.init();
-    await db.delete('triggers', id);
+    return triggersStore.deleteTrigger(db, id);
   }
 
   // ==================== TAGS ====================
   async saveTag(tag: Tag): Promise<void> {
     const db = await this.init();
-    await db.put('tags', tag);
-
-    // Trigger chrome.storage change event to notify other components
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        tags: Date.now() // Use timestamp to ensure value changes
-      });
-    }
-
-    // Trigger sync
-    syncService.syncTag(tag).catch(console.error);
+    return tagsStore.saveTag(db, tag);
   }
 
   async getTag(id: string): Promise<Tag | undefined> {
     const db = await this.init();
-    return db.get('tags', id);
+    return tagsStore.getTag(db, id);
   }
 
   async getAllTags(): Promise<Tag[]> {
     const db = await this.init();
-    return db.getAll('tags');
+    return tagsStore.getAllTags(db);
   }
 
   async deleteTag(id: string): Promise<void> {
     const db = await this.init();
-    await db.delete('tags', id);
-
-    // Trigger chrome.storage change event to notify other components
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        tags: Date.now() // Use timestamp to ensure value changes
-      });
-    }
-
-    // Trigger sync
-    syncService.deleteTag(id).catch(console.error);
+    return tagsStore.deleteTag(db, id);
   }
 
   // ==================== FOLDERS ====================
   async saveFolder(folder: Folder): Promise<void> {
     const db = await this.init();
-    await db.put('folders', folder);
-
-    // Trigger chrome.storage change event to notify other components
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        folders: Date.now() // Use timestamp to ensure value changes
-      });
-    }
+    return foldersStore.saveFolder(db, folder);
   }
 
   async getFolder(id: string): Promise<Folder | undefined> {
     const db = await this.init();
-    return db.get('folders', id);
+    return foldersStore.getFolder(db, id);
   }
 
   async getAllFolders(): Promise<Folder[]> {
     const db = await this.init();
-    return db.getAll('folders');
+    return foldersStore.getAllFolders(db);
   }
 
   async deleteFolder(id: string): Promise<void> {
     const db = await this.init();
-    await db.delete('folders', id);
-
-    // Remove folderId from all messages that were in this folder
-    const messages = await this.getAllMessages();
-    const messagesInFolder = messages.filter(msg => msg.folderId === id);
-
-    for (const msg of messagesInFolder) {
-      await this.saveMessage({ ...msg, folderId: undefined });
-    }
-
-    // Trigger chrome.storage change event to notify other components
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        folders: Date.now() // Use timestamp to ensure value changes
-      });
-    }
+    return foldersStore.deleteFolder(
+      db,
+      id,
+      () => this.getAllMessages(),
+      (msg) => this.saveMessage(msg)
+    );
   }
 
   // ==================== SETTINGS ====================
   async saveSettings(settings: Settings): Promise<void> {
     const db = await this.init();
-    await db.put('settings', { key: 'app-settings', ...settings } as any);
-
-    // Also save to chrome.storage.local to trigger onChanged listeners
-    // This enables real-time updates across tabs and content scripts
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({ settings });
-    }
+    return settingsStore.saveSettings(db, settings);
   }
 
   async getSettings(): Promise<Settings | undefined> {
     const db = await this.init();
-    const result = await db.get('settings', 'app-settings');
-    if (!result) return undefined;
-    const { key, ...settings } = result as any;
-
-    // Sync to chrome.storage.local if not already there
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      const chromeSettings = await chrome.storage.local.get('settings');
-      if (!chromeSettings.settings) {
-        await chrome.storage.local.set({ settings });
-      }
-    }
-
-    return settings as Settings;
+    return settingsStore.getSettings(db);
   }
 
   // ==================== SIGNATURES ====================
   async saveSignature(signature: Signature): Promise<void> {
     const db = await this.init();
-    await db.put('signatures', signature);
-
-    // Trigger chrome.storage change event to notify other components
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        signatures: Date.now() // Use timestamp to ensure value changes
-      });
-    }
-
-    // Trigger sync
-    syncService.syncSignature(signature).catch(console.error);
+    return signaturesStore.saveSignature(db, signature);
   }
 
   async getAllSignatures(): Promise<Signature[]> {
     const db = await this.init();
-    const signatures = await db.getAllFromIndex('signatures', 'by-created');
-    return signatures.reverse(); // Most recent first
+    return signaturesStore.getAllSignatures(db);
   }
 
   async getSignature(id: string): Promise<Signature | undefined> {
     const db = await this.init();
-    return db.get('signatures', id);
+    return signaturesStore.getSignature(db, id);
   }
 
   async getActiveSignature(): Promise<Signature | undefined> {
     const db = await this.init();
-    try {
-      // Query by isActive index using boolean true (not number 1)
-      const signatures = await db.getAllFromIndex('signatures', 'by-active', IDBKeyRange.only(true));
-      return signatures[0]; // Return first active signature (should only be one)
-    } catch (error) {
-      // Fallback: get all and filter manually if index fails
-      console.warn('[DB] Index query failed, falling back to manual filter:', error);
-      const allSignatures = await db.getAll('signatures');
-      return allSignatures.find(sig => sig.isActive === true);
-    }
+    return signaturesStore.getActiveSignature(db);
   }
 
   async setActiveSignature(id: string): Promise<void> {
     const db = await this.init();
-
-    // Get all signatures
-    const allSignatures = await this.getAllSignatures();
-
-    // Deactivate all signatures
-    for (const sig of allSignatures) {
-      if (sig.isActive) {
-        const updatedSig = { ...sig, isActive: false, updatedAt: Date.now() };
-        await db.put('signatures', updatedSig);
-        syncService.syncSignature(updatedSig).catch(console.error);
-      }
-    }
-
-    // Activate the selected signature
-    const targetSignature = await db.get('signatures', id);
-    if (targetSignature) {
-      const updatedTarget = { ...targetSignature, isActive: true, updatedAt: Date.now() };
-      await db.put('signatures', updatedTarget);
-      syncService.syncSignature(updatedTarget).catch(console.error);
-    }
-
-    // Trigger chrome.storage change event
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        signatures: Date.now()
-      });
-    }
+    return signaturesStore.setActiveSignature(db, id);
   }
 
   async deleteSignature(id: string): Promise<void> {
     const db = await this.init();
-    await db.delete('signatures', id);
-
-    // Trigger chrome.storage change event
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        signatures: Date.now()
-      });
-    }
+    return signaturesStore.deleteSignature(db, id);
   }
 
   // ==================== SCHEDULES ====================
   async saveSchedule(schedule: Schedule): Promise<void> {
     const db = await this.init();
-    const scopedSchedule: Schedule = {
-      ...schedule,
-      instanceId: this.normalizeScope(schedule.instanceId),
-    };
-    await db.put('schedules', scopedSchedule);
-
-    // Trigger chrome.storage change event
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        schedules: Date.now()
-      });
-    }
-
-    // Trigger sync
-    syncService.syncSchedule(scopedSchedule).catch(console.error);
+    return schedulesStore.saveSchedule(db, schedule);
   }
 
   async getSchedule(id: string, instanceId?: string): Promise<Schedule | undefined> {
     const db = await this.init();
-    const schedule = await db.get('schedules', id);
-    if (!schedule) return undefined;
-    return this.matchesScope(schedule, instanceId) ? schedule : undefined;
+    return schedulesStore.getSchedule(db, id, instanceId);
   }
 
   async getSchedulesByChatId(chatId: string, instanceId?: string): Promise<Schedule[]> {
     const db = await this.init();
-    const schedules = await db.getAllFromIndex('schedules', 'by-chatId', chatId);
-    return schedules
-      .filter((s) => this.matchesScope(s, instanceId))
-      .sort((a, b) => a.scheduledTime - b.scheduledTime);
+    return schedulesStore.getSchedulesByChatId(db, chatId, instanceId);
   }
 
   async getPendingSchedules(instanceId?: string): Promise<Schedule[]> {
     const db = await this.init();
-    const now = Date.now();
-    const pendingSchedules = await db.getAllFromIndex('schedules', 'by-status', 'pending');
-
-    // Filter to only return schedules that are due
-    return pendingSchedules
-      .filter((schedule) => this.matchesScope(schedule, instanceId))
-      .filter(schedule => schedule.scheduledTime <= now)
-      .sort((a, b) => a.scheduledTime - b.scheduledTime);
+    return schedulesStore.getPendingSchedules(db, instanceId);
   }
 
   async getAllPendingSchedules(instanceId?: string): Promise<Schedule[]> {
     const db = await this.init();
-    const pending = await db.getAllFromIndex('schedules', 'by-status', 'pending');
-    return pending.filter((schedule) => this.matchesScope(schedule, instanceId));
+    return schedulesStore.getAllPendingSchedules(db, instanceId);
   }
 
   async updateScheduleStatus(id: string, status: 'pending' | 'paused' | 'completed' | 'cancelled' | 'failed', instanceId?: string): Promise<void> {
     const db = await this.init();
-    const schedule = await db.get('schedules', id);
-
-    if (schedule && this.matchesScope(schedule, instanceId)) {
-      await db.put('schedules', {
-        ...schedule,
-        status,
-        updatedAt: Date.now()
-      });
-
-      // Trigger chrome.storage change event
-      if (typeof chrome !== 'undefined' && chrome.storage) {
-        await chrome.storage.local.set({
-          schedules: Date.now()
-        });
-      }
-    }
+    return schedulesStore.updateScheduleStatus(db, id, status, instanceId);
   }
 
   async getPausedSchedules(instanceId?: string): Promise<Schedule[]> {
     const db = await this.init();
-    const paused = await db.getAllFromIndex('schedules', 'by-status', 'paused');
-    return paused.filter((schedule) => this.matchesScope(schedule, instanceId));
+    return schedulesStore.getPausedSchedules(db, instanceId);
   }
 
   async getAllSchedules(instanceId?: string): Promise<Schedule[]> {
     const db = await this.init();
-    const schedules = await db.getAll('schedules');
-    // Sort by scheduled time
-    return schedules
-      .filter((s) => this.matchesScope(s, instanceId))
-      .sort((a, b) => a.scheduledTime - b.scheduledTime);
+    return schedulesStore.getAllSchedules(db, instanceId);
   }
 
   async deleteSchedule(id: string, instanceId?: string): Promise<void> {
     const db = await this.init();
-    const schedule = await db.get('schedules', id);
-    if (!schedule || !this.matchesScope(schedule, instanceId)) {
-      return;
-    }
-    await db.delete('schedules', id);
-
-    // Trigger chrome.storage change event
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        schedules: Date.now()
-      });
-    }
-
-    // Trigger sync
-    syncService.deleteSchedule(id, schedule.instanceId).catch(console.error);
+    return schedulesStore.deleteSchedule(db, id, instanceId);
   }
 
   // ==================== NOTES ====================
   async createNote(note: Omit<Note, 'id' | 'createdAt' | 'updatedAt'>): Promise<Note> {
     const db = await this.init();
-    const now = Date.now();
-
-    const newNote: Note = {
-      ...note,
-      instanceId: this.normalizeScope(note.instanceId),
-      id: `note_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    await db.put('notes', newNote);
-    console.log('[PrinChat DB] Note created:', newNote.id);
-
-    // Trigger chrome.storage change event for real-time updates
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        notes: Date.now()
-      });
-    }
-
-    // Trigger sync
-    syncService.syncNote(newNote).catch(console.error);
-
-    return newNote;
+    return notesStore.createNote(db, note);
   }
 
   async getNotesByChatId(chatId: string, instanceId?: string): Promise<Note[]> {
-    console.log('[DB] getNotesByChatId called with chatId:', chatId);
     const db = await this.init();
-    const notes = await db.getAllFromIndex('notes', 'by-chatId', chatId);
-    console.log('[DB] getNotesByChatId found', notes.length, 'notes:', notes);
-    // Sort by creation date descending (newest first)
-    return notes
-      .filter((n) => this.matchesScope(n, instanceId))
-      .sort((a, b) => b.createdAt - a.createdAt);
+    return notesStore.getNotesByChatId(db, chatId, instanceId);
   }
 
   async getNote(id: string, instanceId?: string): Promise<Note | undefined> {
     const db = await this.init();
-    const note = await db.get('notes', id);
-    if (!note) return undefined;
-    return this.matchesScope(note, instanceId) ? note : undefined;
+    return notesStore.getNote(db, id, instanceId);
   }
 
   async updateNote(id: string, updates: Partial<Omit<Note, 'id' | 'createdAt'>>, instanceId?: string): Promise<void> {
     const db = await this.init();
-    const existingNote = await db.get('notes', id);
-
-    if (!existingNote || !this.matchesScope(existingNote, instanceId)) {
-      throw new Error(`Note with id ${id} not found`);
-    }
-
-    const updatedNote: Note = {
-      ...existingNote,
-      ...updates,
-      instanceId: this.normalizeScope((updates as any)?.instanceId || existingNote.instanceId),
-      updatedAt: Date.now(),
-    };
-
-    await db.put('notes', updatedNote);
-    console.log('[PrinChat DB] Note updated:', id);
-
-    // Trigger chrome.storage change event for real-time updates
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        notes: Date.now()
-      });
-    }
-
-    // Trigger sync
-    syncService.syncNote(updatedNote).catch(console.error);
+    return notesStore.updateNote(db, id, updates, instanceId);
   }
 
   async deleteNote(id: string, instanceId?: string): Promise<void> {
     const db = await this.init();
-    const note = await db.get('notes', id);
-    if (!note || !this.matchesScope(note, instanceId)) {
-      return;
-    }
-    await db.delete('notes', id);
-    console.log('[PrinChat DB] Note deleted:', id);
-
-    // Trigger chrome.storage change event for real-time updates
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        notes: Date.now()
-      });
-    }
-
-    // Trigger sync
-    syncService.deleteNote(id, note.instanceId).catch(console.error);
+    return notesStore.deleteNote(db, id, instanceId);
   }
 
   async getAllNotes(instanceId?: string): Promise<Note[]> {
     const db = await this.init();
-    const notes = await db.getAll('notes');
-    // Sort by creation date descending (newest first)
-    return notes
-      .filter((n) => this.matchesScope(n, instanceId))
-      .sort((a, b) => b.createdAt - a.createdAt);
+    return notesStore.getAllNotes(db, instanceId);
   }
 
   // ==================== KANBAN COLUMNS ====================
-  /**
-   * Initialize default Kanban columns if none exist for a given instance
-   */
-  private async initializeDefaultKanbanColumns(instanceId: string): Promise<void> {
-    const scopedInstanceId = this.normalizeScope(instanceId);
-    const inFlight = this.kanbanInitLocks.get(scopedInstanceId);
-    if (inFlight) {
-      await inFlight;
-      return;
-    }
-
-    const initPromise = (async () => {
-      const db = await this.init();
-      const allColumns = await db.getAll('kanban_columns');
-      const existingColumns = allColumns.filter((col) => this.matchesScope(col, scopedInstanceId));
-
-      if (existingColumns.length === 0) {
-        console.log('[PrinChat DB] Initializing default Kanban columns for instance:', scopedInstanceId);
-
-        const now = Date.now();
-        const instanceToken = scopedInstanceId.replace(/[^a-zA-Z0-9]/g, '_');
-
-        for (const column of DEFAULT_KANBAN_COLUMNS) {
-          const slug = column.name
-            .toLowerCase()
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '')
-            .replace(/[^a-z0-9]+/g, '_')
-            .replace(/^_+|_+$/g, '') || 'default';
-
-          const kanbanColumn: KanbanColumn = {
-            ...column,
-            // Deterministic default IDs avoid race-created duplicates.
-            id: `kanban_col_${instanceToken}_${slug}`,
-            instanceId: scopedInstanceId,
-            createdAt: now,
-            updatedAt: now,
-          };
-          await db.put('kanban_columns', kanbanColumn);
-          console.log('[PrinChat DB] Created default column:', kanbanColumn.name);
-        }
-
-        console.log('[PrinChat DB] ✅ Default Kanban columns initialized');
-      }
-    })();
-
-    this.kanbanInitLocks.set(scopedInstanceId, initPromise);
-    try {
-      await initPromise;
-    } finally {
-      this.kanbanInitLocks.delete(scopedInstanceId);
-    }
-  }
-
-  /**
-   * Save or update a Kanban column
-   */
   async saveKanbanColumn(column: KanbanColumn): Promise<void> {
     const db = await this.init();
-    const scopedColumn: KanbanColumn = {
-      ...column,
-      instanceId: this.normalizeScope(column.instanceId),
-    };
-    await db.put('kanban_columns', scopedColumn);
-
-    // Trigger chrome.storage change event for real-time updates
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        kanban_columns: Date.now()
-      });
-    }
-
-    // Trigger sync
-    syncService.syncKanbanColumn(scopedColumn).catch(console.error);
+    return kanbanColumnsStore.saveKanbanColumn(db, column);
   }
 
-  /**
-   * Get a Kanban column by ID
-   */
   async getKanbanColumn(id: string, instanceId?: string): Promise<KanbanColumn | undefined> {
     const db = await this.init();
-    const column = await db.get('kanban_columns', id);
-    if (!column) return undefined;
-    return this.matchesScope(column, instanceId) ? column : undefined;
+    return kanbanColumnsStore.getKanbanColumn(db, id, instanceId);
   }
 
-  /**
-   * Get all Kanban columns sorted by order
-   */
   async getAllKanbanColumns(instanceId?: string): Promise<KanbanColumn[]> {
     const db = await this.init();
-    if (instanceId) {
-      await this.initializeDefaultKanbanColumns(instanceId);
-      await this.normalizeAndMergeKanbanColumns(instanceId);
-    }
-
-    const columns = await db.getAllFromIndex('kanban_columns', 'by-order');
-    const scoped = columns.filter((column) => this.matchesScope(column, instanceId));
-
-    // Keep first column per normalized name to avoid duplicated defaults from legacy race conditions.
-    const byName = new Map<string, KanbanColumn>();
-    for (const column of scoped) {
-      const key = column.name.trim().toLowerCase();
-      if (!byName.has(key)) byName.set(key, column);
-    }
-
-    return Array.from(byName.values()).sort((a, b) => a.order - b.order);
+    return kanbanColumnsStore.getAllKanbanColumns(db, this.kanbanInitLocks, this.kanbanColumnNormalizationLocks, instanceId);
   }
 
-  /**
-   * Delete a Kanban column
-   * @param id Column ID to delete
-   * @throws Error if column is not deletable or has leads
-   */
   async deleteKanbanColumn(id: string, instanceId?: string): Promise<void> {
     const db = await this.init();
-    const column = await db.get('kanban_columns', id);
-
-    if (!column || !this.matchesScope(column, instanceId)) {
-      throw new Error('Column not found');
-    }
-
-    if (!column.canDelete) {
-      throw new Error('Cannot delete default column');
-    }
-
-    // Check if column has any leads
-    const leads = await db.getAllFromIndex('kanban_leads', 'by-columnId', id);
-    const scopedLeads = leads.filter((lead) => this.matchesScope(lead, instanceId));
-    if (scopedLeads.length > 0) {
-      throw new Error('Cannot delete column with leads. Move leads first.');
-    }
-
-    await db.delete('kanban_columns', id);
-
-    // Trigger chrome.storage change event
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        kanban_columns: Date.now()
-      });
-    }
-
-    // Trigger sync
-    syncService.deleteKanbanColumn(id, column.instanceId).catch(console.error);
+    return kanbanColumnsStore.deleteKanbanColumn(db, id, instanceId);
   }
 
-  /**
-   * Update column order
-   * @param columnId Column to move
-   * @param newOrder New order position (0-based)
-   */
   async updateColumnOrder(columnId: string, newOrder: number, instanceId?: string): Promise<void> {
     const db = await this.init();
-    const allColumns = await this.getAllKanbanColumns(instanceId);
-
-    // Find the column to move
-    const columnToMove = allColumns.find(c => c.id === columnId);
-    if (!columnToMove) {
-      throw new Error('Column not found');
-    }
-
-    const oldOrder = columnToMove.order;
-
-    // Reorder columns
-    const updatedColumns = allColumns.map(col => {
-      if (col.id === columnId) {
-        return { ...col, order: newOrder, updatedAt: Date.now() };
-      } else {
-        // Shift other columns
-        if (oldOrder < newOrder) {
-          // Moving right
-          if (col.order > oldOrder && col.order <= newOrder) {
-            return { ...col, order: col.order - 1, updatedAt: Date.now() };
-          }
-        } else {
-          // Moving left
-          if (col.order >= newOrder && col.order < oldOrder) {
-            return { ...col, order: col.order + 1, updatedAt: Date.now() };
-          }
-        }
-        return col;
-      }
-    });
-
-    // Save all updated columns
-    for (const col of updatedColumns) {
-      await db.put('kanban_columns', col);
-    }
-
-    // Trigger chrome.storage change event
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        kanban_columns: Date.now()
-      });
-    }
-
-    // Sync all updated columns (for order update)
-    // Optimisation: Could receive array in syncService
-    for (const col of updatedColumns) {
-      syncService.syncKanbanColumn(col).catch(console.error);
-    }
+    return kanbanColumnsStore.updateColumnOrder(db, this.kanbanInitLocks, this.kanbanColumnNormalizationLocks, columnId, newOrder, instanceId);
   }
 
-  /**
-   * Create a new Kanban column
-   */
-  async createKanbanColumn(
-    name: string,
-    color: string,
-    description?: string,
-    instanceId?: string
-  ): Promise<KanbanColumn> {
+  async createKanbanColumn(name: string, color: string, description?: string, instanceId?: string): Promise<KanbanColumn> {
     const db = await this.init();
-    const scopedInstanceId = this.normalizeScope(instanceId);
-    const existingColumns = await this.getAllKanbanColumns(scopedInstanceId);
-
-    // Check for duplicate names
-    if (existingColumns.some(col => col.name.toLowerCase() === name.toLowerCase())) {
-      throw new Error('Column name already exists');
-    }
-
-    const now = Date.now();
-    const instanceToken = scopedInstanceId.replace(/[^a-zA-Z0-9]/g, '_');
-    const newColumn: KanbanColumn = {
-      id: `kanban_col_${instanceToken}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
-      instanceId: scopedInstanceId,
-      name,
-      color,
-      description,
-      order: existingColumns.length, // Add to end
-      isDefault: false,
-      canDelete: true,
-      canEdit: true,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    await db.put('kanban_columns', newColumn);
-
-    // Trigger chrome.storage change event
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        kanban_columns: Date.now()
-      });
-    }
-
-    // Trigger sync
-    syncService.syncKanbanColumn(newColumn).catch(console.error);
-
-    return newColumn;
+    return kanbanColumnsStore.createKanbanColumn(db, this.kanbanInitLocks, this.kanbanColumnNormalizationLocks, name, color, description, instanceId);
   }
 
-  /**
-   * Update Kanban column (name and/or color)
-   */
-  async updateKanbanColumn(
-    id: string,
-    updates: { name?: string; color?: string },
-    instanceId?: string
-  ): Promise<void> {
+  async updateKanbanColumn(id: string, updates: { name?: string; color?: string }, instanceId?: string): Promise<void> {
     const db = await this.init();
-    const column = await db.get('kanban_columns', id);
-
-    if (!column || !this.matchesScope(column, instanceId)) {
-      throw new Error('Column not found');
-    }
-
-    if (!column.canEdit) {
-      throw new Error('Cannot edit default column');
-    }
-
-    // Check for duplicate names if name is being updated
-    if (updates.name && updates.name !== column.name) {
-      const existingColumns = await this.getAllKanbanColumns(instanceId);
-      if (existingColumns.some(col => col.id !== id && col.name.toLowerCase() === updates.name!.toLowerCase())) {
-        throw new Error('Column name already exists');
-      }
-    }
-
-    const updatedColumn: KanbanColumn = {
-      ...column,
-      ...updates,
-      instanceId: this.normalizeScope(column.instanceId),
-      updatedAt: Date.now(),
-    };
-
-    await db.put('kanban_columns', updatedColumn);
-
-    // Trigger chrome.storage change event
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        kanban_columns: Date.now()
-      });
-    }
-
-    // Trigger sync
-    syncService.syncKanbanColumn(updatedColumn).catch(console.error);
+    return kanbanColumnsStore.updateKanbanColumn(db, this.kanbanInitLocks, this.kanbanColumnNormalizationLocks, id, updates, instanceId);
   }
 
   // ==================== KANBAN LEADS ====================
-  /**
-   * Create a new lead contact
-   */
   async createLead(lead: Omit<LeadContact, 'id' | 'createdAt' | 'updatedAt'>): Promise<LeadContact> {
     const db = await this.init();
-    const now = Date.now();
-    const scopedInstanceId = this.normalizeScope(lead.instanceId);
-    const identity = this.normalizeLeadIdentity(lead.chatId || lead.phone) || lead.phone;
-    const normalizedChatId = this.normalizeLeadChatId(lead.chatId || lead.phone || identity) || (lead.chatId || lead.phone);
-    const scopedId = buildScopedLeadId(scopedInstanceId, identity);
-
-    // MERGE-ON-COLLISION: If a lead with this ID already exists, preserve
-    // existing non-empty data (photo, tags, labels, columnId) that the
-    // caller might not have (e.g., injector re-creating a lead it failed
-    // to match via variant lookup).
-    let existingLead: LeadContact | undefined;
-    try {
-      existingLead = await db.get('kanban_leads', scopedId);
-    } catch (_e) { /* not found, that's fine */ }
-
-    const newLead: LeadContact = {
-      ...lead,
-      instanceId: scopedInstanceId,
-      chatId: normalizedChatId,
-      phone: this.normalizeLeadIdentity(lead.phone || lead.chatId || identity) || lead.phone,
-      id: scopedId,
-      order: lead.order ?? -now, // Default to top of list if order is missing
-      createdAt: existingLead?.createdAt || now,
-      updatedAt: now,
-    };
-
-    // Preserve existing non-empty fields when the incoming data is empty
-    if (existingLead) {
-      console.log('[PrinChat DB] createLead: lead already exists, merging with existing data:', scopedId);
-
-      // Preserve existing valid photo when incoming photo is empty/invalid
-      if (!this.hasRenderablePhoto(newLead.photo) && this.hasRenderablePhoto(existingLead.photo)) {
-        newLead.photo = existingLead.photo;
-      }
-
-      // Preserve tags if new lead has none
-      if ((!Array.isArray(newLead.tags) || newLead.tags.length === 0) && Array.isArray(existingLead.tags) && existingLead.tags.length > 0) {
-        newLead.tags = existingLead.tags;
-      }
-
-      // Preserve labels if new lead has none
-      if ((!Array.isArray((newLead as any).labels) || (newLead as any).labels.length === 0) && Array.isArray((existingLead as any).labels) && (existingLead as any).labels.length > 0) {
-        (newLead as any).labels = (existingLead as any).labels;
-      }
-
-      // Preserve columnId — don't reset to default column on re-creation
-      if (existingLead.columnId && lead.columnId !== existingLead.columnId) {
-        newLead.columnId = existingLead.columnId;
-      }
-    }
-
-    await db.put('kanban_leads', newLead);
-    console.log('[PrinChat DB] Lead created:', newLead.id, existingLead ? '(merged with existing)' : '(new)');
-
-    // Trigger chrome.storage change event
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        kanban_leads: Date.now()
-      });
-    }
-
-    // Trigger sync
-    syncService.syncLead(newLead).catch(console.error);
-
-    return newLead;
+    return kanbanLeadsStore.createLead(db, lead);
   }
 
-  /**
-   * Save/update a lead
-   */
   async saveLead(lead: LeadContact): Promise<void> {
     const db = await this.init();
-    const scopedInstanceId = this.normalizeScope(lead.instanceId);
-    const identity = this.normalizeLeadIdentity(lead.chatId || lead.phone || lead.id) || lead.id;
-    const updatedLead = {
-      ...lead,
-      instanceId: scopedInstanceId,
-      chatId: this.normalizeLeadChatId(lead.chatId || lead.phone || identity) || lead.chatId,
-      phone: this.normalizeLeadIdentity(lead.phone || lead.chatId || identity) || lead.phone,
-      id: lead.id?.includes('::') ? lead.id : buildScopedLeadId(scopedInstanceId, identity),
-      updatedAt: Date.now()
-    };
-    await db.put('kanban_leads', updatedLead);
-
-    // Trigger chrome.storage change event
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        kanban_leads: Date.now()
-      });
-    }
-
-    // Trigger sync
-    syncService.syncLead(updatedLead).catch(console.error);
+    return kanbanLeadsStore.saveLead(db, lead);
   }
 
-  /**
-   * Update a lead partially
-   */
   async updateLead(id: string, updates: Partial<LeadContact>, instanceId?: string): Promise<void> {
     const db = await this.init();
-    const storageKey = await this.resolveLeadStorageKey(db, id, instanceId);
-    if (!storageKey) {
-      throw new Error(`Lead with id ${id} not found`);
-    }
-    const lead = await db.get('kanban_leads', storageKey);
-
-    if (!lead) {
-      throw new Error(`Lead with id ${id} not found`);
-    }
-
-    const sanitizedUpdates: Partial<LeadContact> = { ...updates };
-    if (Object.prototype.hasOwnProperty.call(sanitizedUpdates, 'photo')) {
-      const incomingPhoto = (sanitizedUpdates as any).photo;
-      if (!this.hasRenderablePhoto(incomingPhoto) && this.hasRenderablePhoto(lead.photo)) {
-        delete (sanitizedUpdates as any).photo;
-      }
-    }
-
-    const scopedInstanceId = this.normalizeScope((updates as any).instanceId || lead.instanceId || instanceId);
-    const targetIdentity = this.normalizeLeadIdentity(
-      sanitizedUpdates.chatId || sanitizedUpdates.phone || lead.chatId || lead.phone || lead.id
-    ) || (sanitizedUpdates.chatId || sanitizedUpdates.phone || lead.chatId || lead.phone || lead.id);
-
-    const updatedLead: LeadContact = {
-      ...lead,
-      ...sanitizedUpdates,
-      instanceId: scopedInstanceId,
-      chatId: this.normalizeLeadChatId(sanitizedUpdates.chatId || sanitizedUpdates.phone || lead.chatId || lead.phone || targetIdentity) || (sanitizedUpdates.chatId || lead.chatId),
-      phone: this.normalizeLeadIdentity(sanitizedUpdates.phone || sanitizedUpdates.chatId || lead.phone || lead.chatId || targetIdentity) || (sanitizedUpdates.phone || lead.phone),
-      id: storageKey.includes('::') ? storageKey : buildScopedLeadId(scopedInstanceId, targetIdentity),
-      updatedAt: Date.now(),
-    };
-
-    await db.put('kanban_leads', updatedLead);
-
-    // Trigger chrome.storage change event
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        kanban_leads: Date.now()
-      });
-    }
-
-    // Trigger sync
-    syncService.syncLead(updatedLead).catch(console.error);
+    return kanbanLeadsStore.updateLead(db, id, updates, instanceId);
   }
 
-  /**
-   * Get a single lead by ID
-   */
   async getLead(id: string, instanceId?: string): Promise<LeadContact | undefined> {
     const db = await this.init();
-    const storageKey = await this.resolveLeadStorageKey(db, id, instanceId);
-    if (!storageKey) return undefined;
-    return db.get('kanban_leads', storageKey);
+    return kanbanLeadsStore.getLead(db, id, instanceId);
   }
 
-  /**
-   * Get all leads
-   */
   async getAllLeads(instanceId?: string): Promise<LeadContact[]> {
-    if (instanceId) {
-      await this.normalizeAndMergeKanbanColumns(instanceId);
-    }
-    await this.normalizeAndMergeLeads(instanceId);
     const db = await this.init();
-    const leads = await db.getAll('kanban_leads');
-    return leads.filter((lead) => this.matchesScope(lead, instanceId));
+    return kanbanLeadsStore.getAllLeads(db, this.kanbanColumnNormalizationLocks, this.leadNormalizationLocks, instanceId);
   }
 
-  /**
-   * Get leads for a specific column
-   */
   async getLeadsByColumn(columnId: string, instanceId?: string): Promise<LeadContact[]> {
-    if (instanceId) {
-      await this.normalizeAndMergeKanbanColumns(instanceId);
-    }
-    await this.normalizeAndMergeLeads(instanceId);
     const db = await this.init();
-    const leads = await db.getAllFromIndex('kanban_leads', 'by-columnId', columnId);
-    const sorted = leads
-      .filter((lead) => this.matchesScope(lead, instanceId))
-      .sort((a, b) => a.order - b.order);
-
-    // Debug: Log first 3 leads to verify order
-    if (sorted.length > 0) {
-      console.log(`[PrinChat DB] Loaded column ${columnId}:`, sorted.map(l => `${l.id.substring(0, 5)}..(${l.order})`));
-    }
-
-    return sorted;
+    return kanbanLeadsStore.getLeadsByColumn(db, this.kanbanColumnNormalizationLocks, this.leadNormalizationLocks, columnId, instanceId);
   }
 
-  /**
-   * Move a lead to a different column
-   */
   async moveLead(leadId: string, newColumnId: string, newOrder: number, instanceId?: string): Promise<void> {
     const db = await this.init();
-    const storageKey = await this.resolveLeadStorageKey(db, leadId, instanceId);
-    if (!storageKey) {
-      console.warn('[PrinChat DB] Lead not found:', leadId);
-      return;
-    }
-    const lead = await db.get('kanban_leads', storageKey);
-
-    if (!lead) {
-      console.warn('[PrinChat DB] Lead not found:', leadId);
-      return;
-    }
-
-    const updatedLead: LeadContact = {
-      ...lead,
-      columnId: newColumnId,
-      order: newOrder,
-      updatedAt: Date.now()
-    };
-
-    await db.put('kanban_leads', updatedLead);
-    console.log('[PrinChat DB] Lead moved:', leadId, '→', newColumnId);
-
-    // Trigger chrome.storage change event
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        kanban_leads: Date.now()
-      });
-    }
-
-    // Trigger sync
-    syncService.syncLead(updatedLead).catch(console.error);
+    return kanbanLeadsStore.moveLead(db, leadId, newColumnId, newOrder, instanceId);
   }
 
-  /**
-   * Delete a lead
-   */
   async deleteLead(id: string, instanceId?: string): Promise<void> {
     const db = await this.init();
-    const resolved = await this.resolveScopedLeadAliases(db, id, instanceId);
-    if (!resolved) return;
-
-    const { aliases, canonicalLeadId, canonicalChatId, scope } = resolved;
-
-    for (const alias of aliases) {
-      await db.delete('kanban_leads', alias.id);
-    }
-
-    console.log('[PrinChat DB] Lead delete completed', {
-      phase: 'delete',
-      rawLeadId: id,
-      canonicalLeadId,
-      canonicalChatId,
-      aliasesDeletedCount: aliases.length
-    });
-
-    // Trigger chrome.storage change event
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.set({
-        kanban_leads: Date.now()
-      });
-    }
-
-    // Trigger sync
-    for (const alias of aliases) {
-      syncService
-        .deleteLead(alias.id, scope, canonicalChatId)
-        .catch(console.error);
-    }
+    return kanbanLeadsStore.deleteLead(db, id, instanceId);
   }
 
   // ==================== UTILITY ====================
@@ -2048,10 +609,8 @@ class DatabaseService {
   async importData(jsonData: string): Promise<void> {
     const data = JSON.parse(jsonData);
 
-    // Import messages
     if (data.messages) {
       for (const msg of data.messages) {
-        // Convert base64 back to Blob if needed
         if (msg.audioData && typeof msg.audioData === 'string') {
           msg.audioData = await this.base64ToBlob(msg.audioData);
         }
@@ -2065,28 +624,24 @@ class DatabaseService {
       }
     }
 
-    // Import scripts
     if (data.scripts) {
       for (const script of data.scripts) {
         await this.saveScript(script);
       }
     }
 
-    // Import triggers
     if (data.triggers) {
       for (const trigger of data.triggers) {
         await this.saveTrigger(trigger);
       }
     }
 
-    // Import tags
     if (data.tags) {
       for (const tag of data.tags) {
         await this.saveTag(tag);
       }
     }
 
-    // Import folders
     if (data.folders) {
       for (const folder of data.folders) {
         await this.saveFolder(folder);
