@@ -37,3 +37,29 @@ yarn-error.log*
 package-lock.json
 yarn.lock
 pnpm-lock.yaml
+
+# Environment & Secrets (AIOS)
+.env.*.local
+*.key
+*.pem
+
+# Dependencies (AIOS)
+node_modules
+
+# Build & Logs (AIOS)
+logs/
+
+# AIOS & AI Agent Configs
+.agent/
+.aios-core/
+.antigravity/
+.claude/
+.codex/
+.cursor/
+.gemini/
+.github/
+squads/
+AGENTS.md
+pro-installed-manifest.yaml
+pro-version.json
+.env.example
