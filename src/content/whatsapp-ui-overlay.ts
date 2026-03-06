@@ -129,6 +129,14 @@ class WhatsAppUIOverlay {
   private scheduleCreationModal: HTMLElement | null = null; // Schedule creation modal
   private scheduleDeleteConfirmationModal: HTMLElement | null = null; // Schedule delete confirmation modal
   private notesPopup: HTMLElement | null = null; // Notes popup
+  private moveColumnPopup: HTMLElement | null = null; // Move lead to column popup
+  private moveColumnPopupOutsideHandler: ((event: MouseEvent) => void) | null = null;
+  private moveColumnButtonRequestVersion: number = 0;
+  private moveColumnButtonRefreshTimer: NodeJS.Timeout | null = null;
+  private pendingMoveColumnButtonChatHint: string | undefined = undefined;
+  private readonly MOVE_COLUMN_BUTTON_REFRESH_DEBOUNCE_MS = 150;
+  private moveColumnButtonColumnsCache: { data: any[]; timestamp: number } | null = null;
+  private readonly MOVE_COLUMN_BUTTON_COLUMNS_CACHE_TTL = 3000;
   private noteEditorModal: HTMLElement | null = null; // Note editor modal
   private tooltip: HTMLElement | null = null;
   private scripts: Script[] = [];
@@ -185,6 +193,17 @@ class WhatsAppUIOverlay {
   private instanceId: string = Math.random().toString(36).substring(7); // Debug ID
   private kanbanPollingInterval: NodeJS.Timeout | null = null; // Polling for tag updates
   private lastPolledTags: Map<string, string[]> = new Map(); // Cache of last seen tags per chatId
+  private hasScheduledSystemLeadCleanup: boolean = false;
+  private activeKanbanCardMenu: HTMLElement | null = null;
+  private activeKanbanCardMenuButton: HTMLElement | null = null;
+  private activeKanbanCardMenuCard: HTMLElement | null = null;
+  private activeKanbanCardMenuOutsideHandler: ((event: MouseEvent) => void) | null = null;
+  private sidebarPhotoCache: Map<string, string> = new Map(); // Cache sidebar photos before overlay hides them
+  private incomingPhotoHydrationByLead: Map<string, Promise<void>> = new Map();
+  private brokenPhotoUrlSet: Set<string> = new Set();
+  private kanbanBootstrapRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private kanbanBootstrapRetryCount: number = 0;
+  private readonly MAX_KANBAN_BOOTSTRAP_RETRIES = 5;
 
 
   constructor() {
@@ -193,6 +212,33 @@ class WhatsAppUIOverlay {
     console.log(`[PrinChat UI] 📍 Location: ${window.location.href}`);
     console.log(`[PrinChat UI] 🖼️ Window Top? ${window.self === window.top}`);
     this.init();
+  }
+
+  private isDiagDebugEnabled(): boolean {
+    try {
+      const marker = document.getElementById('PrinChatInjected');
+      const markerFlag = marker?.getAttribute('data-princhat-debug-diag');
+      if (markerFlag === '1' || markerFlag === 'true') return true;
+
+      const windowAny = window as any;
+      if (windowAny.__PRINCHAT_DEBUG_DIAG__ === true) return true;
+
+      const localDebug = localStorage.getItem('princhat_debug_diag')
+        || localStorage.getItem('princhat_debug');
+      return localDebug === '1' || localDebug === 'true';
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  private diagDebug(message: string, ...args: any[]): void {
+    if (!this.isDiagDebugEnabled()) return;
+    console.debug(message, ...args);
+  }
+
+  private diagInfo(message: string, ...args: any[]): void {
+    if (!this.isDiagDebugEnabled()) return;
+    console.info(message, ...args);
   }
 
   private async init() {
@@ -307,18 +353,23 @@ class WhatsAppUIOverlay {
       this.injectScheduleButton();
       console.log('[PrinChat UI] ✓ Schedule button injected');
 
+      // Inject move-to-column button into chat header
+      console.log('[PrinChat UI] Step 12.1: Injecting move-to-column button...');
+      this.injectMoveToColumnButton();
+      console.log('[PrinChat UI] ✓ Move-to-column button injected');
+
       // Inject notes button into chat header
-      console.log('[PrinChat UI] Step 12.1: Injecting notes button...');
+      console.log('[PrinChat UI] Step 12.2: Injecting notes button...');
       this.injectNotesButton();
       console.log('[PrinChat UI] ✓ Notes button injected');
 
       // Inject Kanban button into WhatsApp sidebar
-      console.log('[PrinChat UI] Step 12.2: Injecting Kanban button in sidebar...');
+      console.log('[PrinChat UI] Step 12.3: Injecting Kanban button in sidebar...');
       this.injectKanbanButton();
       console.log('[PrinChat UI] ✓ Kanban button injected');
 
       // Inject critical Kanban styles (Time badge fix)
-      console.log('[PrinChat UI] Step 12.3: Injecting Kanban styles...');
+      console.log('[PrinChat UI] Step 12.4: Injecting Kanban styles...');
       this.injectKanbanStyles();
       console.log('[PrinChat UI] ✓ Kanban styles injected');
 
@@ -479,6 +530,79 @@ class WhatsAppUIOverlay {
       }));
       // console.log('[PrinChat UI] Event dispatched successfully');
     });
+  }
+
+  private isRetryableKanbanLoadError(response: any): boolean {
+    const errorText = String(response?.error || '').toUpperCase();
+    return !!(
+      response?.isTimeout ||
+      errorText.includes('INSTANCE_NOT_READY') ||
+      errorText.includes('INSTANCE_REQUIRED') ||
+      errorText.includes('REQUEST TIMEOUT') ||
+      errorText.includes('TIMEOUT') ||
+      errorText.includes('CONTEXT INVALIDATED')
+    );
+  }
+
+  private async requestKanbanDataWithRetry(message: any, timeoutMs: number = 7000, attempts: number = 4): Promise<any> {
+    let lastResponse: any = null;
+
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const response = await this.requestFromContentScript(message, timeoutMs);
+      lastResponse = response;
+
+      if (response?.success) {
+        return response;
+      }
+
+      if (!this.isRetryableKanbanLoadError(response) || attempt === attempts) {
+        break;
+      }
+
+      const backoffMs = 250 * attempt;
+      console.warn('[PrinChat UI] Kanban scoped request not ready. Retrying...', {
+        type: message?.type,
+        attempt,
+        backoffMs,
+        error: response?.error
+      });
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    }
+
+    return lastResponse;
+  }
+
+  private clearKanbanBootstrapRetry(): void {
+    if (this.kanbanBootstrapRetryTimer) {
+      clearTimeout(this.kanbanBootstrapRetryTimer);
+      this.kanbanBootstrapRetryTimer = null;
+    }
+    this.kanbanBootstrapRetryCount = 0;
+  }
+
+  private scheduleKanbanBootstrapRetry(reason: string): void {
+    if (!this.isKanbanOpen) return;
+    if (this.kanbanBootstrapRetryTimer) return;
+    if (this.kanbanBootstrapRetryCount >= this.MAX_KANBAN_BOOTSTRAP_RETRIES) {
+      console.warn('[PrinChat UI] Kanban bootstrap retries exhausted.', { reason });
+      return;
+    }
+
+    const retryDelays = [350, 800, 1400, 2200, 3200];
+    const delayMs = retryDelays[Math.min(this.kanbanBootstrapRetryCount, retryDelays.length - 1)];
+    this.kanbanBootstrapRetryCount += 1;
+
+    console.warn('[PrinChat UI] Scheduling Kanban bootstrap retry...', {
+      reason,
+      attempt: this.kanbanBootstrapRetryCount,
+      delayMs
+    });
+
+    this.kanbanBootstrapRetryTimer = setTimeout(() => {
+      this.kanbanBootstrapRetryTimer = null;
+      if (!this.isKanbanOpen) return;
+      this.renderKanbanColumns();
+    }, delayMs);
   }
 
   private createShortcutBar() {
@@ -830,15 +954,23 @@ class WhatsAppUIOverlay {
    * Called by monitorChatChanges when chat changes are detected
    */
 
-  private invalidateChatCache() {
+  private invalidateChatCache(immediate: boolean = false) {
     if (this.chatCacheInvalidateTimer) {
       clearTimeout(this.chatCacheInvalidateTimer);
+      this.chatCacheInvalidateTimer = null;
+    }
+
+    if (immediate) {
+      this.cachedChatId = null;
+      this.cachedChatTimestamp = 0;
+      return;
     }
 
     this.chatCacheInvalidateTimer = setTimeout(() => {
       console.log('[PrinChat UI] Invalidating chat cache (Debounced)');
       this.cachedChatId = null;
       this.cachedChatTimestamp = 0;
+      this.chatCacheInvalidateTimer = null;
     }, 500); // 500ms debounce
   }
 
@@ -3730,6 +3862,8 @@ class WhatsAppUIOverlay {
     }
     document.querySelectorAll('.princhat-global-notes-popup-unique').forEach(el => el.remove());
 
+    this.closeMoveToColumnPopup();
+
     // Also close the main header popup (iframe) unless excluded
     if (!excludeHeaderPopup && this.headerPopup && this.isHeaderPopupOpen) {
       this.toggleHeaderPopup(false);
@@ -3855,6 +3989,11 @@ class WhatsAppUIOverlay {
     if (this.notesPopup) {
       this.notesPopup.remove();
       this.notesPopup = null;
+    }
+
+    // Close move-to-column popup if open
+    if (this.moveColumnPopup) {
+      this.closeMoveToColumnPopup();
     }
 
     // Close header global popups
@@ -4292,6 +4431,11 @@ class WhatsAppUIOverlay {
     if (this.scheduleListPopup) {
       this.scheduleListPopup.remove();
       this.scheduleListPopup = null;
+    }
+
+    // Close move-to-column popup if open
+    if (this.moveColumnPopup) {
+      this.closeMoveToColumnPopup();
     }
 
     // Close header global popups (including executions unless pinned)
@@ -6542,7 +6686,8 @@ class WhatsAppUIOverlay {
    */
   private buildGlobalScheduleCardHTML(schedule: Schedule, chatName?: string, chatPhoto?: string): string {
     // Use provided values or defaults
-    const displayName = chatName || schedule.chatName || schedule.chatId.split('@')[0];
+    const fallbackIdentity = this.extractLeadIdentity(schedule.chatId) || schedule.chatId;
+    const displayName = chatName || schedule.chatName || fallbackIdentity;
 
 
 
@@ -9680,20 +9825,21 @@ class WhatsAppUIOverlay {
     const currentChatElement = main?.querySelector('[data-tab]');
     if (currentChatElement && currentChatElement !== this.lastKnownChatElement) {
       console.log('[PrinChat UI] Chat changed detected, invalidating cache');
-      this.invalidateChatCache();
+      this.invalidateChatCache(true);
       this.lastKnownChatElement = currentChatElement;
+      this.closeMoveToColumnPopup();
+      this.setButtonsLoadingState(true);
+      this.checkAndInjectButtons(true);
 
-      // Re-inject schedule button when chat changes
-      setTimeout(() => {
-        console.log('[PrinChat UI] Attempting to inject schedule button after chat change...');
-        this.injectScheduleButton();
-        this.injectNotesButton();
-      }, 500); // Wait for DOM to stabilize
+      // Retry once shortly after to handle WhatsApp header recreation race
+      setTimeout(() => this.checkAndInjectButtons(true), 180);
     } else if (!currentChatElement && this.lastKnownChatElement) {
       // Chat closed
       console.log('[PrinChat UI] Chat closed, invalidating cache');
-      this.invalidateChatCache();
+      this.invalidateChatCache(true);
       this.lastKnownChatElement = null;
+      this.closeMoveToColumnPopup();
+      this.checkAndInjectButtons(true);
     }
 
     if (currentValue !== newValue) {
@@ -9881,18 +10027,6 @@ class WhatsAppUIOverlay {
       this.updateMessageStatusPopup(); // Updates executions popup
     });
 
-    // Listen for lead updates (like tag changes) from injector
-    document.addEventListener('PrinChatKanbanLeadUpdated', (event: any) => {
-      console.log('[PrinChat DEBUG] 9. UI received PrinChatKanbanLeadUpdated!', event.detail);
-
-      // If Kanban is open, we should re-render or update specific card
-      if (this.isKanbanOpen) {
-        console.log('[PrinChat DEBUG] 10. Kanban is OPEN. Queuing render...');
-        this.queueKanbanRender();
-      } else {
-        console.log('[PrinChat DEBUG] 10. Kanban is CLOSED. Cache will naturally refresh on next open.');
-      }
-    });
     // Listen for message completion
     document.addEventListener('PrinChatMessageComplete', (event: any) => {
       const { messageId, success } = event.detail;
@@ -10132,6 +10266,675 @@ class WhatsAppUIOverlay {
     });
   }
 
+  private getKanbanColumnsIconShapeMarkup(): string {
+    return `
+      <rect x="3" y="3" width="6" height="18" rx="1" stroke="currentColor" stroke-width="2" fill="none" />
+      <rect x="12" y="3" width="3" height="18" rx="1" stroke="currentColor" stroke-width="2" fill="none" />
+      <rect x="18" y="3" width="3" height="18" rx="1" stroke="currentColor" stroke-width="2" fill="none" />
+    `;
+  }
+
+  private getKanbanColumnsIconMarkup(size: number = 24, extraClass: string = ''): string {
+    const classAttr = extraClass ? ` class="${extraClass}"` : '';
+    return `
+      <svg viewBox="0 0 24 24" height="${size}" width="${size}" preserveAspectRatio="xMidYMid meet" fill="none" aria-hidden="true"${classAttr}>
+        ${this.getKanbanColumnsIconShapeMarkup()}
+      </svg>
+    `;
+  }
+
+  /**
+   * Inject move-to-column button into WhatsApp chat header
+   */
+  private injectMoveToColumnButton() {
+    try {
+      const chatHeader = document.querySelector('#main > header');
+      if (!chatHeader) {
+        return;
+      }
+
+      if (chatHeader.querySelector('.princhat-move-column-button')) {
+        return;
+      }
+
+      let actionsContainer: Element | null = null;
+      let insertRef: Node | null = null;
+
+      const scheduleButton = chatHeader.querySelector('.princhat-schedule-button');
+      if (scheduleButton && scheduleButton.parentElement) {
+        actionsContainer = scheduleButton.parentElement;
+        insertRef = scheduleButton;
+      } else {
+        const menuBtn = chatHeader.querySelector('[data-icon="menu"]') ||
+          chatHeader.querySelector('[aria-label="Mais opções"]') ||
+          chatHeader.querySelector('[aria-label="More options"]');
+
+        if (menuBtn) {
+          let parent = menuBtn.parentElement;
+          while (parent && parent !== chatHeader) {
+            const hasSearch = parent.querySelector('[aria-label="Pesquisar"]') ||
+              parent.querySelector('[data-icon="search"]');
+            if (hasSearch && parent.tagName === 'DIV') {
+              actionsContainer = parent;
+              break;
+            }
+            parent = parent.parentElement;
+          }
+        }
+
+        if (!actionsContainer) {
+          actionsContainer = chatHeader.querySelector('div.x78zum5.x6s0dn4.x1afcbsf.x14ug900');
+        }
+
+        if (!actionsContainer) {
+          const headerChildren = Array.from(chatHeader.children);
+          actionsContainer = headerChildren[headerChildren.length - 1];
+        }
+      }
+
+      if (!actionsContainer) {
+        console.error('[PrinChat UI] CRITICAL: Actions container not found for move-to-column button');
+        return;
+      }
+
+      const moveButton = document.createElement('button');
+      moveButton.className = 'princhat-move-column-button';
+      moveButton.title = 'Mover este contato para uma coluna do Kanban';
+      moveButton.innerHTML = `
+        ${this.getKanbanColumnsIconMarkup(14, 'princhat-move-column-icon')}
+        <span class="princhat-move-column-default-text">Mover para coluna</span>
+      `;
+
+      moveButton.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.toggleMoveToColumnPopup(moveButton).catch((error: any) => {
+          console.error('[PrinChat UI] Error toggling move-to-column popup:', error?.message || error);
+        });
+      });
+
+      if (insertRef) {
+        actionsContainer.insertBefore(moveButton, insertRef);
+      } else if (actionsContainer.firstChild) {
+        actionsContainer.insertBefore(moveButton, actionsContainer.firstChild);
+      } else {
+        actionsContainer.appendChild(moveButton);
+      }
+
+      this.scheduleMoveColumnButtonRefresh(undefined, true);
+
+      console.log('[PrinChat UI] ✅ Move-to-column button injected successfully');
+    } catch (error: any) {
+      console.error('[PrinChat UI] Error injecting move-to-column button:', error?.message || error);
+    }
+  }
+
+  private renderMoveToColumnButton(button: HTMLElement, column: { name: string; color?: string } | null = null) {
+    if (!column) {
+      const stateKey = 'default';
+      if (button.dataset.moveColumnState !== stateKey) {
+        button.classList.remove('has-column');
+        button.title = 'Mover este contato para uma coluna do Kanban';
+        button.innerHTML = `
+          ${this.getKanbanColumnsIconMarkup(14, 'princhat-move-column-icon')}
+          <span class="princhat-move-column-default-text">Mover para coluna</span>
+        `;
+        button.dataset.moveColumnState = stateKey;
+      } else {
+        button.classList.remove('has-column');
+        button.title = 'Mover este contato para uma coluna do Kanban';
+      }
+      return;
+    }
+
+    const rawName = (column.name || '').trim();
+    const safeName = this.escapeHtml(rawName || 'Sem coluna');
+    const rawColor = typeof column.color === 'string' ? column.color.trim() : '';
+    const safeColor = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(rawColor)
+      ? rawColor
+      : '#8696a0';
+    const stateKey = `column:${rawName || 'Sem coluna'}:${safeColor}`;
+
+    if (button.dataset.moveColumnState !== stateKey) {
+      button.classList.add('has-column');
+      button.title = `Mover para outra coluna (atual: ${rawName || 'Sem coluna'})`;
+      button.innerHTML = `
+        ${this.getKanbanColumnsIconMarkup(14, 'princhat-move-column-icon')}
+        <span class="princhat-move-column-current">
+          <span class="princhat-move-column-current-dot" style="background-color: ${safeColor};"></span>
+          <span class="princhat-move-column-current-name">${safeName}</span>
+        </span>
+      `;
+      button.dataset.moveColumnState = stateKey;
+      return;
+    }
+
+    button.classList.add('has-column');
+    button.title = `Mover para outra coluna (atual: ${rawName || 'Sem coluna'})`;
+    return;
+  }
+
+  private scheduleMoveColumnButtonRefresh(activeChatIdHint?: string, immediate: boolean = false) {
+    // Invalidate in-flight renders as soon as a newer refresh is requested.
+    this.moveColumnButtonRequestVersion++;
+
+    const button = document.querySelector('.princhat-move-column-button') as HTMLElement | null;
+    button?.classList.add('loading');
+
+    this.pendingMoveColumnButtonChatHint = activeChatIdHint || undefined;
+
+    if (this.moveColumnButtonRefreshTimer) {
+      clearTimeout(this.moveColumnButtonRefreshTimer);
+      this.moveColumnButtonRefreshTimer = null;
+    }
+
+    const runRefresh = () => {
+      const hint = this.pendingMoveColumnButtonChatHint;
+      this.pendingMoveColumnButtonChatHint = undefined;
+      this.moveColumnButtonRefreshTimer = null;
+
+      this.updateMoveToColumnButton(hint).catch((error: any) => {
+        console.error('[PrinChat UI] Error updating move-to-column button state:', error?.message || error);
+      });
+    };
+
+    if (immediate) {
+      runRefresh();
+      return;
+    }
+
+    this.moveColumnButtonRefreshTimer = setTimeout(
+      runRefresh,
+      this.MOVE_COLUMN_BUTTON_REFRESH_DEBOUNCE_MS
+    );
+  }
+
+  private async getCachedKanbanColumnsForMoveButton(forceRefresh: boolean = false): Promise<any[]> {
+    const now = Date.now();
+    if (
+      !forceRefresh &&
+      this.moveColumnButtonColumnsCache &&
+      (now - this.moveColumnButtonColumnsCache.timestamp) < this.MOVE_COLUMN_BUTTON_COLUMNS_CACHE_TTL
+    ) {
+      return this.moveColumnButtonColumnsCache.data;
+    }
+
+    const columnsResponse = await this.requestKanbanDataWithRetry({ type: 'GET_KANBAN_COLUMNS' }, 8000, 4);
+    if (!columnsResponse?.success) {
+      throw new Error(columnsResponse?.error || 'Erro ao carregar colunas do Kanban');
+    }
+
+    const columns = Array.isArray(columnsResponse?.data) ? columnsResponse.data : [];
+    this.moveColumnButtonColumnsCache = { data: columns, timestamp: now };
+    return columns;
+  }
+
+  private async updateMoveToColumnButton(activeChatIdHint?: string) {
+    const initialButton = document.querySelector('.princhat-move-column-button') as HTMLElement | null;
+    if (!initialButton) return;
+
+    const requestVersion = ++this.moveColumnButtonRequestVersion;
+
+    const renderIfCurrent = (column: { name: string; color?: string } | null = null) => {
+      if (requestVersion !== this.moveColumnButtonRequestVersion) return;
+      const liveButton = document.querySelector('.princhat-move-column-button') as HTMLElement | null;
+      if (!liveButton) return;
+      this.renderMoveToColumnButton(liveButton, column);
+      liveButton.classList.remove('loading');
+    };
+
+    try {
+      initialButton.classList.add('loading');
+      const activeChatId = activeChatIdHint || await this.getActiveChatId() || '';
+      const normalizedActiveChatId = this.normalizeLeadChatId(activeChatId) || this.stripScopedChatId(activeChatId) || activeChatId;
+      const activeIdentity = this.extractLeadIdentity(normalizedActiveChatId);
+      const isGroupChat = normalizedActiveChatId.includes('@g.us');
+      const isSystemChat = activeIdentity === 'status' || normalizedActiveChatId.endsWith('@broadcast');
+
+      if (!normalizedActiveChatId || isGroupChat || isSystemChat) {
+        renderIfCurrent(null);
+        return;
+      }
+
+      const leadsResponse = await this.requestKanbanDataWithRetry({ type: 'GET_ALL_KANBAN_LEADS' }, 8000, 4);
+      if (!leadsResponse?.success) {
+        renderIfCurrent(null);
+        return;
+      }
+
+      const leads = Array.isArray(leadsResponse?.data) ? leadsResponse.data : [];
+      const existingLead = this.findKanbanLeadByActiveChat(leads, normalizedActiveChatId);
+      const currentColumnId = typeof existingLead?.columnId === 'string' ? existingLead.columnId : '';
+      if (!currentColumnId) {
+        renderIfCurrent(null);
+        return;
+      }
+
+      let columns = await this.getCachedKanbanColumnsForMoveButton();
+      let currentColumn = columns.find((column: any) => column?.id === currentColumnId);
+      if (!currentColumn) {
+        columns = await this.getCachedKanbanColumnsForMoveButton(true);
+        currentColumn = columns.find((column: any) => column?.id === currentColumnId);
+      }
+      if (!currentColumn) {
+        renderIfCurrent(null);
+        return;
+      }
+
+      renderIfCurrent({
+        name: String(currentColumn?.name || 'Sem coluna'),
+        color: typeof currentColumn?.color === 'string' ? currentColumn.color : ''
+      });
+    } catch (error: any) {
+      console.error('[PrinChat UI] Error updating move-to-column button:', error?.message || error);
+      renderIfCurrent(null);
+    }
+  }
+
+  private closeMoveToColumnPopup() {
+    if (this.moveColumnPopupOutsideHandler) {
+      document.removeEventListener('mousedown', this.moveColumnPopupOutsideHandler, true);
+      this.moveColumnPopupOutsideHandler = null;
+    }
+
+    if (this.moveColumnPopup) {
+      this.moveColumnPopup.remove();
+      this.moveColumnPopup = null;
+    }
+
+    document.querySelectorAll('.princhat-move-column-button.active').forEach((btn) => {
+      btn.classList.remove('active');
+    });
+  }
+
+  private findKanbanLeadByActiveChat(leads: any[], activeChatId: string): any | null {
+    if (!Array.isArray(leads) || !activeChatId) return null;
+
+    const activeVariants = this.buildLeadChatVariants(activeChatId);
+    const activeIdentity = this.extractLeadIdentity(activeChatId);
+
+    const match = leads.find((lead: any) => {
+      const leadCandidates = [lead?.id, lead?.chatId, lead?.phone];
+      for (const candidate of leadCandidates) {
+        const leadVariants = this.buildLeadChatVariants(candidate);
+        if (leadVariants.some((variant) => activeVariants.includes(variant))) {
+          return true;
+        }
+
+        const leadIdentity = this.extractLeadIdentity(candidate);
+        if (leadIdentity && activeIdentity && leadIdentity === activeIdentity) {
+          return true;
+        }
+      }
+      return false;
+    });
+
+    return match || null;
+  }
+
+  private buildMoveColumnPopupContent(options: {
+    columns: any[];
+    selectedColumnId: string;
+    hasExistingLead: boolean;
+    leadName: string;
+    isUnsupportedChat: boolean;
+    unsupportedMessage: string;
+  }): string {
+    const {
+      columns,
+      selectedColumnId,
+      hasExistingLead,
+      leadName,
+      isUnsupportedChat,
+      unsupportedMessage,
+    } = options;
+
+    const safeLeadName = this.escapeHtml((leadName || 'este contato').trim());
+    const hintText = hasExistingLead
+      ? `Selecione a nova coluna para ${safeLeadName}.`
+      : 'Este contato ainda não está no Kanban. Ao mover, um card será criado automaticamente.';
+
+    const hasColumns = Array.isArray(columns) && columns.length > 0;
+    const canMove = !!selectedColumnId && hasColumns && !isUnsupportedChat;
+
+    const rowsHtml = hasColumns ? columns.map((column: any) => {
+      const columnId = typeof column?.id === 'string' ? column.id : '';
+      const columnName = this.escapeHtml((column?.name || 'Sem nome').trim());
+      const isSelected = columnId === selectedColumnId;
+      const rawColor = typeof column?.color === 'string' ? column.color.trim() : '';
+      const safeColor = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(rawColor)
+        ? rawColor
+        : '#8696a0';
+      const safeColumnId = this.escapeHtml(columnId);
+
+      return `
+        <button type="button" class="princhat-item-row princhat-move-column-item ${isSelected ? 'active' : ''}" data-column-id="${safeColumnId}">
+          <span class="princhat-move-column-dot" style="background-color: ${safeColor};"></span>
+          <span class="princhat-item-text">${columnName}</span>
+          <svg class="princhat-move-column-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+        </button>
+      `;
+    }).join('') : '';
+
+    return `
+      <div class="princhat-popup-header">
+        <div class="princhat-popup-header-content">
+          <div class="princhat-move-column-header-icon">
+            ${this.getKanbanColumnsIconMarkup(18)}
+          </div>
+          <div>
+            <div class="princhat-popup-title">Mover para coluna</div>
+            <div class="princhat-popup-subtitle">Organize este contato no Kanban</div>
+          </div>
+        </div>
+        <button class="princhat-popup-close-btn" title="Fechar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="princhat-move-column-body">
+        ${isUnsupportedChat
+        ? `<div class="princhat-move-column-warning">${this.escapeHtml(unsupportedMessage)}</div>`
+        : `<p class="princhat-move-column-hint">${this.escapeHtml(hintText)}</p>`
+      }
+        ${!isUnsupportedChat && !hasColumns
+        ? '<div class="princhat-item-empty">Nenhuma coluna disponível</div>'
+        : ''
+      }
+        ${!isUnsupportedChat && hasColumns
+        ? `<div class="princhat-item-list princhat-move-column-list">${rowsHtml}</div>`
+        : ''
+      }
+        <p class="princhat-move-column-error" data-role="move-column-error"></p>
+      </div>
+      <div class="princhat-move-column-footer">
+        <button class="princhat-kanban-btn princhat-kanban-btn-secondary" data-action="cancel">Cancelar</button>
+        <button class="princhat-kanban-btn princhat-kanban-btn-primary" data-action="move" ${canMove ? '' : 'disabled'}>Mover</button>
+      </div>
+    `;
+  }
+
+  private async createLeadForMoveToColumn(activeChatId: string, columnId: string, newOrder: number): Promise<any> {
+    const chatInfoResponse = await this.requestFromContentScript({
+      type: 'GET_CHAT_INFO',
+      payload: { chatId: activeChatId }
+    }, 15000);
+
+    const activeChatResponse = await this.requestFromContentScript({
+      type: 'GET_ACTIVE_CHAT'
+    }, 10000);
+
+    const chatInfoData = chatInfoResponse?.data || {};
+    const activeChatData = activeChatResponse?.data || {};
+
+    const normalizedChatId = this.normalizeLeadChatId(
+      chatInfoData?.chatId || activeChatData?.chatId || activeChatId
+    ) || this.normalizeLeadChatId(activeChatId) || activeChatId;
+
+    const phoneIdentity = this.extractLeadIdentity(
+      chatInfoData?.phoneNumber || normalizedChatId || activeChatId
+    ) || this.extractLeadIdentity(normalizedChatId) || normalizedChatId;
+
+    const labels = Array.isArray(chatInfoData?.labels)
+      ? chatInfoData.labels.filter(Boolean)
+      : [];
+    const tags = labels.length > 0
+      ? labels.map((label: any) => label?.id || label?.name).filter(Boolean)
+      : [];
+
+    const fallbackName = phoneIdentity || 'Novo contato';
+    const contactName =
+      (chatInfoData?.chatName || chatInfoData?.name || activeChatData?.chatName || activeChatData?.name || '').trim()
+      || fallbackName;
+
+    const infoPhoto = typeof chatInfoData?.chatPhoto === 'string' ? chatInfoData.chatPhoto : '';
+    const activePhoto = typeof activeChatData?.chatPhoto === 'string' ? activeChatData.chatPhoto : '';
+    const contactPhoto = this.isRenderablePhotoUrl(infoPhoto)
+      ? infoPhoto
+      : (this.isRenderablePhotoUrl(activePhoto) ? activePhoto : '');
+
+    const createResult = await this.requestFromContentScript({
+      type: 'CREATE_KANBAN_LEAD',
+      payload: {
+        phone: phoneIdentity,
+        chatId: normalizedChatId,
+        name: contactName,
+        photo: contactPhoto,
+        columnId,
+        order: newOrder,
+        lastMessage: '',
+        lastMessageTime: Date.now(),
+        unreadCount: 0,
+        tags,
+        labels
+      }
+    });
+
+    if (!createResult?.success) {
+      throw new Error(createResult?.error || 'Erro ao criar lead no Kanban');
+    }
+
+    return createResult?.data || null;
+  }
+
+  /**
+   * Toggle move-to-column popup
+   */
+  private async toggleMoveToColumnPopup(button: HTMLElement) {
+    if (this.moveColumnPopup) {
+      this.closeMoveToColumnPopup();
+      return;
+    }
+
+    if (this.scheduleListPopup) {
+      this.scheduleListPopup.remove();
+      this.scheduleListPopup = null;
+    }
+
+    if (this.notesPopup) {
+      this.notesPopup.remove();
+      this.notesPopup = null;
+    }
+
+    this.closeHeaderPopups();
+
+    const popup = document.createElement('div');
+    popup.className = 'princhat-move-column-popup';
+    this.moveColumnPopup = popup;
+    button.classList.add('active');
+
+    const activeChatId = await this.getActiveChatId() || '';
+    const normalizedActiveChatId = this.normalizeLeadChatId(activeChatId) || this.stripScopedChatId(activeChatId) || activeChatId;
+    const activeIdentity = this.extractLeadIdentity(normalizedActiveChatId);
+    const isGroupChat = normalizedActiveChatId.includes('@g.us');
+    const isSystemChat = activeIdentity === 'status' || normalizedActiveChatId.endsWith('@broadcast');
+    const isUnsupportedChat = !normalizedActiveChatId || isGroupChat || isSystemChat;
+    const unsupportedMessage = !normalizedActiveChatId
+      ? 'Abra uma conversa para mover o lead.'
+      : (isGroupChat
+        ? 'Conversas em grupo não podem ser movidas para colunas.'
+        : 'Este tipo de conversa não pode ser adicionado ao Kanban.');
+
+    const columnsResponse = await this.requestKanbanDataWithRetry({ type: 'GET_KANBAN_COLUMNS' }, 8000, 4);
+    const leadsResponse = await this.requestKanbanDataWithRetry({ type: 'GET_ALL_KANBAN_LEADS' }, 8000, 4);
+
+    if (!columnsResponse?.success) {
+      throw new Error(columnsResponse?.error || 'Erro ao carregar colunas do Kanban');
+    }
+    if (!leadsResponse?.success) {
+      throw new Error(leadsResponse?.error || 'Erro ao carregar leads do Kanban');
+    }
+
+    const columnsRaw = Array.isArray(columnsResponse?.data) ? columnsResponse.data : [];
+    const columnsMap = new Map<string, any>();
+    columnsRaw.forEach((column: any) => {
+      if (typeof column?.id === 'string' && !columnsMap.has(column.id)) {
+        columnsMap.set(column.id, column);
+      }
+    });
+    const columns = Array.from(columnsMap.values()).sort((a: any, b: any) => (a?.order || 0) - (b?.order || 0));
+
+    const allLeads = Array.isArray(leadsResponse?.data) ? leadsResponse.data : [];
+    const existingLead = isUnsupportedChat ? null : this.findKanbanLeadByActiveChat(allLeads, normalizedActiveChatId);
+    let selectedColumnId =
+      typeof existingLead?.columnId === 'string' &&
+        columns.some((column: any) => column.id === existingLead.columnId)
+        ? existingLead.columnId
+        : '';
+
+    const leadName = existingLead
+      ? this.resolveLeadDisplayName(existingLead)
+      : (activeIdentity || 'este contato');
+
+    const renderPopup = () => {
+      popup.innerHTML = this.buildMoveColumnPopupContent({
+        columns,
+        selectedColumnId,
+        hasExistingLead: !!existingLead,
+        leadName,
+        isUnsupportedChat,
+        unsupportedMessage
+      });
+
+      const closeBtn = popup.querySelector('.princhat-popup-close-btn') as HTMLButtonElement | null;
+      const cancelBtn = popup.querySelector('[data-action="cancel"]') as HTMLButtonElement | null;
+      const moveBtn = popup.querySelector('[data-action="move"]') as HTMLButtonElement | null;
+      const columnItems = popup.querySelectorAll('.princhat-move-column-item');
+      const errorEl = popup.querySelector('[data-role="move-column-error"]') as HTMLElement | null;
+
+      closeBtn?.addEventListener('click', () => this.closeMoveToColumnPopup());
+      cancelBtn?.addEventListener('click', () => this.closeMoveToColumnPopup());
+
+      columnItems.forEach((item) => {
+        item.addEventListener('click', () => {
+          const nextId = (item as HTMLElement).getAttribute('data-column-id') || '';
+          if (!nextId) return;
+
+          selectedColumnId = nextId;
+          popup.querySelectorAll('.princhat-move-column-item').forEach((row) => {
+            row.classList.toggle('active', row === item);
+          });
+
+          if (moveBtn) {
+            moveBtn.disabled = false;
+          }
+
+          if (errorEl) {
+            errorEl.textContent = '';
+            errorEl.style.display = 'none';
+          }
+        });
+      });
+
+      moveBtn?.addEventListener('click', async () => {
+        if (!selectedColumnId || isUnsupportedChat) return;
+
+        if (errorEl) {
+          errorEl.textContent = '';
+          errorEl.style.display = 'none';
+        }
+
+        moveBtn.disabled = true;
+        const originalText = moveBtn.textContent || 'Mover';
+        moveBtn.textContent = 'Movendo...';
+
+        try {
+          const newOrder = -Date.now();
+
+          if (existingLead?.id) {
+            if (existingLead.columnId === selectedColumnId) {
+              await this.updateMoveToColumnButton(normalizedActiveChatId);
+              this.closeMoveToColumnPopup();
+              return;
+            }
+
+            const moveResult = await this.requestFromContentScript({
+              type: 'MOVE_KANBAN_LEAD',
+              payload: {
+                leadId: existingLead.id,
+                newColumnId: selectedColumnId,
+                newOrder
+              }
+            });
+
+            if (!moveResult?.success) {
+              throw new Error(moveResult?.error || 'Erro ao mover lead');
+            }
+
+            document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
+              detail: {
+                leadId: existingLead.id,
+                updates: {
+                  columnId: selectedColumnId,
+                  order: newOrder
+                },
+                chatId: this.resolveLeadChatId(existingLead)
+              }
+            }));
+          } else {
+            const createdLead = await this.createLeadForMoveToColumn(
+              normalizedActiveChatId,
+              selectedColumnId,
+              newOrder
+            );
+
+            document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadCreated', {
+              detail: {
+                lead: createdLead || {
+                  chatId: normalizedActiveChatId,
+                  columnId: selectedColumnId,
+                  order: newOrder
+                }
+              }
+            }));
+          }
+
+          await this.updateMoveToColumnButton(normalizedActiveChatId);
+          this.closeMoveToColumnPopup();
+        } catch (error: any) {
+          const errorMessage = String(error?.message || 'Erro ao mover lead');
+          console.error('[PrinChat UI] Error moving lead to column:', errorMessage);
+          if (errorEl) {
+            errorEl.textContent = errorMessage;
+            errorEl.style.display = 'block';
+          }
+          moveBtn.disabled = false;
+          moveBtn.textContent = originalText;
+        }
+      });
+    };
+
+    renderPopup();
+
+    const rect = button.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.top = `${rect.bottom + 8}px`;
+    popup.style.right = `${window.innerWidth - rect.right}px`;
+
+    document.body.appendChild(popup);
+
+    this.moveColumnPopupOutsideHandler = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      const isModal = target.closest('.princhat-modal-overlay') ||
+        target.closest('.princhat-note-editor-modal') ||
+        target.closest('.princhat-calendar-modal-overlay') ||
+        target.closest('.princhat-schedule-modal') ||
+        target.closest('.princhat-confirmation-modal');
+
+      if (!popup.contains(target) && !button.contains(target) && !isModal) {
+        this.closeMoveToColumnPopup();
+      }
+    };
+
+    setTimeout(() => {
+      if (this.moveColumnPopupOutsideHandler) {
+        document.addEventListener('mousedown', this.moveColumnPopupOutsideHandler, true);
+      }
+    }, 100);
+  }
+
   /**
    * Inject schedule button into WhatsApp chat header
    */
@@ -10214,8 +11017,15 @@ class WhatsAppUIOverlay {
         this.toggleScheduleListPopup(scheduleButton);
       });
 
-      // Insert button at the beginning of actions container
-      if (actionsContainer.firstChild) {
+      // Insert after move-to-column button when present to preserve intended order
+      const moveButton = actionsContainer.querySelector('.princhat-move-column-button');
+      if (moveButton && moveButton.parentElement === actionsContainer) {
+        if (moveButton.nextSibling) {
+          actionsContainer.insertBefore(scheduleButton, moveButton.nextSibling);
+        } else {
+          actionsContainer.appendChild(scheduleButton);
+        }
+      } else if (actionsContainer.firstChild) {
         actionsContainer.insertBefore(scheduleButton, actionsContainer.firstChild);
       } else {
         actionsContainer.appendChild(scheduleButton);
@@ -10341,7 +11151,7 @@ class WhatsAppUIOverlay {
 
       // If forcing refresh, invalidate cache first
       if (forceRefresh) {
-        this.invalidateChatCache();
+        this.invalidateChatCache(true);
       }
 
       const chatId = await this.getActiveChatId();
@@ -10431,7 +11241,7 @@ class WhatsAppUIOverlay {
 
       // If forcing refresh, invalidate cache first
       if (forceRefresh) {
-        this.invalidateChatCache();
+        this.invalidateChatCache(true);
       }
 
       // Get active chat ID
@@ -10513,12 +11323,16 @@ class WhatsAppUIOverlay {
           // Check if mutation is related to our buttons or badges
           return target.classList?.contains('princhat-schedule-button') ||
             target.classList?.contains('princhat-notes-button') ||
+            target.classList?.contains('princhat-move-column-button') ||
             target.closest?.('.princhat-schedule-button') ||
             target.closest?.('.princhat-notes-button') ||
+            target.closest?.('.princhat-move-column-button') ||
             target.classList?.contains('princhat-schedule-badge') ||
             // Check added nodes
             (m.type === 'childList' && Array.from(m.addedNodes).some((n: any) =>
-              n.classList?.contains('princhat-schedule-button') || n.classList?.contains('princhat-notes-button')
+              n.classList?.contains('princhat-schedule-button') ||
+              n.classList?.contains('princhat-notes-button') ||
+              n.classList?.contains('princhat-move-column-button')
             ));
         });
 
@@ -10540,23 +11354,33 @@ class WhatsAppUIOverlay {
 
         // Chat header changed
         const oldChatId = this.currentChatId; // Capture current known ID
-        this.invalidateChatCache();
 
         if (debounceTimer) clearTimeout(debounceTimer);
         debounceTimer = setTimeout(async () => {
           // 1. Inject buttons blindly (visuals)
           this.checkAndInjectButtons(false);
+          this.invalidateChatCache(true);
+          this.setButtonsLoadingState(true);
 
           // 2. Wait for data sync (Logic)
           // We wait until the Chat ID actually changes from the old one
           const newChatId = await this.waitForChatIdChange(oldChatId);
           this.currentChatId = newChatId;
 
+          if ((newChatId || '') !== (oldChatId || '')) {
+            this.closeMoveToColumnPopup();
+          }
+
           // 3. Now update data (force refresh)
           if (newChatId) {
+            this.scheduleMoveColumnButtonRefresh(newChatId, true);
             this.updateScheduleButton(true);
             this.updateNotesBadge(true);
+          } else {
+            this.scheduleMoveColumnButtonRefresh(undefined, true);
           }
+
+          this.setButtonsLoadingState(false);
         }, this.isWhatsAppBusiness() ? 300 : 50); // Slower debounce for Business
       });
 
@@ -10607,6 +11431,14 @@ class WhatsAppUIOverlay {
           await this.refreshScheduleListPopup();
         }
       });
+
+      document.addEventListener('PrinChatKanbanLeadUpdated', () => {
+        this.scheduleMoveColumnButtonRefresh();
+      });
+
+      document.addEventListener('PrinChatKanbanLeadCreated', () => {
+        this.scheduleMoveColumnButtonRefresh();
+      });
     } catch (error: any) {
       console.error('[PrinChat UI] Error setting up chat header monitor:', error?.message || error);
     }
@@ -10620,6 +11452,12 @@ class WhatsAppUIOverlay {
     const chatHeader = document.querySelector('#main > header');
     if (chatHeader) {
       let injected = false;
+
+      // Check Move-to-column button
+      if (!chatHeader.querySelector('.princhat-move-column-button')) {
+        this.injectMoveToColumnButton();
+        injected = true;
+      }
 
       // Check Schedule Button
       if (!chatHeader.querySelector('.princhat-schedule-button')) {
@@ -10639,8 +11477,10 @@ class WhatsAppUIOverlay {
       if (injected || forceRefresh) {
         // Add small delay to allow chat ID to update if this is a navigation event
         setTimeout(() => {
+          this.scheduleMoveColumnButtonRefresh();
           this.updateScheduleButton();
           this.updateNotesBadge();
+          this.setButtonsLoadingState(false);
         }, 100);
       }
     }
@@ -10717,10 +11557,10 @@ class WhatsAppUIOverlay {
           display: inline-flex !important;
           align-items: center !important;
           justify-content: center !important;
-          font-size: 10px !important;
+          font-size: 11px !important;
           font-weight: 500 !important;
           line-height: 1.3 !important;
-          padding: 1px 6px !important;
+          padding: 2px 8px !important;
           border-radius: 4px !important;
           text-transform: none !important;
           gap: 4px !important;
@@ -10814,24 +11654,9 @@ class WhatsAppUIOverlay {
       iconInner.style.flexGrow = '1';
 
       const iconWrapper = document.createElement('div');
-
-      // Columns3 icon (Kanban representation)
-      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      icon.setAttribute('viewBox', '0 0 24 24');
-      icon.setAttribute('height', '24');
-      icon.setAttribute('width', '24');
-      icon.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-      icon.setAttribute('fill', 'none');
-      icon.setAttribute('aria-hidden', 'true');
-      icon.setAttribute('data-icon', 'kanban');
-
-      icon.innerHTML = `
-        <rect x="3" y="3" width="6" height="18" rx="1" stroke="currentColor" stroke-width="2" fill="none" />
-        <rect x="12" y="3" width="3" height="18" rx="1" stroke="currentColor" stroke-width="2" fill="none" />
-        <rect x="18" y="3" width="3" height="18" rx="1" stroke="currentColor" stroke-width="2" fill="none" />
-      `;
-
-      iconWrapper.appendChild(icon);
+      iconWrapper.innerHTML = this.getKanbanColumnsIconMarkup(24);
+      const icon = iconWrapper.querySelector('svg');
+      icon?.setAttribute('data-icon', 'kanban');
       iconInner.appendChild(iconWrapper);
       iconContainer.appendChild(iconInner);
       button.appendChild(iconContainer);
@@ -10995,6 +11820,10 @@ class WhatsAppUIOverlay {
     // Setup global drag listeners
     // Moved to renderKanbanColumns to ensure elements exist
 
+    // CRITICAL: Cache sidebar photos BEFORE the overlay covers the sidebar.
+    // Once the overlay is appended, the sidebar DOM is hidden and photos can't be scraped.
+    this.cacheSidebarPhotos();
+
     // Find WhatsApp content area and insert overlay
     const whatsappContent = document.querySelector('#app');
     if (whatsappContent) {
@@ -11006,6 +11835,7 @@ class WhatsAppUIOverlay {
 
     this.kanbanOverlay = overlay;
     this.isKanbanOpen = true;
+    this.clearKanbanBootstrapRetry();
 
     document.body.classList.add('princhat-kanban-active');
 
@@ -11020,6 +11850,32 @@ class WhatsAppUIOverlay {
     console.log('[PrinChat UI] ✅ Kanban overlay opened');
   }
 
+  private findKanbanCardElementByLeadId(leadId: string): HTMLElement | null {
+    if (!this.kanbanOverlay || !leadId) return null;
+
+    const normalizedIdentity = this.extractLeadIdentity(leadId);
+    const variants = this.buildLeadChatVariants(leadId);
+    const cards = Array.from(this.kanbanOverlay.querySelectorAll('.princhat-kanban-lead-card')) as HTMLElement[];
+
+    for (const card of cards) {
+      const cardLeadId = card.getAttribute('data-lead-id') || '';
+      if (!cardLeadId) continue;
+
+      if (cardLeadId === leadId) return card;
+
+      const cardVariants = this.buildLeadChatVariants(cardLeadId);
+      if (variants.some((variant) => cardVariants.includes(variant))) {
+        return card;
+      }
+
+      if (normalizedIdentity && this.extractLeadIdentity(cardLeadId) === normalizedIdentity) {
+        return card;
+      }
+    }
+
+    return null;
+  }
+
   /**
    * Setup real-time Kanban update listeners
    */
@@ -11031,21 +11887,23 @@ class WhatsAppUIOverlay {
     document.addEventListener('PrinChatIncomingMessage', (event: any) => {
       if (!this.isKanbanOpen) return;
 
-      const { messageText, chatId, timestamp, fromMe } = event.detail;
+      const {
+        messageText,
+        chatId,
+        timestamp,
+        fromMe,
+        chatPhoto: incomingEventPhoto,
+        chatPhotoSource: incomingEventPhotoSource,
+        chatName: incomingEventName
+      } = event.detail;
       console.log('[PrinChat UI] 📨 Incoming message (Optimistic):', chatId);
 
-      // 1. Find card (Try multiple ID formats for Standard/Business compatibility)
-      let card = this.kanbanOverlay?.querySelector(`.princhat-kanban-lead-card[data-lead-id="${chatId}"]`);
-
-      if (!card) {
-        // Try alternate formats
-        const rawId = chatId.replace(/@c\.us|@lid|@g\.us/g, '');
-        card = this.kanbanOverlay?.querySelector(`.princhat-kanban-lead-card[data-lead-id="${rawId}@c.us"]`) ||
-          this.kanbanOverlay?.querySelector(`.princhat-kanban-lead-card[data-lead-id="${rawId}"]`) ||
-          this.kanbanOverlay?.querySelector(`.princhat-kanban-lead-card[data-lead-id^="${rawId}"]`);
-      }
+      // 1. Find card using canonical identity (supports :device IDs)
+      const card = this.findKanbanCardElementByLeadId(chatId);
 
       if (card) {
+        const cardLeadId = card.getAttribute('data-lead-id') || '';
+
         // 2. Move to top of its CURRENT column (Prevent Column Jump)
         // Ensure we find the column body relative to the card
         const currentColumnBody = card.closest('.princhat-kanban-column-body');
@@ -11084,13 +11942,15 @@ class WhatsAppUIOverlay {
           }
 
           // Persist reset to database
-          this.requestFromContentScript({
-            type: 'UPDATE_KANBAN_LEAD',
-            payload: {
-              leadId: chatId,
-              updates: { unreadCount: 0 }
-            }
-          }).catch(err => console.error('[PrinChat UI] Failed to clear unread count in DB:', err));
+          if (cardLeadId) {
+            this.requestFromContentScript({
+              type: 'UPDATE_KANBAN_LEAD',
+              payload: {
+                leadId: cardLeadId,
+                updates: { unreadCount: 0 }
+              }
+            }).catch(err => console.error('[PrinChat UI] Failed to clear unread count in DB:', err));
+          }
 
         } else {
           // If message is INCOMING, increment unread count
@@ -11120,6 +11980,81 @@ class WhatsAppUIOverlay {
           }
         }
 
+        // PHOTO GUARANTEE ON INCOMING: if the card still has placeholder, force
+        // hydration for this specific incoming chat (independent from active chat).
+        const hydrationKey = cardLeadId || chatId;
+        const hasUsablePhoto = this.cardHasUsablePhoto(card);
+        if (hydrationKey && !hasUsablePhoto && !this.incomingPhotoHydrationByLead.has(hydrationKey)) {
+          const hydrationTask = (async () => {
+            const resolvedName = (
+              (card.querySelector('.princhat-kanban-lead-name')?.textContent || '')
+              || incomingEventName
+              || 'U'
+            ).trim();
+
+            const applyPhoto = (targetCard: HTMLElement, photo: string, persistToDb: boolean): boolean => {
+              if (!this.isRenderablePhotoUrl(photo) || this.isBrokenPhotoUrl(photo)) return false;
+              const finalPhoto = String(photo);
+              const photoApplied = this.setCardPhoto(targetCard, finalPhoto, resolvedName, {
+                preserveExistingUsablePhoto: true,
+              });
+
+              if (persistToDb) {
+                const identity = this.extractLeadIdentity(chatId);
+                if (identity) this.sidebarPhotoCache.set(identity.toLowerCase(), finalPhoto);
+              }
+
+              if (persistToDb && cardLeadId) {
+                this.requestFromContentScript({
+                  type: 'UPDATE_KANBAN_LEAD',
+                  payload: { leadId: cardLeadId, updates: { photo: finalPhoto } }
+                }).catch(() => null);
+              }
+
+              return photoApplied;
+            };
+
+            const trustedIncomingEventPhoto =
+              this.isTrustedIncomingPhotoSource(incomingEventPhotoSource) ? incomingEventPhoto : '';
+            // Apply event photo as a visual hint only (do not persist fragile fallbacks).
+            if (applyPhoto(card, trustedIncomingEventPhoto, false)) {
+              return;
+            }
+
+            const RETRY_DELAYS = [1200, 3200, 7000, 14000];
+            for (const delay of RETRY_DELAYS) {
+              await new Promise(resolve => setTimeout(resolve, delay));
+              if (!this.isKanbanOpen) return;
+
+              const currentCard = this.findKanbanCardElementByLeadId(cardLeadId || chatId);
+              if (!currentCard) return;
+              if (this.cardHasUsablePhoto(currentCard)) return;
+
+              let resolvedPhoto = '';
+              let shouldPersistResolvedPhoto = false;
+              const chatInfoResolvedPhoto = await this.getChatPhotoForLead(chatId, cardLeadId);
+              if (this.isRenderablePhotoUrl(chatInfoResolvedPhoto) && !this.isBrokenPhotoUrl(chatInfoResolvedPhoto)) {
+                resolvedPhoto = String(chatInfoResolvedPhoto);
+                shouldPersistResolvedPhoto = true;
+              }
+
+              if (!this.isRenderablePhotoUrl(resolvedPhoto) || this.isBrokenPhotoUrl(resolvedPhoto)) continue;
+              const finalPhoto = String(resolvedPhoto);
+
+              const photoApplied = applyPhoto(currentCard, finalPhoto, shouldPersistResolvedPhoto);
+              if (photoApplied) return;
+            }
+          })();
+
+          this.incomingPhotoHydrationByLead.set(hydrationKey, hydrationTask);
+          hydrationTask.finally(() => {
+            const currentTask = this.incomingPhotoHydrationByLead.get(hydrationKey);
+            if (currentTask === hydrationTask) {
+              this.incomingPhotoHydrationByLead.delete(hydrationKey);
+            }
+          });
+        }
+
         // 6. Highlight animation
         card.classList.add('princhat-kanban-card-updated');
         setTimeout(() => card.classList.remove('princhat-kanban-card-updated'), 300);
@@ -11130,16 +12065,60 @@ class WhatsAppUIOverlay {
     document.addEventListener('PrinChatKanbanLeadUpdated', (event: any) => {
       if (!this.isKanbanOpen) return;
 
-      const { leadId, updates } = event.detail;
+      const detail = event?.detail || {};
+      const leadId = detail.leadId;
+      const updates = {
+        ...(detail.changes || {}),
+        ...(detail.updates || {})
+      };
+
+      if (!leadId) {
+        this.diagInfo('[PrinChat UI] 🔴 DIAG: queueKanbanRender triggered by PrinChatKanbanLeadUpdated (NO leadId)', detail);
+        this.queueKanbanRender();
+        return;
+      }
+
       console.log('[PrinChat UI] 🔄 Lead updated:', leadId, updates);
 
       // Find and update the card in DOM
-      const card = this.kanbanOverlay?.querySelector(`.princhat - kanban - lead - card[data - lead - id="${leadId}"]`);
+      const card = this.findKanbanCardElementByLeadId(leadId);
+      if (!card) {
+        // Only queue a re-render if one isn't already pending (e.g., from PrinChatKanbanLeadCreated).
+        // Queuing again would reset the debounce timer and delay the existing render.
+        if (!this.renderDebounceTimer) {
+          this.diagInfo('[PrinChat UI] 🟠 DIAG: queueKanbanRender triggered by PrinChatKanbanLeadUpdated (card NOT FOUND for leadId):', leadId);
+          this.queueKanbanRender();
+        } else {
+          console.log('[PrinChat UI] ⏭️ Card not found but render already pending, skipping re-render for:', leadId);
+        }
+        return;
+      }
+
       if (card) {
+        // Update name
+        if (typeof updates.name === 'string' && updates.name.trim()) {
+          const nameEl = card.querySelector('.princhat-kanban-lead-name');
+          if (nameEl) {
+            nameEl.textContent = updates.name.trim();
+          }
+
+          const photoImg = card.querySelector('.princhat-kanban-lead-photo img') as HTMLImageElement | null;
+          if (photoImg) {
+            photoImg.alt = updates.name.trim();
+          }
+        }
+
+        // Update photo
+        if (Object.prototype.hasOwnProperty.call(updates, 'photo')) {
+          const resolvedName =
+            (card.querySelector('.princhat-kanban-lead-name')?.textContent || '').trim() || 'Desconhecido';
+          this.setCardPhoto(card, updates.photo, resolvedName, { preserveExistingUsablePhoto: true });
+        }
+
         // Update last message preview
-        if (updates.lastMessage) {
+        if (Object.prototype.hasOwnProperty.call(updates, 'lastMessage')) {
           let previewEl = card.querySelector('.princhat-kanban-lead-preview');
-          if (!previewEl) {
+          if (!previewEl && updates.lastMessage) {
             // Create preview element if it doesn't exist
             previewEl = document.createElement('p');
             previewEl.className = 'princhat-kanban-lead-preview';
@@ -11148,14 +12127,16 @@ class WhatsAppUIOverlay {
               headerEl.insertAdjacentElement('afterend', previewEl);
             }
           }
-          if (previewEl) {
+          if (previewEl && typeof updates.lastMessage === 'string' && updates.lastMessage.trim()) {
             const preview = updates.lastMessage.length > 50 ? updates.lastMessage.substring(0, 50) + '...' : updates.lastMessage;
             previewEl.textContent = preview;
+          } else if (previewEl && (!updates.lastMessage || !String(updates.lastMessage).trim())) {
+            previewEl.remove();
           }
         }
 
         // Update time
-        if (updates.lastMessageTime) {
+        if (Object.prototype.hasOwnProperty.call(updates, 'lastMessageTime') && updates.lastMessageTime) {
           const timeEl = card.querySelector('.princhat-kanban-lead-time');
           if (timeEl) {
             const time = new Date(updates.lastMessageTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
@@ -11187,17 +12168,42 @@ class WhatsAppUIOverlay {
         }
 
         // Update order attribute for sorting stability
-        if (updates.order) {
+        if (Object.prototype.hasOwnProperty.call(updates, 'order')) {
           card.setAttribute('data-order', updates.order.toString());
         }
 
+        // If tags/labels changed, update them INLINE (no full re-render to preserve photo/DOM).
+        if (
+          Object.prototype.hasOwnProperty.call(updates, 'tags') ||
+          Object.prototype.hasOwnProperty.call(updates, 'labels')
+        ) {
+          console.log('[PrinChat UI] 🏷️ Updating tags inline (no re-render)');
+          this.updateCardDOM({
+            id: leadId,
+            tags: updates.tags,
+            labels: updates.labels
+          });
+        }
+
+        if (Object.prototype.hasOwnProperty.call(updates, 'columnId')) {
+          this.diagInfo('[PrinChat UI] 🟡 DIAG: queueKanbanRender triggered by PrinChatKanbanLeadUpdated (columnId changed):', leadId);
+          this.queueKanbanRender();
+        }
+
         // MOVEMENT LOGIC: Move to top of current column when updated (new message)
-        const parentColumnBody = card.closest('.princhat-kanban-column-body');
-        if (parentColumnBody) {
-          // Check if it's already the first element
-          if (parentColumnBody.firstElementChild !== card) {
-            console.log('[PrinChat UI] ⬆️ Moving updated card to top');
-            parentColumnBody.prepend(card);
+        const shouldMoveToTop =
+          Object.prototype.hasOwnProperty.call(updates, 'lastMessage') ||
+          Object.prototype.hasOwnProperty.call(updates, 'lastMessageTime') ||
+          Object.prototype.hasOwnProperty.call(updates, 'unreadCount');
+
+        if (shouldMoveToTop) {
+          const parentColumnBody = card.closest('.princhat-kanban-column-body');
+          if (parentColumnBody) {
+            // Check if it's already the first element
+            if (parentColumnBody.firstElementChild !== card) {
+              console.log('[PrinChat UI] ⬆️ Moving updated card to top');
+              parentColumnBody.prepend(card);
+            }
           }
         }
 
@@ -11206,6 +12212,98 @@ class WhatsAppUIOverlay {
         setTimeout(() => card.classList.remove('princhat-kanban-card-updated'), 300);
 
         console.log('[PrinChat UI] ✅ Card updated in DOM');
+
+        // DELAYED PHOTO HYDRATION: If card still has no photo, schedule retries.
+        // WhatsApp lazily loads profile pics; for non-active chats the pic isn't
+        // available at message-arrival time. After a short delay, WhatsApp updates
+        // the sidebar (bumps new-message chats to the top WITH their profile pic)
+        // and also populates the Store contact model.
+        const hasUsablePhotoOnCard = this.cardHasUsablePhoto(card);
+        if (!hasUsablePhotoOnCard) {
+          const initialCardLeadId = card.getAttribute('data-lead-id') || leadId;
+          const detailChatId = typeof detail?.chatId === 'string' ? detail.chatId : '';
+          const updateChatId = typeof detail?.updates?.chatId === 'string' ? detail.updates.chatId : '';
+          const chatId =
+            this.normalizeLeadChatId(detailChatId || updateChatId || initialCardLeadId || leadId)
+            || detailChatId
+            || updateChatId
+            || initialCardLeadId
+            || leadId;
+          const phoneHint = typeof detail?.updates?.phone === 'string' ? detail.updates.phone : '';
+          console.log('[PrinChat UI] 📸 No photo on card, scheduling delayed photo hydration for:', chatId);
+
+          const PHOTO_RETRY_DELAYS = [1000, 3000, 8000, 15000];
+          (async () => {
+            for (const delay of PHOTO_RETRY_DELAYS) {
+              await new Promise(r => setTimeout(r, delay));
+              if (!this.isKanbanOpen) return;
+
+              // Check if photo was resolved by another path in the meantime
+              const currentCard = this.findKanbanCardElementByLeadId(leadId || initialCardLeadId || chatId);
+              if (!currentCard) return; // card removed
+              if (this.cardHasUsablePhoto(currentCard)) {
+                console.log('[PrinChat UI] 📸 Photo already resolved for:', chatId);
+                return; // already has a photo
+              }
+
+              let resolvedPhoto: string | undefined;
+              let shouldPersistResolvedPhoto = false;
+
+              // Try GET_CHAT_PHOTO (goes through page script Store/WPP strategies)
+              resolvedPhoto = await this.getChatPhotoForLead(chatId, phoneHint, initialCardLeadId);
+              if (resolvedPhoto && !this.isBrokenPhotoUrl(resolvedPhoto)) {
+                shouldPersistResolvedPhoto = true;
+                console.log('[PrinChat UI] 📸 Got photo from GET_CHAT_PHOTO after', delay, 'ms for:', chatId);
+              }
+
+              // Apply the photo to the card
+              if (resolvedPhoto && this.isRenderablePhotoUrl(resolvedPhoto) && !this.isBrokenPhotoUrl(resolvedPhoto)) {
+                const resolvedName = (currentCard.querySelector('.princhat-kanban-lead-name')?.textContent || '').trim() || 'U';
+                const photoApplied = this.setCardPhoto(currentCard, resolvedPhoto, resolvedName, {
+                  preserveExistingUsablePhoto: true,
+                });
+                if (photoApplied) {
+                  console.log('[PrinChat UI] 📸 ✅ Photo hydrated on card after', delay, 'ms for:', chatId);
+                }
+
+                // Also update the sidebar photo cache for future use
+                const identity = this.extractLeadIdentity(chatId);
+                if (identity) this.sidebarPhotoCache.set(identity.toLowerCase(), resolvedPhoto);
+
+                // Also persist to DB
+                const cardLeadId = currentCard.getAttribute('data-lead-id') || '';
+                const persistLeadId = detail.leadId || cardLeadId;
+                if (shouldPersistResolvedPhoto && persistLeadId) {
+                  this.requestFromContentScript({
+                    type: 'UPDATE_KANBAN_LEAD',
+                    payload: { leadId: persistLeadId, updates: { photo: resolvedPhoto } }
+                  }).then((persistResult) => {
+                    if (!persistResult?.success) {
+                      console.warn('[PrinChat UI] ⚠️ Failed to persist hydrated photo in DB:', {
+                        leadId: persistLeadId,
+                        chatId,
+                        error: persistResult?.error || 'unknown'
+                      });
+                    }
+                  }).catch((persistError) => {
+                    console.warn('[PrinChat UI] ⚠️ Failed to persist hydrated photo in DB:', {
+                      leadId: persistLeadId,
+                      chatId,
+                      error: persistError?.message || persistError
+                    });
+                  });
+                } else if (shouldPersistResolvedPhoto) {
+                  console.warn('[PrinChat UI] ⚠️ Could not persist hydrated photo: missing leadId', { chatId });
+                }
+
+                if (photoApplied || this.cardHasUsablePhoto(currentCard)) {
+                  return; // Photo found, stop retrying
+                }
+              }
+            }
+            console.log('[PrinChat UI] 📸 ⚠️ All photo retries exhausted for:', chatId);
+          })();
+        }
       }
     });
 
@@ -11216,32 +12314,202 @@ class WhatsAppUIOverlay {
       const { lead } = event.detail;
       console.log('[PrinChat UI] ➕ New lead created:', lead.name);
 
-      // Re-render Kanban to show new card
+      // Re-render Kanban to show new card (might have empty photo/tags initially)
+      this.diagInfo('[PrinChat UI] 🟢 DIAG: queueKanbanRender triggered by PrinChatKanbanLeadCreated:', lead?.name, lead?.id);
       this.queueKanbanRender();
+
+      // CRITICAL FIX: Schedule delayed hydration retries for the new lead.
+      // When a message first arrives, WhatsApp Store often doesn't have the contact
+      // photo/tags ready yet. The initial render will show an empty card.
+      // These retries give WhatsApp time to resolve the contact data.
+      const leadId = lead?.id || lead?.chatId;
+      const chatId = this.resolveLeadChatId(lead) || lead?.chatId || leadId;
+      if (!chatId) return;
+
+      const RETRY_DELAYS = [2000, 5000, 10000, 20000, 30000]; // 2s, 5s, 10s, 20s, 30s — WhatsApp lazy-loads profile pics
+      for (const delay of RETRY_DELAYS) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+        if (!this.isKanbanOpen) return; // Stop if Kanban was closed
+
+        // Check if card still needs data
+        const card = this.findKanbanCardElementByLeadId(leadId || chatId);
+        if (!card) continue; // Card not in DOM yet/anymore
+
+        const hasPhoto = this.cardHasUsablePhoto(card);
+        const hasTags = !!card.querySelector('.princhat-kanban-lead-tags');
+        if (hasPhoto && hasTags) {
+          console.log('[PrinChat UI] ✅ New lead fully hydrated after', delay, 'ms');
+          break; // Card is complete
+        }
+
+        console.log('[PrinChat UI] 💧 Delayed hydration retry for new lead at', delay, 'ms...', { hasPhoto, hasTags });
+
+        // Refresh sidebar cache: WhatsApp bumps new-message chats to the top
+        // of the sidebar WITH their profile pic. Re-caching captures these.
+        this.cacheSidebarPhotos();
+        this.diagDebug('[PrinChat UI] 🔬 DIAG hydration: chatId =', chatId, 'leadId =', leadId, 'cache size =', this.sidebarPhotoCache.size);
+        try {
+          const info = await this.getContactInfo(chatId);
+          this.diagDebug('[PrinChat UI] 🔬 DIAG hydration: getContactInfo returned:', JSON.stringify({
+            hasData: !!info,
+            chatName: info?.chatName,
+            chatPhoto: info?.chatPhoto ? info.chatPhoto.substring(0, 60) + '...' : '(none)',
+            labelsCount: Array.isArray(info?.labels) ? info.labels.length : 0,
+            labels: info?.labels,
+            error: (info as any)?.error,
+            isTimeout: (info as any)?.isTimeout
+          }));
+          const updates: any = {};
+
+          // Resolve photo
+          if (!hasPhoto) {
+            let resolvedPhoto = '';
+            let resolvedPhotoSource = info?.chatPhotoSource || '';
+            let resolvedPhotoStability: 'stable' | 'volatile' | '' =
+              this.normalizePhotoStability(info?.chatPhotoStability)
+              || this.classifyPhotoStabilityByUrl(info?.chatPhoto || '');
+            let resolvedPhotoValidated = info?.chatPhotoValidated === true;
+            const phoneHint = this.extractLeadIdentity(info?.phoneNumber || lead?.phone || '');
+            const canUseInfoPhoto = this.isChatInfoPhotoCandidateUsable(
+              info?.chatPhoto,
+              info?.chatPhotoSource,
+              info?.chatPhotoStability,
+              info?.chatPhotoValidated === true
+            );
+            if (canUseInfoPhoto) {
+              resolvedPhoto = String(info.chatPhoto);
+              this.diagDebug('[PrinChat UI] 🔬 DIAG hydration: photo from getContactInfo');
+            }
+            if (!resolvedPhoto) {
+              const directPhoto = await this.getChatPhotoForLead(chatId, phoneHint, lead?.phone);
+              resolvedPhoto = directPhoto || '';
+              if (resolvedPhoto) {
+                resolvedPhotoSource = 'chatInfo.get_chat_photo';
+                resolvedPhotoStability = this.classifyPhotoStabilityByUrl(resolvedPhoto);
+                resolvedPhotoValidated = true;
+              }
+              this.diagDebug('[PrinChat UI] 🔬 DIAG hydration: getChatPhotoForLead =', resolvedPhoto ? resolvedPhoto.substring(0, 60) + '...' : '(none)');
+            }
+            // Fallback: check refreshed sidebar cache
+            if (!resolvedPhoto) {
+              const cacheKeys = this.buildLeadChatVariants(chatId);
+              const leadIdentity = this.extractLeadIdentity(chatId);
+              if (leadIdentity) cacheKeys.push(leadIdentity);
+              if (phoneHint) cacheKeys.push(phoneHint);
+              // Also try name-based lookup (critical for contacts like "Bunker 707")
+              const leadName = info?.chatName || lead?.name || '';
+              if (leadName) cacheKeys.push(`name:${leadName.trim().toLowerCase()}`);
+              for (const key of cacheKeys) {
+                const cached = this.sidebarPhotoCache.get(key.toLowerCase());
+                const cachedStability = this.classifyPhotoStabilityByUrl(cached || '');
+                const cachedValidated = cachedStability === 'stable';
+                if (this.isChatInfoPhotoCandidateUsable(cached, 'chatInfo.sidebar', cachedStability, cachedValidated, { allowUnknownSource: true })) {
+                  resolvedPhoto = String(cached);
+                  resolvedPhotoSource = 'chatInfo.sidebar';
+                  resolvedPhotoStability = cachedStability;
+                  resolvedPhotoValidated = cachedValidated;
+                  this.diagDebug('[PrinChat UI] 🔬 DIAG hydration: photo from sidebar cache, key =', key);
+                  break;
+                }
+              }
+            }
+            if (
+              this.isChatInfoPhotoCandidateUsable(
+                resolvedPhoto,
+                resolvedPhotoSource || 'chatInfo.sidebar',
+                resolvedPhotoStability || this.classifyPhotoStabilityByUrl(resolvedPhoto),
+                resolvedPhotoValidated === true,
+                { allowUnknownSource: true }
+              )
+            ) {
+              updates.photo = resolvedPhoto;
+            }
+          }
+
+          // Resolve tags/labels
+          if (!hasTags) {
+            const labels = Array.isArray(info?.labels) ? info.labels : [];
+            this.diagDebug('[PrinChat UI] 🔬 DIAG hydration: labels from getContactInfo:', labels);
+            if (labels.length > 0) {
+              updates.tags = labels.map((l: any) => l.id).filter(Boolean);
+              updates.labels = labels;
+            }
+          }
+
+          if (Object.keys(updates).length > 0) {
+            console.log('[PrinChat UI] 💧 Delayed hydration got data:', Object.keys(updates));
+
+            // Update card in DOM
+            this.updateCardDOM({
+              id: leadId,
+              chatId,
+              phone: info?.phoneNumber || lead?.phone,
+              name: info?.chatName || lead?.name,
+              ...updates
+            });
+
+            // Persist to DB
+            if (leadId) {
+              this.requestFromContentScript({
+                type: 'UPDATE_KANBAN_LEAD',
+                payload: { leadId, updates }
+              }).catch(() => null);
+            }
+
+            // If we got everything, stop retrying
+            const hasPhotoNow = this.cardHasUsablePhoto(card);
+            const hasTagsNow = !!card.querySelector('.princhat-kanban-lead-tags');
+            if (hasPhotoNow && hasTagsNow) {
+              console.log('[PrinChat UI] ✅ New lead fully hydrated after', delay, 'ms');
+              break;
+            }
+          } else {
+            this.diagDebug('[PrinChat UI] 🔬 DIAG hydration: NO useful data resolved at', delay, 'ms');
+          }
+        } catch (err) {
+          console.warn('[PrinChat UI] ⚠️ Delayed hydration attempt failed:', err);
+        }
+      }
     });
 
-    // Listen for label/tag changes (colors or new labels)
     // Listen for label/tag changes (colors or new labels)
     document.addEventListener('PrinChatLabelsChanged', async (event: any) => {
       try {
         console.log('[PrinChat UI] 🏷️📥 Label change detected!', event.detail);
 
-        // ALWAYS clear cache (even if Kanban closed) to ensure fresh data on next open
-        this.globalLabels = [];
-        console.log('[PrinChat UI] ✅ Cache cleared');
+        // Refresh labels cache WITHOUT clearing first — prevents flash of colorless tags.
+        // Keep old cache until fresh data arrives so any interim renders still have colors.
+        this.requestFromContentScript({ type: 'GET_ALL_LABELS' })
+          .then(res => {
+            if (res?.data?.labels) {
+              this.globalLabels = res.data.labels;
+              console.log('[PrinChat UI] ✅ Labels cache refreshed:', this.globalLabels.length);
+            }
+          })
+          .catch(err => console.error('[PrinChat UI] ⚠️ Failed to refresh labels:', err));
 
         // If event includes specific chat data, update that card INSTANTLY
         if (event.detail?.chatId && event.detail?.tags !== undefined) {
           console.log('[PrinChat UI] 🎯 Specific chat update detected - applying instant update');
-          await this.updateCardTagsInstantly(event.detail.chatId, event.detail.tags);
+
+          // CRITICAL: Merge event labels into globalLabels so instant update can resolve names/colors
+          const eventLabels = event.detail?.labels;
+          if (Array.isArray(eventLabels) && eventLabels.length > 0) {
+            const beforeMergeCount = this.globalLabels.length;
+            this.mergeLabelCandidatesIntoGlobalLabels(eventLabels);
+            console.log('[PrinChat UI] 🏷️ Merged event labels into globalLabels. Total:', this.globalLabels.length, '(+',
+              Math.max(0, this.globalLabels.length - beforeMergeCount), ')');
+          }
+
+          await this.updateCardTagsInstantly(event.detail.chatId, event.detail.tags, false, event.detail.labels || []);
         }
 
         // ALSO queue full render (as backup/sync for global label changes)
         // Only re-render if Kanban is currently open
         if (this.isKanbanOpen) {
           console.log('[PrinChat UI] 🔄 Kanban open - queuing re-render...');
+          this.diagInfo('[PrinChat UI] 🔵 DIAG: queueKanbanRender triggered by PrinChatLabelsChanged:', event.detail?.reason, event.detail?.chatId);
           this.queueKanbanRender();
-          // await this.renderKanbanColumns(); // Removed to use debounce
         } else {
           console.log('[PrinChat UI] 💤 Kanban closed - will fetch fresh on next open');
         }
@@ -11257,8 +12525,10 @@ class WhatsAppUIOverlay {
    * Close Kanban overlay
    */
   private closeKanbanOverlay() {
+    this.closeKanbanCardDropdown();
+
     // Cleanup global dropdowns/tooltips immediately
-    document.querySelectorAll('.princhat-kanban-tags-tooltip, .princhat-kanban-card-dropdown, .princhat-kanban-description-tooltip, .princhat-kanban-modal-overlay, .princhat-kanban-column-menu').forEach(el => el.remove());
+    document.querySelectorAll('.princhat-kanban-tags-tooltip, .princhat-kanban-description-tooltip, .princhat-kanban-modal-overlay, .princhat-kanban-column-menu').forEach(el => el.remove());
     document.querySelectorAll('.princhat-kanban-lead-card.active-menu').forEach(c => c.classList.remove('active-menu'));
 
     // Stop tag polling
@@ -11268,6 +12538,7 @@ class WhatsAppUIOverlay {
       this.kanbanOverlay.remove();
       this.kanbanOverlay = null;
     }
+    this.clearKanbanBootstrapRetry();
 
     // Remove active state from Kanban sidebar button
     const kanbanBtn = document.querySelector('.princhat-kanban-sidebar-btn');
@@ -11329,7 +12600,7 @@ class WhatsAppUIOverlay {
    * Instantly update tags for a specific card without full re-render
    * Uses the robust ID matching strategy
    */
-  private async updateCardTagsInstantly(chatId: string, newTags: string[]): Promise<void> {
+  private async updateCardTagsInstantly(chatId: string, newTags: string[], allowClear: boolean = false, labelFallbacks: any[] = []): Promise<void> {
     if (!this.isKanbanOpen) {
       console.log('[PrinChat UI] ⚠️ Kanban not open - skipping instant update');
       return;
@@ -11337,50 +12608,30 @@ class WhatsAppUIOverlay {
 
     console.log(`[PrinChat UI] ⚡ Instant tag update for ${chatId}`, newTags);
 
-    // NORMALIZE ID: Remove WhatsApp suffixes (@lid, @c.us, @s.whatsapp.net, @g.us, etc.)
-    // DB stores IDs without suffix, but events come with suffix
-    const normalizedId = chatId.replace(/@lid$|@c\.us$|@s\.whatsapp\.net$|@g\.us$/g, '');
-    console.log(`[PrinChat UI] 🔧 Normalized ID: "${chatId}" → "${normalizedId}"`);
+    // Use canonical identity to avoid mismatches caused by device-suffixed IDs (e.g. :12@c.us)
+    const normalizedId = this.extractLeadIdentity(chatId);
+    const variants = this.buildLeadChatVariants(chatId);
+    console.log(`[PrinChat UI] 🔧 Normalized ID: "${chatId}" → "${normalizedId}"`, { variants });
 
     // ROBUST ID MATCHING (reuse existing logic)
-    const rawId = normalizedId;
+    const rawId = normalizedId || this.normalizeLeadChatId(chatId);
     let card: HTMLElement | null = null;
 
     console.log(`[PrinChat UI] 🔍 Searching for card with ID: "${rawId}"`);
 
-    try {
-      card = document.querySelector(`.princhat-kanban-lead-card[data-lead-id="${rawId}"]`);
-      if (card) {
-        console.log(`[PrinChat UI] ✅ Found card via exact match`);
-      }
-    } catch (e) {
-      console.warn(`[PrinChat UI] ⚠️ Selector error:`, e);
-    }
+    const allCards = Array.from(document.querySelectorAll('.princhat-kanban-lead-card')) as HTMLElement[];
+    for (const candidateCard of allCards) {
+      const cardLeadId = candidateCard.getAttribute('data-lead-id') || '';
+      if (!cardLeadId) continue;
 
-    // Fallback: User ID Match
-    if (!card) {
-      console.log(`[PrinChat UI] 🔄 Exact match failed, trying fallback...`);
-      const userPart = rawId.split('@')[0];
-      console.log(`[PrinChat UI]   Looking for cards starting with: "${userPart}"`);
+      const cardVariants = this.buildLeadChatVariants(cardLeadId);
+      const hasExactMatch = variants.some((variant) => cardVariants.includes(variant));
+      const hasIdentityMatch = this.extractLeadIdentity(cardLeadId) === normalizedId;
 
-      const allCards = Array.from(document.querySelectorAll('.princhat-kanban-lead-card'));
-      console.log(`[PrinChat UI]   Total cards in DOM: ${allCards.length}`);
-
-      // Log all card IDs for debugging
-      const allCardIds = allCards.map(c => c.getAttribute('data-lead-id') || 'NO_ID');
-      console.log(`[PrinChat UI]   All card IDs:`, allCardIds);
-
-      for (const c of allCards) {
-        const cId = c.getAttribute('data-lead-id') || '';
-        if (cId.startsWith(userPart)) {
-          card = c as HTMLElement;
-          console.log(`[PrinChat UI] ✅ Found card via fallback match: "${cId}"`);
-          break;
-        }
-      }
-
-      if (!card) {
-        console.error(`[PrinChat UI] ❌ No card found with prefix "${userPart}"`);
+      if (hasExactMatch || hasIdentityMatch) {
+        card = candidateCard;
+        console.log(`[PrinChat UI] ✅ Found card via canonical match: "${cardLeadId}"`);
+        break;
       }
     }
 
@@ -11401,34 +12652,80 @@ class WhatsAppUIOverlay {
       this.globalLabels = allLabels; // Update cache
     }
 
-    // Find tags container
-    const tagsContainer = card.querySelector('.princhat-kanban-lead-tags');
+    // Find/create tags container
+    let tagsContainer = card.querySelector('.princhat-kanban-lead-tags') as HTMLElement | null;
     if (!tagsContainer) {
-      console.warn('[PrinChat UI] Tags container not found in card');
+      const leadInfo = card.querySelector('.princhat-kanban-lead-info');
+      const leadMeta = card.querySelector('.princhat-kanban-lead-meta');
+      if (!leadInfo) {
+        console.warn('[PrinChat UI] Tags container could not be created (lead info missing)');
+        return;
+      }
+      tagsContainer = document.createElement('div');
+      tagsContainer.className = 'princhat-kanban-lead-tags';
+      if (leadMeta) {
+        leadInfo.insertBefore(tagsContainer, leadMeta);
+      } else {
+        leadInfo.appendChild(tagsContainer);
+      }
+    }
+
+    const normalizedTags = Array.isArray(newTags) ? newTags.filter(Boolean) : [];
+    if (normalizedTags.length === 0) {
+      if (allowClear) {
+        tagsContainer.remove();
+        console.log(`[PrinChat UI] ✅ Card ${chatId} tags cleared`);
+      } else {
+        console.log(`[PrinChat UI] ⚠️ Ignoring transient empty tag update for ${chatId}`);
+      }
       return;
     }
 
-    // Render tags (reuse logic from updateCardDOM)
-    const MAX_VISIBLE = 2;
-    const tagElements = newTags.slice(0, MAX_VISIBLE).map(tagId => {
-      const label = allLabels.find((l: any) => l.id === tagId);
-      if (!label) return '';
+    const normalizedFallbackLabels = Array.isArray(labelFallbacks) ? labelFallbacks.filter(Boolean) : [];
 
-      const bgColor = label.hexColor || '#4A5568';
-      const textColor = this.getContrastColor(bgColor);
+    // Merge fallback labels into global cache (without polluting cache with weak id-only names)
+    if (normalizedFallbackLabels.length > 0) {
+      this.mergeLabelCandidatesIntoGlobalLabels(normalizedFallbackLabels);
+      allLabels = this.globalLabels;
+    }
+
+    // Render tags (reuse logic from updateCardDOM)
+    const MAX_VISIBLE = 1;
+    const tagElements = normalizedTags.slice(0, MAX_VISIBLE).map(tagId => {
+      const normalizedTag = this.normalizeTagToken(tagId);
+      const label = this.findLabelInfoByTag(normalizedTag, allLabels, normalizedFallbackLabels);
+      const tagName = label?.name || normalizedTag;
+      const labelColor = label?.hexColor || label?.color || '#2196f3';
+      const finalBg = labelColor ? `${labelColor}4D` : 'rgba(33, 150, 243, 0.30)';
+      const finalColor = labelColor || '#2196f3';
+      const textShadow = 'none';
 
       return `
-        <span class="princhat-kanban-tag" style="background-color: ${bgColor}; color: ${textColor};">
-          ${label.name || 'Tag'}
+        <span class="princhat-kanban-tag princhat-kanban-tag-unified" style="background-color: ${finalBg}; color: ${finalColor} !important; text-shadow: ${textShadow}; margin-right: 4px;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+            <line x1="7" x2="7.01" y1="7" y2="7"/>
+          </svg>
+          ${this.escapeHtml(tagName)}
         </span>
       `;
     }).join('');
 
-    const hiddenCount = Math.max(0, newTags.length - MAX_VISIBLE);
+    const hiddenCount = Math.max(0, normalizedTags.length - MAX_VISIBLE);
     const moreButton = hiddenCount > 0 ? `
-      <button class="princhat-kanban-more-tags" data-action="show-more-tags" data-tags='${JSON.stringify(newTags)}'>
-        +${hiddenCount}
-      </button>
+      <span class="princhat-kanban-tag-more princhat-no-drag princhat-kanban-tag-unified" style="cursor: pointer !important; pointer-events: auto !important; position: relative !important; z-index: 99 !important; background-color: rgba(158, 158, 158, 0.2) !important; color: #9e9e9e !important; " data-action="show-more-tags" data-tags="${encodeURIComponent(JSON.stringify(
+      (() => {
+        const remainingTags = normalizedTags.slice(1);
+        return remainingTags.map((tag: string) => {
+          const normalizedTag = this.normalizeTagToken(tag);
+          const info = this.findLabelInfoByTag(normalizedTag, allLabels, normalizedFallbackLabels);
+          return {
+            name: info?.name || normalizedTag,
+            color: info?.color || info?.hexColor || '#2196f3'
+          };
+        });
+      })()
+    ))}">+${hiddenCount}</span>
     ` : '';
 
     tagsContainer.innerHTML = tagElements + moreButton;
@@ -11455,6 +12752,9 @@ class WhatsAppUIOverlay {
 
       await this.pollVisibleCardsForTagChanges();
     }, 8000); // Every 8 seconds
+
+    // Run one immediate pass so cards opened before full hydration don't stay stale.
+    this.pollVisibleCardsForTagChanges().catch(() => null);
   }
 
   /**
@@ -11482,38 +12782,677 @@ class WhatsAppUIOverlay {
 
     // Fetch current leads from DB
     const response = await this.requestFromContentScript({ type: 'GET_ALL_KANBAN_LEADS' });
-    if (!response?.data?.leads) return;
-
-    const allLeads = response.data.leads;
+    const allLeads = Array.isArray(response?.data)
+      ? response.data
+      : (Array.isArray(response?.data?.leads) ? response.data.leads : []);
+    if (allLeads.length === 0) return;
 
     for (const card of Array.from(visibleCards)) {
-      const chatId = card.getAttribute('data-lead-id');
-      if (!chatId) continue;
+      const cardLeadId = card.getAttribute('data-lead-id');
+      if (!cardLeadId) continue;
 
-      // Find lead in DB
-      const lead = allLeads.find((l: any) => l.chatId === chatId);
+      const cardVariants = this.buildLeadChatVariants(cardLeadId);
+      const cardIdentity = this.extractLeadIdentity(cardLeadId);
+
+      // Find lead in DB using scoped ID, chatId variants, or canonical identity
+      const lead = allLeads.find((l: any) => {
+        const leadCandidates = [l?.id, l?.chatId, l?.phone];
+        for (const candidate of leadCandidates) {
+          const candidateVariants = this.buildLeadChatVariants(candidate);
+          if (candidateVariants.some((variant) => cardVariants.includes(variant))) {
+            return true;
+          }
+          const candidateIdentity = this.extractLeadIdentity(candidate);
+          if (candidateIdentity && cardIdentity && candidateIdentity === cardIdentity) {
+            return true;
+          }
+        }
+        return false;
+      });
       if (!lead) continue;
 
       const currentTags = lead.tags || [];
-      const lastTags = this.lastPolledTags.get(chatId) || [];
+      const lastTags = this.lastPolledTags.get(cardLeadId) || [];
 
       // Compare tags
       const tagsChanged = JSON.stringify(currentTags.sort()) !== JSON.stringify(lastTags.sort());
 
       if (tagsChanged) {
-        console.log(`[PrinChat UI] 🔄 Polling detected tag change for ${chatId}`);
+        console.log(`[PrinChat UI] 🔄 Polling detected tag change for ${cardLeadId}`);
         console.log(`[PrinChat UI]   Old: ${JSON.stringify(lastTags)}`);
         console.log(`[PrinChat UI]   New: ${JSON.stringify(currentTags)}`);
 
-        await this.updateCardTagsInstantly(chatId, currentTags);
-        this.lastPolledTags.set(chatId, currentTags);
+        await this.updateCardTagsInstantly(cardLeadId, currentTags, true, Array.isArray(lead?.labels) ? lead.labels : []);
+        this.lastPolledTags.set(cardLeadId, currentTags);
       } else {
         // Update cache even if no change (first poll)
-        if (!this.lastPolledTags.has(chatId)) {
-          this.lastPolledTags.set(chatId, currentTags);
+        if (!this.lastPolledTags.has(cardLeadId)) {
+          this.lastPolledTags.set(cardLeadId, currentTags);
         }
       }
     }
+  }
+
+  private stripScopedChatId(value: any): string {
+    if (typeof value !== 'string') return '';
+    let chatId = value.trim();
+    if (!chatId) return '';
+
+    const scopedSeparator = chatId.lastIndexOf('::');
+    if (scopedSeparator >= 0) {
+      chatId = chatId.slice(scopedSeparator + 2);
+    }
+
+    chatId = chatId.replace(/^waid?:/i, '');
+    return chatId.trim();
+  }
+
+  private extractLeadIdentity(value: any): string {
+    const normalized = this.stripScopedChatId(value);
+    if (!normalized) return '';
+
+    const atIndex = normalized.indexOf('@');
+    const userPart = (atIndex >= 0 ? normalized.slice(0, atIndex) : normalized)
+      .replace(/:\d+$/g, '')
+      .trim();
+
+    return userPart;
+  }
+
+  private normalizeLeadChatId(value: any): string {
+    const normalized = this.stripScopedChatId(value);
+    if (!normalized) return '';
+
+    const atIndex = normalized.indexOf('@');
+    const domain = atIndex >= 0 ? normalized.slice(atIndex).toLowerCase() : '';
+    const identity = this.extractLeadIdentity(normalized);
+    if (!identity) return '';
+
+    if (domain) {
+      return `${identity}${domain}`;
+    }
+
+    if (/^\d+$/.test(identity)) {
+      return `${identity}@c.us`;
+    }
+
+    return identity;
+  }
+
+  private buildLeadChatVariants(value: any): string[] {
+    const raw = this.stripScopedChatId(value).toLowerCase();
+    const normalized = this.normalizeLeadChatId(value).toLowerCase();
+    const identity = this.extractLeadIdentity(value).toLowerCase();
+    const variants = new Set<string>();
+
+    if (raw) variants.add(raw);
+    if (normalized) variants.add(normalized);
+    if (identity) {
+      variants.add(identity);
+      if (identity !== 'status') {
+        variants.add(`${identity}@c.us`);
+        variants.add(`${identity}@s.whatsapp.net`);
+        variants.add(`${identity}@lid`);
+      }
+    }
+
+    return Array.from(variants).filter(Boolean);
+  }
+
+  private resolveLeadChatId(lead: any): string {
+    const candidates = [lead?.chatId, lead?.leadId, lead?.id, lead?.phone];
+
+    for (const candidate of candidates) {
+      const normalized = this.normalizeLeadChatId(candidate);
+      if (normalized) {
+        return normalized;
+      }
+    }
+
+    return '';
+  }
+
+  private resolveLeadDisplayName(lead: any): string {
+    const rawName = typeof lead?.name === 'string' ? lead.name.trim() : '';
+    const looksScoped = rawName.includes('::') || rawName.startsWith('wa:') || rawName.startsWith('waid:');
+
+    if (rawName && !looksScoped) {
+      return rawName;
+    }
+
+    const fallbackChatId = this.resolveLeadChatId(lead);
+    if (!fallbackChatId) {
+      return rawName || 'Desconhecido';
+    }
+
+    const identity = this.extractLeadIdentity(fallbackChatId);
+    return identity || rawName || 'Desconhecido';
+  }
+
+  private isRenderablePhotoUrl(value: any): boolean {
+    if (typeof value !== 'string') return false;
+    const src = value.trim();
+    if (!src || src === 'data:' || src === 'about:blank') return false;
+    if (this.isLikelyPlaceholderPhotoUrl(src)) return false;
+    if (/^https?:\/\//i.test(src)) return true;
+    if (src.startsWith('blob:')) return true;
+    if (/^data:image\//i.test(src) && !/^data:image\/svg/i.test(src)) return true;
+    if (src.startsWith('//')) return true;
+    return false;
+  }
+
+  private normalizeTrackedPhotoUrl(value: any): string {
+    if (typeof value !== 'string') return '';
+    const src = value.trim();
+    if (!src) return '';
+    if (src.startsWith('//')) return `https:${src}`;
+    return src;
+  }
+
+  private markBrokenPhotoUrl(value: any): void {
+    const normalized = this.normalizeTrackedPhotoUrl(value);
+    if (!normalized) return;
+    this.brokenPhotoUrlSet.add(normalized);
+  }
+
+  private isBrokenPhotoUrl(value: any): boolean {
+    const normalized = this.normalizeTrackedPhotoUrl(value);
+    if (!normalized) return false;
+    return this.brokenPhotoUrlSet.has(normalized);
+  }
+
+  private normalizePhotoStability(value: any): 'stable' | 'volatile' | '' {
+    if (typeof value !== 'string') return '';
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'stable') return 'stable';
+    if (normalized === 'volatile') return 'volatile';
+    return '';
+  }
+
+  private classifyPhotoStabilityByUrl(value: any): 'stable' | 'volatile' {
+    if (typeof value !== 'string') return 'volatile';
+    const src = value.trim();
+    if (!src) return 'volatile';
+
+    if (src.startsWith('blob:') || /^data:image\//i.test(src)) {
+      return 'stable';
+    }
+
+    try {
+      const parsed = new URL(src.startsWith('//') ? `https:${src}` : src, window.location.origin);
+      const host = parsed.hostname.toLowerCase();
+      const full = `${parsed.pathname.toLowerCase()}${parsed.search.toLowerCase()}`;
+
+      if (host.includes('pps.whatsapp.net')) return 'stable';
+      if (host.includes('media-for') && host.includes('cdn.whatsapp.net')) return 'volatile';
+      if (host.includes('cdn.whatsapp.net')) return 'volatile';
+      if (host.includes('mmg.whatsapp.net')) return 'volatile';
+      if (full.includes('/o1/v/t24') || full.includes('__wa-mms') || full.includes('/dl2') || full.includes('/dl3')) {
+        return 'volatile';
+      }
+    } catch (_error) {
+      return 'volatile';
+    }
+
+    return 'volatile';
+  }
+
+  private isChatInfoPhotoCandidateUsable(
+    photo: any,
+    source?: any,
+    stability?: any,
+    validated?: boolean,
+    options: { allowUnknownSource?: boolean } = {}
+  ): boolean {
+    if (!this.isRenderablePhotoUrl(photo)) return false;
+    if (this.isBrokenPhotoUrl(photo)) return false;
+
+    const normalizedSource = typeof source === 'string' ? source : '';
+    const sourceTrusted = this.isTrustedChatInfoPhotoSource(normalizedSource);
+    if (!sourceTrusted && !options.allowUnknownSource) return false;
+
+    const normalizedStability = this.normalizePhotoStability(stability)
+      || this.classifyPhotoStabilityByUrl(photo);
+    if (normalizedStability === 'volatile') {
+      return validated === true;
+    }
+
+    return true;
+  }
+
+  private shouldHydrateLeadPhoto(
+    photo: any,
+    options: { stability?: any; validated?: boolean } = {}
+  ): boolean {
+    if (!this.isRenderablePhotoUrl(photo)) return true;
+    if (this.isBrokenPhotoUrl(photo)) return true;
+
+    const normalizedStability = this.normalizePhotoStability(options.stability)
+      || this.classifyPhotoStabilityByUrl(photo);
+    if (normalizedStability === 'volatile') {
+      return options.validated !== true;
+    }
+
+    return false;
+  }
+
+  private getCardLeadName(card: HTMLElement, fallbackName: string = 'Desconhecido'): string {
+    const currentName = (card.querySelector('.princhat-kanban-lead-name')?.textContent || '').trim();
+    return currentName || fallbackName;
+  }
+
+  private renderCardPhotoPlaceholder(card: HTMLElement, fallbackName?: string): void {
+    const photoContainer = card.querySelector('.princhat-kanban-lead-photo') as HTMLElement | null;
+    if (!photoContainer) return;
+
+    const resolvedName = (fallbackName || this.getCardLeadName(card, 'U')).trim() || 'U';
+    const initial = (resolvedName.charAt(0) || '?').toUpperCase();
+    const placeholder = document.createElement('div');
+    placeholder.className = 'princhat-kanban-lead-photo-placeholder';
+    placeholder.textContent = initial;
+    photoContainer.replaceChildren(placeholder);
+  }
+
+  private bindCardPhotoErrorFallback(img: HTMLImageElement): void {
+    const marker = '__princhatPhotoErrorBound';
+    if ((img as any)[marker]) return;
+    (img as any)[marker] = true;
+
+    img.addEventListener('error', () => {
+      const card = img.closest('.princhat-kanban-lead-card') as HTMLElement | null;
+      if (!card) return;
+      const failingSrc = (img.currentSrc || img.src || img.getAttribute('src') || '').trim();
+      if (failingSrc) {
+        this.markBrokenPhotoUrl(failingSrc);
+      }
+      const fallbackName = (img.alt || '').trim() || this.getCardLeadName(card, 'U');
+      this.renderCardPhotoPlaceholder(card, fallbackName);
+    });
+  }
+
+  private setCardPhoto(
+    card: HTMLElement,
+    photo: any,
+    fallbackName?: string,
+    options: { preserveExistingUsablePhoto?: boolean } = {}
+  ): boolean {
+    const photoContainer = card.querySelector('.princhat-kanban-lead-photo') as HTMLElement | null;
+    if (!photoContainer) return false;
+
+    const preserveExistingUsablePhoto = !!options.preserveExistingUsablePhoto;
+    const hasUsablePhotoBeforeUpdate = this.cardHasUsablePhoto(card);
+    const existingImgBeforeUpdate = photoContainer.querySelector('img') as HTMLImageElement | null;
+    const existingSrcBeforeUpdate = existingImgBeforeUpdate
+      ? (existingImgBeforeUpdate.currentSrc || existingImgBeforeUpdate.src || existingImgBeforeUpdate.getAttribute('src') || '').trim()
+      : '';
+    const hasRenderablePhotoElementBeforeUpdate =
+      this.isRenderablePhotoUrl(existingSrcBeforeUpdate) && !this.isBrokenPhotoUrl(existingSrcBeforeUpdate);
+    if (!this.isRenderablePhotoUrl(photo) || this.isBrokenPhotoUrl(photo)) {
+      if (!(preserveExistingUsablePhoto && (hasUsablePhotoBeforeUpdate || hasRenderablePhotoElementBeforeUpdate))) {
+        this.renderCardPhotoPlaceholder(card, fallbackName);
+      }
+      return false;
+    }
+
+    const resolvedName = (fallbackName || this.getCardLeadName(card, 'U')).trim() || 'U';
+    const nextPhoto = String(photo).trim();
+    const currentImg = photoContainer.querySelector('img') as HTMLImageElement | null;
+    const currentSrc = currentImg
+      ? (currentImg.currentSrc || currentImg.src || currentImg.getAttribute('src') || '').trim()
+      : '';
+
+    if (currentImg && currentSrc === nextPhoto) {
+      this.bindCardPhotoErrorFallback(currentImg);
+      return this.cardHasUsablePhoto(card);
+    }
+
+    const nextImg = document.createElement('img');
+    nextImg.src = nextPhoto;
+    nextImg.alt = resolvedName;
+    nextImg.style.width = '100%';
+    nextImg.style.height = '100%';
+    nextImg.style.borderRadius = '50%';
+    nextImg.style.objectFit = 'cover';
+    this.bindCardPhotoErrorFallback(nextImg);
+    photoContainer.replaceChildren(nextImg);
+
+    if (nextImg.complete && nextImg.naturalWidth <= 0) {
+      this.renderCardPhotoPlaceholder(card, resolvedName);
+      return false;
+    }
+
+    return nextImg.complete && nextImg.naturalWidth > 0 && nextImg.naturalHeight > 0;
+  }
+
+  private cardHasUsablePhoto(card: HTMLElement): boolean {
+    const img = card.querySelector('.princhat-kanban-lead-photo img') as HTMLImageElement | null;
+    if (!img) return false;
+
+    this.bindCardPhotoErrorFallback(img);
+    const currentSrc = (img.currentSrc || img.src || img.getAttribute('src') || '').trim();
+    if (!this.isRenderablePhotoUrl(currentSrc) || this.isBrokenPhotoUrl(currentSrc)) {
+      this.renderCardPhotoPlaceholder(card, img.alt || undefined);
+      return false;
+    }
+
+    if (!img.complete) return false;
+    if (img.naturalWidth > 0 && img.naturalHeight > 0) return true;
+
+    this.renderCardPhotoPlaceholder(card, img.alt || undefined);
+    return false;
+  }
+
+  private bindRenderedCardPhotoGuards(root: ParentNode): void {
+    const cards = Array.from(root.querySelectorAll('.princhat-kanban-lead-card')) as HTMLElement[];
+    cards.forEach((card) => {
+      const img = card.querySelector('.princhat-kanban-lead-photo img') as HTMLImageElement | null;
+      if (!img) return;
+      this.bindCardPhotoErrorFallback(img);
+      const currentSrc = (img.currentSrc || img.src || img.getAttribute('src') || '').trim();
+      if (this.isBrokenPhotoUrl(currentSrc)) {
+        this.renderCardPhotoPlaceholder(card, img.alt || undefined);
+        return;
+      }
+      if (img.complete && img.naturalWidth <= 0) {
+        this.renderCardPhotoPlaceholder(card, img.alt || undefined);
+      }
+    });
+  }
+
+  private isLikelyPlaceholderPhotoUrl(value: any): boolean {
+    if (typeof value !== 'string') return true;
+    const src = value.trim();
+    if (!src) return true;
+
+    const lower = src.toLowerCase();
+    if (lower.includes('ui-avatars.com')) return true;
+
+    try {
+      const parsed = new URL(
+        src.startsWith('//') ? `https:${src}` : src,
+        window.location.origin
+      );
+      const host = parsed.hostname.toLowerCase();
+      const path = parsed.pathname.toLowerCase();
+      const looksAvatarPath =
+        path.includes('avatar')
+        || path.includes('default-user')
+        || path.includes('default-group')
+        || path.includes('profile-placeholder');
+
+      if (host === 'web.whatsapp.com' && (looksAvatarPath || path.endsWith('.svg'))) {
+        return true;
+      }
+      if (looksAvatarPath && path.endsWith('.svg')) {
+        return true;
+      }
+    } catch (_error) {
+      if (lower.includes('avatar') && lower.includes('.svg')) return true;
+    }
+
+    return false;
+  }
+
+  private isTrustedIncomingPhotoSource(source: any): boolean {
+    const normalized = typeof source === 'string' ? source.trim().toLowerCase() : '';
+    if (!normalized) return false;
+
+    if (normalized === 'wpp') return true;
+    if (normalized === 'message_model') return true;
+    if (normalized === 'store_chat' || normalized === 'store_chat_find') return true;
+    if (normalized === 'store_contact' || normalized === 'store_profilepic_find_msg') return true;
+    if (normalized.startsWith('store_profilepic_')) return true;
+
+    return false;
+  }
+
+  private isTrustedChatInfoPhotoSource(source: any): boolean {
+    const normalized = typeof source === 'string' ? source.trim().toLowerCase() : '';
+    if (!normalized) return false;
+
+    if (normalized === 'chatinfo.local') return true;
+    if (normalized === 'chatinfo.profilepicthumb.find') return true;
+    if (normalized === 'chatinfo.profilepicthumb.find.genurl') return true;
+    if (normalized === 'chatinfo.profilepicthumb.find.geturl') return true;
+    if (normalized === 'chatinfo.profilepicthumb.get') return true;
+    if (normalized === 'chatinfo.profilepicthumb.get.genurl') return true;
+    if (normalized === 'chatinfo.profilepicthumb.get.geturl') return true;
+    if (normalized === 'chatinfo.wpp') return true;
+    if (normalized === 'chatinfo.wpp_whatsapp_pptstore') return true;
+    if (normalized === 'chatinfo.wpp_whatsapp_profilepicfind') return true;
+    if (normalized === 'chatinfo.store') return true;
+    if (normalized === 'chatinfo.get_chat_photo') return true;
+    if (normalized === 'chatinfo.phone_fallback') return true;
+    if (normalized === 'chatinfo.sidebar') return true;
+    if (normalized === 'chatinfo.dom.header') return true;
+    if (normalized === 'chatinfo.dom.background') return true;
+
+    return false;
+  }
+
+  private normalizeTagToken(value: any): string {
+    if (value === null || value === undefined) return '';
+    return String(value).trim();
+  }
+
+  private isValidLabelColor(value: any): boolean {
+    if (typeof value !== 'string') return false;
+    const normalized = value.trim();
+    if (!normalized) return false;
+    return normalized.startsWith('#') || normalized.startsWith('rgb') || normalized.startsWith('hsl');
+  }
+
+  private isMeaningfulLabelName(name: any, idOrTag?: any): boolean {
+    const normalizedName = this.normalizeTagToken(name);
+    if (!normalizedName) return false;
+
+    const normalizedRef = this.normalizeTagToken(idOrTag);
+    if (normalizedRef && normalizedName.toLowerCase() === normalizedRef.toLowerCase()) return false;
+    if (/^tag\s+\d+$/i.test(normalizedName)) return false;
+    if (/^\d+$/.test(normalizedName)) return false;
+
+    return true;
+  }
+
+  private mergeLabelCandidatesIntoGlobalLabels(labels: any[] = []): void {
+    if (!Array.isArray(labels) || labels.length === 0) return;
+
+    labels.forEach((label: any) => {
+      const labelId = this.normalizeTagToken(label?.id);
+      const labelName = this.normalizeTagToken(label?.name);
+      const labelColor = this.normalizeTagToken(label?.color || label?.hexColor);
+      const hasMeaningfulName = this.isMeaningfulLabelName(labelName, labelId);
+      const hasValidColor = this.isValidLabelColor(labelColor);
+
+      if (!labelId && !hasMeaningfulName) return;
+
+      const existing = this.globalLabels.find((cached: any) => {
+        const cachedId = this.normalizeTagToken(cached?.id);
+        const cachedName = this.normalizeTagToken(cached?.name);
+        return (
+          (!!labelId && !!cachedId && cachedId === labelId) ||
+          (!!hasMeaningfulName && !!cachedName && cachedName.toLowerCase() === labelName.toLowerCase())
+        );
+      });
+
+      if (existing) {
+        const existingName = this.normalizeTagToken(existing?.name);
+        if (hasMeaningfulName && !this.isMeaningfulLabelName(existingName, existing?.id)) {
+          existing.name = labelName;
+        }
+        if (hasValidColor && !this.isValidLabelColor(existing?.color || existing?.hexColor)) {
+          existing.color = labelColor;
+        }
+        if (hasValidColor && !this.isValidLabelColor(existing?.hexColor)) {
+          existing.hexColor = labelColor;
+        }
+        if (!this.normalizeTagToken(existing?.id) && labelId) {
+          existing.id = labelId;
+        }
+        return;
+      }
+
+      // Avoid inserting weak id-only labels that later regress UI to numeric tags.
+      if (!hasMeaningfulName) return;
+
+      this.globalLabels.push({
+        id: labelId || labelName,
+        name: labelName,
+        color: hasValidColor ? labelColor : '#2196f3',
+      });
+    });
+  }
+
+  private findLabelInfoByTag(tag: any, labels: any[] = [], fallbackLabels: any[] = []): any | undefined {
+    const normalizedTag = this.normalizeTagToken(tag);
+    if (!normalizedTag) return undefined;
+    const normalizedTagLower = normalizedTag.toLowerCase();
+
+    const collectMatches = (pool: any[], source: 'global' | 'fallback'): Array<{ label: any; source: 'global' | 'fallback'; matchType: 'id' | 'name' }> => {
+      if (!Array.isArray(pool) || pool.length === 0) return [];
+      const matches: Array<{ label: any; source: 'global' | 'fallback'; matchType: 'id' | 'name' }> = [];
+      pool.forEach((label: any) => {
+        const labelId = this.normalizeTagToken(label?.id);
+        if (labelId && labelId === normalizedTag) {
+          matches.push({ label, source, matchType: 'id' });
+          return;
+        }
+
+        const labelName = this.normalizeTagToken(label?.name).toLowerCase();
+        if (labelName && labelName === normalizedTagLower) {
+          matches.push({ label, source, matchType: 'name' });
+        }
+      });
+      return matches;
+    };
+
+    const candidates = [
+      ...(collectMatches(labels, 'global') || []),
+      ...(collectMatches(fallbackLabels, 'fallback') || []),
+    ];
+
+    if (candidates.length === 0) return undefined;
+
+    const scoreCandidate = (candidate: { label: any; source: 'global' | 'fallback'; matchType: 'id' | 'name' }): number => {
+      const label = candidate.label || {};
+      const labelName = this.normalizeTagToken(label?.name);
+      const labelId = this.normalizeTagToken(label?.id);
+      const labelColor = this.normalizeTagToken(label?.color || label?.hexColor);
+
+      let score = candidate.matchType === 'id' ? 4 : 2;
+      if (this.isMeaningfulLabelName(labelName, labelId || normalizedTag)) score += 5;
+      else if (labelName) score += 1;
+      if (this.isValidLabelColor(labelColor)) score += 2;
+      if (candidate.source === 'fallback') score += 0.5;
+
+      return score;
+    };
+
+    candidates.sort((left, right) => scoreCandidate(right) - scoreCandidate(left));
+    return candidates[0]?.label;
+  }
+
+  /**
+   * Cache all visible sidebar contact photos into sidebarPhotoCache.
+   * Must be called BEFORE the Kanban overlay hides the sidebar.
+   */
+  private cacheSidebarPhotos(): void {
+    this.sidebarPhotoCache.clear();
+    const roots = Array.from(document.querySelectorAll('#pane-side, #side'));
+    const searchRoots = roots.length > 0 ? roots : [document.body];
+    const cacheKeysForRow = (row: HTMLElement, title: string, photo: string) => {
+      const keys = new Set<string>();
+
+      const titleDigits = title.replace(/\D/g, '');
+      if (titleDigits.length >= 8) {
+        keys.add(titleDigits);
+      }
+
+      // Cache by normalized name so contacts with few digits (e.g. "Bunker 707")
+      // can be found via name-based lookup
+      const normalizedTitle = title.trim().toLowerCase();
+      if (normalizedTitle.length >= 3) {
+        keys.add(`name:${normalizedTitle}`);
+      }
+
+      const dataIds = new Set<string>();
+      const rowDataId = row.getAttribute('data-id');
+      if (rowDataId) {
+        dataIds.add(rowDataId);
+      }
+
+      const nestedDataIdNodes = Array.from(row.querySelectorAll('[data-id]')) as HTMLElement[];
+      for (const node of nestedDataIdNodes) {
+        const value = node.getAttribute('data-id');
+        if (value) {
+          dataIds.add(value);
+        }
+      }
+
+      for (const dataId of dataIds) {
+        const dataIdVariants = this.buildLeadChatVariants(dataId);
+        for (const variant of dataIdVariants) {
+          keys.add(variant.toLowerCase());
+        }
+
+        const identity = this.extractLeadIdentity(dataId).toLowerCase();
+        if (identity) {
+          keys.add(identity);
+          const identityToken = identity.replace(/[^a-z0-9]/g, '');
+          if (identityToken.length >= 5) {
+            keys.add(identityToken);
+          }
+        }
+      }
+
+      for (const key of keys) {
+        this.sidebarPhotoCache.set(key, photo);
+      }
+    };
+
+    for (const root of searchRoots) {
+      if (!root) continue;
+      // WhatsApp uses role="row" (not data-id) for sidebar chat rows
+      const rows = Array.from(root.querySelectorAll('[role="row"]')) as HTMLElement[];
+      for (const row of rows) {
+        // Find span[title] with contact name/phone  
+        const titleSpan = row.querySelector('span[title]') as HTMLElement | null;
+        if (!titleSpan) continue;
+        const title = titleSpan.getAttribute('title') || titleSpan.textContent || '';
+        if (!title) continue;
+
+        // Find image in this row
+        const images = Array.from(row.querySelectorAll('img')) as HTMLImageElement[];
+        for (const img of images) {
+          const photoCandidate =
+            img.currentSrc
+            || img.src
+            || img.getAttribute('src')
+            || '';
+          const normalizedPhotoCandidate = photoCandidate.startsWith('//')
+            ? `https:${photoCandidate}`
+            : photoCandidate;
+          if (this.isRenderablePhotoUrl(normalizedPhotoCandidate)) {
+            cacheKeysForRow(row, title, normalizedPhotoCandidate);
+            break;
+          }
+        }
+      }
+    }
+    console.log('[PrinChat UI] 📸 Cached', this.sidebarPhotoCache.size, 'sidebar photos before overlay');
+  }
+
+  private isSystemChatLead(lead: any): boolean {
+    const chatId = this.resolveLeadChatId(lead).toLowerCase();
+    const identity = this.extractLeadIdentity(chatId).toLowerCase();
+    const raw = this.stripScopedChatId(lead?.chatId || lead?.id || '').toLowerCase();
+    if (!chatId && !raw) return false;
+
+    if (identity === 'status') return true;
+    if (chatId === 'status@broadcast' || raw === 'status@broadcast') return true;
+    if (chatId.endsWith('@broadcast') || raw.endsWith('@broadcast')) return true;
+
+    return false;
   }
 
   /**
@@ -11569,8 +13508,22 @@ class WhatsAppUIOverlay {
       console.log('[PrinChat UI] renderKanbanColumns called');
 
       // 1. Fetch EVERYTHING first (Atomic Update Preparation)
-      const columnsResponse = await this.requestFromContentScript({ type: 'GET_KANBAN_COLUMNS' });
-      let rawColumns = columnsResponse?.data || [];
+      const columnsResponse = await this.requestKanbanDataWithRetry({ type: 'GET_KANBAN_COLUMNS' }, 8000, 4);
+      if (!columnsResponse?.success) {
+        if (this.isRetryableKanbanLoadError(columnsResponse)) {
+          container.innerHTML = '<p style="color: #9aa4b2; text-align: center; padding: 2rem;">Carregando Kanban...</p>';
+          this.scheduleKanbanBootstrapRetry(`columns_request_failed:${columnsResponse?.error || 'unknown'}`);
+          return;
+        }
+        throw new Error(columnsResponse?.error || 'Failed to load Kanban columns');
+      }
+
+      let rawColumns = Array.isArray(columnsResponse?.data) ? columnsResponse.data : [];
+      if (rawColumns.length === 0) {
+        container.innerHTML = '<p style="color: #9aa4b2; text-align: center; padding: 2rem;">Carregando Kanban...</p>';
+        this.scheduleKanbanBootstrapRetry('columns_empty');
+        return;
+      }
 
       // DEDUPLICATE COLUMNS (Fixing User Issue)
       const uniqueColumnsMap = new Map();
@@ -11586,43 +13539,111 @@ class WhatsAppUIOverlay {
 
       console.log('[PrinChat UI] 🔍 DEBUG: About to fetch/check labels. this.globalLabels.length =', this.globalLabels.length);
 
-      // OPTIMIZATION: Do NOT block rendering for labels.
-      // If we have them (from background fetch), great. If not, we render without colors
-      // and they will be fixed on next render/refresh.
+      // Quick label fetch with a short timeout — don't block rendering for too long.
       if (this.globalLabels.length === 0) {
-        console.log('[PrinChat UI] ⏳ Labels not ready yet. Triggering background fetch...');
-        // Fire and forget catch-up
-        this.requestFromContentScript({ type: 'GET_ALL_LABELS' })
-          .then(res => {
-            if (res?.data?.labels) {
-              this.globalLabels = res.data.labels;
-              console.log('[PrinChat UI] Late label fetch complete.');
-              // CRITICAL FIX: Re-render columns if Kanban is still open to apply colors
-              if (this.isKanbanOpen) {
-                console.log('[PrinChat UI] 🎨 Re-rendering Kanban with new labels...');
-                this.renderKanbanColumns();
-              }
-            }
-          })
-          .catch(console.error);
+        console.log('[PrinChat UI] ⏳ Labels not ready yet. Quick fetch (2s timeout)...');
+        try {
+          const labelsRes = await Promise.race([
+            this.requestFromContentScript({ type: 'GET_ALL_LABELS' }),
+            new Promise(resolve => setTimeout(() => resolve(null), 2000))
+          ]) as any;
+          if (labelsRes?.data?.labels) {
+            this.globalLabels = labelsRes.data.labels;
+            console.log('[PrinChat UI] ✅ Labels fetched:', this.globalLabels.length);
+          }
+        } catch (labelErr) {
+          console.error('[PrinChat UI] ⚠️ Failed to fetch labels:', labelErr);
+        }
       } else {
         console.log('[PrinChat UI] Using cached global labels:', this.globalLabels.length);
       }
 
 
       // Fetch All Leads
-      const leadsResponse = await this.requestFromContentScript({ type: 'GET_ALL_KANBAN_LEADS' });
-      const allLeads = leadsResponse?.data || [];
+      const leadsResponse = await this.requestKanbanDataWithRetry({ type: 'GET_ALL_KANBAN_LEADS' }, 8000, 4);
+      if (!leadsResponse?.success) {
+        if (this.isRetryableKanbanLoadError(leadsResponse)) {
+          container.innerHTML = '<p style="color: #9aa4b2; text-align: center; padding: 2rem;">Carregando Kanban...</p>';
+          this.scheduleKanbanBootstrapRetry(`leads_request_failed:${leadsResponse?.error || 'unknown'}`);
+          return;
+        }
+        throw new Error(leadsResponse?.error || 'Failed to load Kanban leads');
+      }
+      const allLeads = Array.isArray(leadsResponse?.data) ? leadsResponse.data : [];
       console.log('[PrinChat UI] Loaded', allLeads.length, 'total leads');
+
+      // Merge labels embedded in lead payloads to fill cache gaps.
+      // This avoids rendering numeric IDs when a label exists on the lead but not in GET_ALL_LABELS.
+      const beforeLeadMergeCount = this.globalLabels.length;
+      const leadLabelCandidates: any[] = [];
+      allLeads.forEach((lead: any) => {
+        if (Array.isArray(lead?.labels) && lead.labels.length > 0) {
+          leadLabelCandidates.push(...lead.labels);
+        }
+      });
+      this.mergeLabelCandidatesIntoGlobalLabels(leadLabelCandidates);
+      if (this.globalLabels.length > beforeLeadMergeCount) {
+        console.log('[PrinChat UI] 🏷️ Added missing labels from lead payloads:', this.globalLabels.length - beforeLeadMergeCount);
+      }
+
+      // DIAGNOSTIC: Log photo/tags status for each lead at render time
+      allLeads.forEach((lead: any) => {
+        const hasPhoto = this.isRenderablePhotoUrl(lead.photo);
+        const hasTags = Array.isArray(lead.tags) && lead.tags.length > 0;
+        if (!hasPhoto) {
+          this.diagInfo('[PrinChat UI] 🔍 DIAG RENDER: Lead missing photo:', {
+            id: lead.id,
+            name: lead.name,
+            hasPhoto,
+            photoValue: lead.photo ? lead.photo.substring(0, 50) + '...' : '(empty)',
+            hasTags,
+            tags: lead.tags
+          });
+        } else if (!hasTags) {
+          this.diagDebug('[PrinChat UI] 🔍 DIAG RENDER: Lead without tags (expected on WhatsApp Web normal):', {
+            id: lead.id,
+            name: lead.name
+          });
+        }
+      });
+
+      const systemLeads = allLeads.filter((lead: any) => this.isSystemChatLead(lead));
+      const visibleLeads = allLeads.filter((lead: any) => !this.isSystemChatLead(lead));
+
+      if (systemLeads.length > 0 && !this.hasScheduledSystemLeadCleanup) {
+        this.hasScheduledSystemLeadCleanup = true;
+        console.log(`[PrinChat UI] Hiding ${systemLeads.length} system/broadcast lead(s) from Kanban.`);
+        Promise.all(systemLeads.map((lead: any) =>
+          this.requestFromContentScript({
+            type: 'DELETE_KANBAN_LEAD',
+            payload: { leadId: lead.id }
+          }).catch(() => null)
+        )).then(() => {
+          console.log('[PrinChat UI] System/broadcast leads cleanup requested.');
+        }).catch(() => {
+          // no-op
+        });
+      }
 
       // Fetch Contact Info for Leads (INSTANT RENDER + BACKGROUND HYDRATION)
       // OPTIMIZATION: Render immediately with what we have in DB. Update stale info in background.
       console.log('[PrinChat UI] 🚀 Instant Render strategy: Using cached lead data.');
 
-      const leadsWithContactInfo: any[] = allLeads;
+      const leadsWithContactInfo: any[] = visibleLeads.map((lead: any) => {
+        const chatId = this.resolveLeadChatId(lead);
+        const normalizedLead = {
+          ...lead,
+          chatId: chatId || lead.chatId,
+        };
+
+        return {
+          ...normalizedLead,
+          name: this.resolveLeadDisplayName(normalizedLead),
+        };
+      });
 
       // Trigger Background Hydration (Fire and Forget)
-      this.hydrateLeadsInBackground(allLeads).catch(console.error);
+      this.hydrateLeadsInBackground(leadsWithContactInfo).catch(console.error);
 
 
       console.log('[PrinChat UI] ✅ All contact info fetched');
@@ -11635,6 +13656,13 @@ class WhatsAppUIOverlay {
       columns.forEach((column: any) => {
         const columnLeads = leadsWithContactInfo.filter((l: any) => l.columnId === column.id)
           .sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
+        // DIAGNOSTIC: Log globalLabels status at render time
+        this.diagDebug('[PrinChat UI] 🔍 DIAG RENDER: globalLabels.length =', this.globalLabels.length, 'sample:', this.globalLabels.slice(0, 3).map(l => `${l.id}=${l.name}(${l.color})`));
+        leadsWithContactInfo.forEach((lead: any) => {
+          if (lead.tags && lead.tags.length > 0) {
+            this.diagDebug('[PrinChat UI] 🔍 DIAG RENDER: Lead', lead.name, 'tags:', lead.tags, 'labels:', JSON.stringify(lead.labels));
+          }
+        });
         const columnEl = this.createColumnElement(column, columnLeads, this.globalLabels);
         fragment.appendChild(columnEl);
       });
@@ -11642,9 +13670,11 @@ class WhatsAppUIOverlay {
       // Clear and Append in one go
       container.innerHTML = '';
       container.appendChild(fragment);
+      this.bindRenderedCardPhotoGuards(container);
 
       // 3. Post-Render Setup
       this.setupColumnDragAndDrop();
+      this.clearKanbanBootstrapRetry();
 
       if (this.kanbanOverlay) {
         // Immediate init on next frame (No 500ms delay)
@@ -11688,36 +13718,187 @@ class WhatsAppUIOverlay {
    */
   private async hydrateLeadsInBackground(leads: any[]) {
     console.log(`[PrinChat UI] 💧 Starting background hydration for ${leads.length} leads...`);
-    const BATCH_SIZE = 10;
+    const BATCH_SIZE = 4;
+    const RETRY_DELAYS_MS = [0, 2000, 5000, 10000, 20000]; // Extended for WhatsApp lazy-loaded photos
 
     for (let i = 0; i < leads.length; i += BATCH_SIZE) {
       const batch = leads.slice(i, i + BATCH_SIZE);
 
       const promises = batch.map(async (lead) => {
-        let chatId = lead.leadId || lead.id || lead.chatId;
+        const chatId = this.resolveLeadChatId(lead);
         if (!chatId) return;
 
-        // Normalize ID
-        if (!chatId.includes('@') && /^\d+$/.test(chatId)) {
-          chatId = `${chatId} @c.us`;
-        }
+        let currentLead = { ...lead, chatId };
+        const requiresPhotoHydration = this.shouldHydrateLeadPhoto(currentLead.photo);
+        const requiresTagHydration = !Array.isArray(currentLead.tags) || currentLead.tags.length === 0;
+        const maxAttempts = requiresPhotoHydration
+          ? RETRY_DELAYS_MS.length
+          : (requiresTagHydration ? 2 : 1);
 
-        try {
-          const info = await this.getContactInfo(chatId);
-          // Only update if we have new useful info
-          if (info.chatName || info.labels) {
-            // Update UI immediately (Manual DOM Patching)
-            this.updateCardDOM({
-              ...lead,
-              name: info.chatName || lead.name,
-              photo: info.chatPhoto || lead.photo,
-              labels: info.labels || [],
-              tags: (info.labels || []).map((l: any) => l.id)
-            });
-
+        for (let attemptIndex = 0; attemptIndex < maxAttempts; attemptIndex++) {
+          const delayMs = RETRY_DELAYS_MS[Math.min(attemptIndex, RETRY_DELAYS_MS.length - 1)];
+          if (delayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
           }
-        } catch (e) {
-          // Ignore errors in background hydration
+
+          try {
+            const info = await this.getContactInfo(chatId);
+            const labels = Array.isArray(info.labels) ? info.labels : [];
+            const hasFreshLabels = labels.length > 0;
+            const phoneHint = this.extractLeadIdentity(info.phoneNumber || currentLead?.phone || '');
+
+            let resolvedPhoto = '';
+            let resolvedPhotoSource = info.chatPhotoSource || '';
+            let resolvedPhotoStability: 'stable' | 'volatile' | '' =
+              this.normalizePhotoStability(info.chatPhotoStability)
+              || this.classifyPhotoStabilityByUrl(info.chatPhoto || '');
+            let resolvedPhotoValidated = info.chatPhotoValidated === true;
+            const canUseInfoPhoto = this.isChatInfoPhotoCandidateUsable(
+              info.chatPhoto,
+              info.chatPhotoSource,
+              info.chatPhotoStability,
+              info.chatPhotoValidated === true
+            );
+            if (canUseInfoPhoto) {
+              resolvedPhoto = String(info.chatPhoto);
+            } else if (this.isRenderablePhotoUrl(currentLead.photo) && !this.shouldHydrateLeadPhoto(currentLead.photo)) {
+              resolvedPhoto = currentLead.photo;
+              resolvedPhotoSource = 'chatInfo.persisted';
+              resolvedPhotoStability = this.classifyPhotoStabilityByUrl(currentLead.photo || '');
+              resolvedPhotoValidated = resolvedPhotoStability === 'stable';
+            } else {
+              const directPhoto = await this.getChatPhotoForLead(chatId, phoneHint, currentLead?.phone);
+              resolvedPhoto = directPhoto || '';
+              if (resolvedPhoto) {
+                resolvedPhotoSource = 'chatInfo.get_chat_photo';
+                resolvedPhotoStability = this.classifyPhotoStabilityByUrl(resolvedPhoto);
+                resolvedPhotoValidated = true;
+              }
+            }
+
+            // Fallback: check sidebar cache by name when Store/WPP/sidebar-scraping all fail
+            if (!this.isRenderablePhotoUrl(resolvedPhoto) || this.isBrokenPhotoUrl(resolvedPhoto)) {
+              const cacheKeys = this.buildLeadChatVariants(chatId);
+              const leadIdentity = this.extractLeadIdentity(chatId);
+              if (leadIdentity) cacheKeys.push(leadIdentity);
+              if (phoneHint) cacheKeys.push(phoneHint);
+              // Name-based lookup (critical for contacts like "Bunker 707")
+              const leadName = (info.chatName || currentLead.name || '').trim();
+              if (leadName) cacheKeys.push(`name:${leadName.toLowerCase()}`);
+              for (const key of cacheKeys) {
+                const cached = this.sidebarPhotoCache.get(key.toLowerCase());
+                const cachedStability = this.classifyPhotoStabilityByUrl(cached || '');
+                const cachedValidated = cachedStability === 'stable';
+                if (this.isChatInfoPhotoCandidateUsable(cached, 'chatInfo.sidebar', cachedStability, cachedValidated, { allowUnknownSource: true })) {
+                  resolvedPhoto = String(cached);
+                  resolvedPhotoSource = 'chatInfo.sidebar';
+                  resolvedPhotoStability = cachedStability;
+                  resolvedPhotoValidated = cachedValidated;
+                  console.log('[PrinChat UI] 💧 hydration: photo from sidebar cache, key =', key);
+                  break;
+                }
+              }
+            }
+
+            const nextLabels = hasFreshLabels
+              ? labels
+              : (Array.isArray((currentLead as any).labels) ? (currentLead as any).labels : []);
+            const nextTags = hasFreshLabels
+              ? labels.map((l: any) => l.id).filter(Boolean)
+              : (Array.isArray(currentLead.tags) ? currentLead.tags : []);
+
+            const updates: any = {};
+            const nextName = (info.chatName || currentLead.name || '').trim();
+            if (nextName && nextName !== currentLead.name) {
+              updates.name = nextName;
+            }
+
+            if (phoneHint.length >= 8 && phoneHint !== this.extractLeadIdentity(currentLead?.phone || '')) {
+              updates.phone = phoneHint;
+            }
+
+            if (
+              this.isChatInfoPhotoCandidateUsable(
+                resolvedPhoto,
+                resolvedPhotoSource || 'chatInfo.sidebar',
+                resolvedPhotoStability || this.classifyPhotoStabilityByUrl(resolvedPhoto),
+                resolvedPhotoValidated === true,
+                { allowUnknownSource: true }
+              )
+              && resolvedPhoto !== currentLead.photo
+            ) {
+              updates.photo = resolvedPhoto;
+            }
+
+            // GUARD: Only update tags/labels if the fresh data is actually BETTER.
+            // "Better" = has names and valid hex colors. Don't overwrite correct
+            // event-sourced labels with potentially inferior getContactInfo data.
+            if (hasFreshLabels) {
+              const currentLabels = Array.isArray((currentLead as any).labels) ? (currentLead as any).labels : [];
+              const currentHasCompleteLabels = currentLabels.length > 0 &&
+                currentLabels.every((l: any) => l.name && typeof l.color === 'string' && l.color.startsWith('#'));
+              const freshHasCompleteLabels = labels.length > 0 &&
+                labels.every((l: any) => l.name && typeof l.color === 'string' && l.color.startsWith('#'));
+
+              // Only overwrite if fresh data is complete OR current data is incomplete
+              if (freshHasCompleteLabels || !currentHasCompleteLabels) {
+                const currentTags = Array.isArray(currentLead.tags) ? currentLead.tags : [];
+                if (JSON.stringify(currentTags) !== JSON.stringify(nextTags)) {
+                  updates.tags = nextTags;
+                }
+                if (JSON.stringify(currentLabels) !== JSON.stringify(nextLabels)) {
+                  updates.labels = nextLabels;
+                }
+              } else {
+                console.log('[PrinChat UI] 💧 Hydration: skipping label overwrite — existing labels are better quality');
+              }
+            }
+
+            if (Object.keys(updates).length > 0) {
+              currentLead = {
+                ...currentLead,
+                ...updates,
+                chatId,
+                tags: updates.tags ?? nextTags,
+                labels: updates.labels ?? nextLabels,
+              };
+
+              if (!document.body.classList.contains('kanban-is-dragging')) {
+                this.updateCardDOM({
+                  ...currentLead,
+                  name: this.resolveLeadDisplayName(currentLead),
+                });
+              }
+
+              if (currentLead.id) {
+                this.requestFromContentScript({
+                  type: 'UPDATE_KANBAN_LEAD',
+                  payload: {
+                    leadId: currentLead.id,
+                    updates
+                  }
+                }).catch(() => null);
+
+                document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
+                  detail: {
+                    leadId: currentLead.id,
+                    updates
+                  }
+                }));
+              }
+            }
+
+            const hasPhotoNow = this.isRenderablePhotoUrl(currentLead.photo) && !this.shouldHydrateLeadPhoto(currentLead.photo);
+            const hasTagsNow = Array.isArray(currentLead.tags) && currentLead.tags.length > 0;
+            const canStopByPhoto = !requiresPhotoHydration || hasPhotoNow;
+            const canStopByTags = !requiresTagHydration || hasTagsNow;
+
+            if (canStopByPhoto && canStopByTags) {
+              break;
+            }
+          } catch (_e) {
+            // ignore in background hydration retries
+          }
         }
       });
 
@@ -11733,64 +13914,60 @@ class WhatsAppUIOverlay {
    * This ensures "pop-in" of new data without full re-render
    */
   private updateCardDOM(lead: any) {
-    const card = document.querySelector(`.princhat-kanban - lead - card[data - lead - id="${lead.id}"]`);
+    const cardLookupId = lead?.id || lead?.chatId || lead?.leadId;
+    const card = this.findKanbanCardElementByLeadId(cardLookupId);
     if (!card) return;
+
+    const resolvedName = this.resolveLeadDisplayName(lead);
 
     // 1. Update Name
     const nameEl = card.querySelector('.princhat-kanban-lead-name');
     if (nameEl) {
       // Instagram ID check
-      const isInstagramId = /^\d{15,}/.test(lead.name || '');
-      const displayName = isInstagramId ? 'Lead' : (lead.name || 'Desconhecido');
+      const isInstagramId = /^\d{15,}/.test(resolvedName || '');
+      const displayName = isInstagramId ? 'Lead' : (resolvedName || 'Desconhecido');
       nameEl.textContent = displayName;
     }
 
     // 2. Update Photo
-    const photoContainer = card.querySelector('.princhat-kanban-lead-photo');
-    if (photoContainer) {
-      if (lead.photo) {
-        photoContainer.innerHTML = `< img src = "${lead.photo}" alt = "${lead.name}" style = "width: 100%; height: 100%; border-radius: 50%; object-fit: cover;" > `;
-      } else {
-        const initial = (lead.name || '?').charAt(0).toUpperCase();
-        photoContainer.innerHTML = `< div class="princhat-kanban-lead-photo-placeholder" > ${initial} </div>`;
-      }
-    }
+    this.setCardPhoto(card, lead?.photo, resolvedName, { preserveExistingUsablePhoto: true });
 
     // 3. Update Tags
-    // Remove existing tags if any
-    const existingTags = card.querySelector('.princhat-kanban-lead-tags');
-    if (existingTags) existingTags.remove();
+    // IMPORTANT: only rewrite tags if caller explicitly sent tag/label payload.
+    // This prevents hydration races from wiping existing tags with empty data.
+    const hasTagPayload = Array.isArray(lead?.tags) || Array.isArray(lead?.labels);
+    if (hasTagPayload) {
+      const existingTags = card.querySelector('.princhat-kanban-lead-tags');
+      if (existingTags) existingTags.remove();
+    }
 
-    if (lead.tags && lead.tags.length > 0) {
+    const normalizedTags = Array.isArray(lead?.tags) ? lead.tags.filter(Boolean) : [];
+    if (hasTagPayload && normalizedTags.length > 0) {
       const tagsContainer = document.createElement('div');
       tagsContainer.className = 'princhat-kanban-lead-tags';
 
-      const firstTag = lead.tags[0];
+      const firstTag = this.normalizeTagToken(normalizedTags[0]);
 
       // Lookup label info
-      let labelInfo = this.globalLabels.find(l => l.id === firstTag || (l.name && l.name.toLowerCase() === firstTag.toLowerCase()));
-      // Fallback
-      if (!labelInfo && lead.labels) {
-        labelInfo = lead.labels.find((l: any) => String(l.id) === String(firstTag) || (l.name && l.name === firstTag));
-      }
+      const labelInfo = this.findLabelInfoByTag(firstTag, this.globalLabels, Array.isArray(lead?.labels) ? lead.labels : []);
 
-      const tagName = labelInfo ? labelInfo.name : firstTag;
-      const tagColor = labelInfo ? (labelInfo.color || labelInfo.hexColor || '#2196f3') : '#2196f3';
-      const safeColor = tagColor.startsWith('#') ? tagColor : '#' + tagColor;
+      const tagName = this.normalizeTagToken(labelInfo?.name || firstTag);
+      const tagColor = this.normalizeTagToken(labelInfo?.color || labelInfo?.hexColor || '#2196f3');
+      const safeColor = (tagColor.startsWith('#') || tagColor.startsWith('rgb')) ? tagColor : `#${tagColor}`;
 
       let finalBg = 'rgba(33, 150, 243, 0.30)'; // Fallback default
       let finalColor = '#2196f3';
       let textShadow = 'none';
 
       if (tagColor) {
-        // Tag Color at 30% opacity (Legacy Style from Commit 9915674)
-        finalBg = `color-mix(in srgb, ${safeColor} 30%, transparent)`;
+        // Tag Color at 30% opacity — use hex alpha (4D = ~30%) to match createColumnElement
+        finalBg = `${safeColor}4D`;
         finalColor = safeColor;
         textShadow = 'none';
       }
 
       let tagsHtml = `
-      <span class="princhat-kanban-tag" style="background-color: ${finalBg}; color: ${finalColor} !important; text-shadow: ${textShadow}; text-transform: none; font-size: 11px; font-weight: 500 !important; padding: 2px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; margin-right: 4px;">
+      <span class="princhat-kanban-tag princhat-kanban-tag-unified" style="background-color: ${finalBg}; color: ${finalColor} !important; text-shadow: ${textShadow}; text-transform: none; font-size: 11px; font-weight: 500 !important; padding: 2px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; margin-right: 4px;">
         <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
           <line x1="7" x2="7.01" y1="7" y2="7"/>
@@ -11798,21 +13975,21 @@ class WhatsAppUIOverlay {
         ${this.escapeHtml(tagName)}
       </span>`;
 
-      if (lead.tags.length > 1) {
+      if (normalizedTags.length > 1) {
         tagsHtml += `<span class="princhat-kanban-tag-more princhat-no-drag princhat-kanban-tag-unified" style="cursor: pointer !important; pointer-events: auto !important; position: relative !important; z-index: 99 !important; background-color: rgba(158, 158, 158, 0.2) !important; color: #9e9e9e !important; " data-action="show-more-tags" data-tags="${encodeURIComponent(JSON.stringify(
           (() => {
-            const remainingTags = lead.tags.slice(1);
+            const remainingTags = normalizedTags.slice(1);
             return remainingTags.map((tag: string) => {
-              let info = this.globalLabels.find(l => l.id === tag || (l.name && l.name.toLowerCase() === tag.toLowerCase()));
-              if (!info && lead.labels) info = lead.labels.find((l: any) => l.id === tag || (l.name && l.name.toLowerCase() === tag.toLowerCase()));
+              const normalizedTag = this.normalizeTagToken(tag);
+              const info = this.findLabelInfoByTag(normalizedTag, this.globalLabels, Array.isArray(lead?.labels) ? lead.labels : []);
 
               return {
-                name: info?.name || tag,
-                color: info?.color || '#2196f3'
+                name: info?.name || normalizedTag,
+                color: info?.color || info?.hexColor || '#2196f3'
               };
             });
           })()
-        ))}">+${lead.tags.length - 1}</span>`;
+        ))}">+${normalizedTags.length - 1}</span>`;
       }
 
       tagsContainer.innerHTML = tagsHtml;
@@ -11834,22 +14011,132 @@ class WhatsAppUIOverlay {
   /**
    * Get contact info for a specific chat (used for Kanban hydration)
    */
-  private async getContactInfo(chatId: string): Promise<{ chatName?: string, chatPhoto?: string, labels?: any[] }> {
+  private async getContactInfo(chatId: string): Promise<{
+    chatName?: string,
+    chatPhoto?: string,
+    chatPhotoSource?: string,
+    chatPhotoValidated?: boolean,
+    chatPhotoStability?: 'stable' | 'volatile' | '',
+    chatPhotoCheckedAt?: number,
+    labels?: any[],
+    phoneNumber?: string
+  }> {
     try {
       const response = await this.requestFromContentScript({
         type: 'GET_CHAT_INFO',
         payload: { chatId }
-      });
+      }, 15000);
+
+      const data = response?.data || {};
+      const phoneNumber = data?.phoneNumber;
+      let chatPhoto = data?.chatPhoto;
+      let chatPhotoSource = data?.chatPhotoSource || data?.photoSource;
+      let chatPhotoStability: 'stable' | 'volatile' | '' =
+        this.normalizePhotoStability(data?.chatPhotoStability)
+        || this.classifyPhotoStabilityByUrl(chatPhoto || '');
+      let chatPhotoValidated = data?.chatPhotoValidated === true;
+      let chatPhotoCheckedAt = typeof data?.chatPhotoCheckedAt === 'number'
+        ? data.chatPhotoCheckedAt
+        : undefined;
+
+      const canUsePrimaryPhoto = this.isChatInfoPhotoCandidateUsable(
+        chatPhoto,
+        chatPhotoSource,
+        chatPhotoStability,
+        chatPhotoValidated
+      );
+
+      if (!canUsePrimaryPhoto) {
+        const fallbackPhoto = await this.getChatPhotoForLead(chatId, phoneNumber);
+        if (this.isRenderablePhotoUrl(fallbackPhoto) && !this.isBrokenPhotoUrl(fallbackPhoto)) {
+          chatPhoto = fallbackPhoto;
+          chatPhotoSource = 'chatInfo.get_chat_photo';
+          chatPhotoStability = this.classifyPhotoStabilityByUrl(fallbackPhoto || '');
+          chatPhotoValidated = true;
+          chatPhotoCheckedAt = Date.now();
+        } else {
+          chatPhoto = undefined;
+        }
+      }
 
       return {
-        chatName: response?.data?.chatName || response?.data?.name,
-        chatPhoto: response?.data?.chatPhoto,
-        labels: response?.data?.labels || []
+        chatName: data?.chatName || data?.name,
+        chatPhoto,
+        chatPhotoSource,
+        chatPhotoValidated,
+        chatPhotoStability,
+        chatPhotoCheckedAt,
+        labels: data?.labels || [],
+        phoneNumber,
       };
     } catch (error) {
       console.error('[PrinChat UI] Error fetching contact info:', error);
       return {};
     }
+  }
+
+  private async getChatPhotoForLead(chatId: string, ...fallbackIds: Array<string | undefined>): Promise<string | undefined> {
+    const seedIds = [chatId, ...fallbackIds].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+    if (seedIds.length === 0) return undefined;
+
+    const lookupQueue: string[] = [];
+    const seenQueue = new Set<string>();
+    for (const seed of seedIds) {
+      const variants = this.buildLeadChatVariants(seed);
+      const candidates = variants.length > 0 ? variants : [seed];
+      for (const candidate of candidates) {
+        const normalizedCandidate = this.normalizeLeadChatId(candidate) || this.stripScopedChatId(candidate) || '';
+        if (!normalizedCandidate || seenQueue.has(normalizedCandidate)) continue;
+        seenQueue.add(normalizedCandidate);
+        lookupQueue.push(normalizedCandidate);
+      }
+    }
+
+    for (const candidate of lookupQueue) {
+      const normalizedCandidate = this.normalizeLeadChatId(candidate) || this.stripScopedChatId(candidate) || '';
+      if (!normalizedCandidate) continue;
+
+      try {
+        const response = await this.requestFromContentScript({
+          type: 'GET_CHAT_PHOTO',
+          payload: { chatId: normalizedCandidate }
+        }, 12000);
+        const responseData = response?.data;
+        const photo = typeof responseData === 'string' ? responseData : responseData?.chatPhoto;
+        const source = typeof responseData === 'string'
+          ? 'chatInfo.get_chat_photo'
+          : (responseData?.chatPhotoSource || responseData?.photoSource);
+        const stability = typeof responseData === 'string'
+          ? this.classifyPhotoStabilityByUrl(photo || '')
+          : responseData?.chatPhotoStability;
+        const validated = typeof responseData === 'string'
+          ? (this.classifyPhotoStabilityByUrl(photo || '') === 'stable')
+          : (responseData?.chatPhotoValidated === true);
+        const hasMetadata =
+          !!(responseData && typeof responseData === 'object' && (
+            Object.prototype.hasOwnProperty.call(responseData, 'chatPhotoSource')
+            || Object.prototype.hasOwnProperty.call(responseData, 'photoSource')
+            || Object.prototype.hasOwnProperty.call(responseData, 'chatPhotoStability')
+            || Object.prototype.hasOwnProperty.call(responseData, 'chatPhotoValidated')
+          ));
+
+        const canUseCandidate = hasMetadata
+          ? this.isChatInfoPhotoCandidateUsable(photo, source, stability, validated, { allowUnknownSource: true })
+          : (
+            this.isRenderablePhotoUrl(photo)
+            && !this.isBrokenPhotoUrl(photo)
+            && this.classifyPhotoStabilityByUrl(photo || '') === 'stable'
+          );
+
+        if (canUseCandidate) {
+          return photo;
+        }
+      } catch (_error) {
+        // Try next variant
+      }
+    }
+
+    return undefined;
   }
 
   /**
@@ -11922,12 +14209,17 @@ class WhatsAppUIOverlay {
         ${leads.map((lead: any) => {
       // Check if name is an Instagram/Facebook ID (15+ digits)
       // IDs like 186083820216376@c.us or 186083820216376@lid should show "Lead"
-      const isInstagramId = /^\d{15,}/.test(lead.name || '');
-      const displayName = isInstagramId ? 'Lead' : (lead.name || 'Desconhecido');
+      const resolvedName = this.resolveLeadDisplayName(lead);
+      const isInstagramId = /^\d{15,}/.test(resolvedName || '');
+      const displayName = isInstagramId ? 'Lead' : (resolvedName || 'Desconhecido');
 
       const safeName = this.escapeHtml(displayName);
       const safeMessage = this.escapeHtml(lead.lastMessage || '');
       const safeId = this.escapeHtml(lead.id || lead.leadId || '');
+      const safeChatId = this.escapeHtml(this.resolveLeadChatId(lead));
+      const resolvedPhoto = this.isRenderablePhotoUrl(lead.photo) && !this.isBrokenPhotoUrl(lead.photo)
+        ? lead.photo
+        : '';
 
       // Fallback to updatedAt if lastMessageTime is missing (for legacy leads)
       const displayTime = lead.lastMessageTime || lead.updatedAt;
@@ -11935,8 +14227,8 @@ class WhatsAppUIOverlay {
       return `
           <div class="princhat-kanban-lead-card" data-lead-id="${safeId}">
             <div class="princhat-kanban-lead-photo">
-              ${lead.photo ?
-          `<img src="${lead.photo}" alt="${safeName}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">` :
+              ${resolvedPhoto ?
+          `<img src="${resolvedPhoto}" alt="${safeName}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">` :
           `<div class="princhat-kanban-lead-photo-placeholder">${(safeName.charAt(0) || '?').toUpperCase()}</div>`
         }
             </div>
@@ -11954,23 +14246,15 @@ class WhatsAppUIOverlay {
               ${lead.tags && lead.tags.length > 0 ? `
                 <div class="princhat-kanban-lead-tags">
                   ${(() => {
-            const firstTag = lead.tags[0];
+            const firstTag = this.normalizeTagToken(lead.tags[0]);
 
             // LOOKUP STRATEGY: 
             // 1. Try to find by ID (if tag matches a label ID).
             // 2. Try to find by Name (case-insensitive).
-            let labelInfo = globalLabels.find(l => l.id === firstTag || (l.name && l.name.toLowerCase() === firstTag.toLowerCase()));
+            const labelInfo = this.findLabelInfoByTag(firstTag, globalLabels, Array.isArray(lead?.labels) ? lead.labels : []);
 
-            // Fallback: Check lead.labels (per-chat info) if global lookup failed
-            if (!labelInfo && lead.labels) {
-              labelInfo = lead.labels.find((l: any) =>
-                String(l.id) === String(firstTag) ||
-                l.name?.toLowerCase() === String(firstTag).toLowerCase()
-              );
-            }
-
-            let labelColor = labelInfo?.color;
-            let labelName = labelInfo?.name || firstTag;
+            let labelColor = this.normalizeTagToken(labelInfo?.color || labelInfo?.hexColor || '#2196f3');
+            let labelName = this.normalizeTagToken(labelInfo?.name || firstTag);
 
             // CSS Logic:
             // User Feedback 3: 
@@ -11985,14 +14269,14 @@ class WhatsAppUIOverlay {
             let textShadow = 'none';
 
             if (labelColor) {
-              // Tag Color at 30% opacity (Legacy Style from Commit 9915674)
-              finalBg = `color-mix(in srgb, ${labelColor} 30%, transparent)`;
+              // Tag Color at 30% opacity (hex alpha 4D ≈ 30%)
+              finalBg = `${labelColor}4D`;
               finalColor = labelColor;
               textShadow = 'none';
             }
 
             return `
-            <span class="princhat-kanban-tag princhat-kanban-tag-unified" style="background-color: ${labelColor ? labelColor + '4D' : finalBg}; color: ${finalColor} !important; text-shadow: ${textShadow}; margin-right: 4px;">
+            <span class="princhat-kanban-tag princhat-kanban-tag-unified" style="background-color: ${finalBg}; color: ${finalColor} !important; text-shadow: ${textShadow}; margin-right: 4px;">
               <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
                 <line x1="7" x2="7.01" y1="7" y2="7"/>
@@ -12006,12 +14290,12 @@ class WhatsAppUIOverlay {
             (() => {
               const remainingTags = lead.tags.slice(1);
               return remainingTags.map((tag: string) => {
-                let info = globalLabels.find(l => l.id === tag || (l.name && l.name.toLowerCase() === tag.toLowerCase()));
-                if (!info && lead.labels) info = lead.labels.find((l: any) => l.id === tag || (l.name && l.name.toLowerCase() === tag.toLowerCase()));
+                const normalizedTag = this.normalizeTagToken(tag);
+                const info = this.findLabelInfoByTag(normalizedTag, globalLabels, Array.isArray(lead?.labels) ? lead.labels : []);
 
                 return {
-                  name: info?.name || tag,
-                  color: info?.color || '#2196f3'
+                  name: info?.name || normalizedTag,
+                  color: info?.color || info?.hexColor || '#2196f3'
                 };
               });
             })()
@@ -12050,7 +14334,7 @@ class WhatsAppUIOverlay {
         <div style="flex: 1;"></div>
 
         <!-- 3-dot menu button (on the right) -->
-        <div class="princhat-kanban-meta-item princhat-kanban-card-menu-btn" title="Mais ações" data-lead-id="${lead.id}" data-chat-id="${lead.chatId}">
+        <div class="princhat-kanban-meta-item princhat-kanban-card-menu-btn" title="Mais ações" data-lead-id="${lead.id}" data-chat-id="${safeChatId}">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="5" r="1.5" fill="currentColor" stroke="none"/>
             <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
@@ -12314,11 +14598,341 @@ class WhatsAppUIOverlay {
     this.setupGlobalClickListeners(overlay);
   }
 
+  private closeKanbanCardDropdown() {
+    if (this.activeKanbanCardMenuOutsideHandler) {
+      document.removeEventListener('mousedown', this.activeKanbanCardMenuOutsideHandler, true);
+      document.removeEventListener('click', this.activeKanbanCardMenuOutsideHandler, true);
+      this.activeKanbanCardMenuOutsideHandler = null;
+    }
+
+    if (this.activeKanbanCardMenu) {
+      this.activeKanbanCardMenu.remove();
+      this.activeKanbanCardMenu = null;
+    }
+
+    if (this.activeKanbanCardMenuCard) {
+      this.activeKanbanCardMenuCard.classList.remove('active-menu');
+      this.activeKanbanCardMenuCard = null;
+    }
+
+    this.activeKanbanCardMenuButton = null;
+  }
+
+  private showScheduleStyledConfirmationModal(options: {
+    title: string;
+    message: string;
+    confirmText?: string;
+    cancelText?: string;
+    modalClassName?: string;
+    onConfirm: () => Promise<void>;
+  }) {
+    const {
+      title,
+      message,
+      confirmText = 'EXCLUIR',
+      cancelText = 'CANCELAR',
+      modalClassName = 'princhat-shared-confirmation-modal',
+      onConfirm
+    } = options;
+
+    const existingModal = document.querySelector(`.${modalClassName}`);
+    if (existingModal) {
+      existingModal.remove();
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = `princhat-modal-overlay ${modalClassName}`;
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2147483647;
+    `;
+
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+      background: #2a2a2a;
+      border: 1px solid #3a3a3a;
+      border-radius: 8px;
+      padding: 24px;
+      max-width: 400px;
+      width: 90%;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    `;
+
+    modal.innerHTML = `
+      <div style="margin-bottom: 16px;">
+        <h3 style="margin: 0 0 8px 0; font-size: 18px; font-weight: 600; color: #ffffff;">
+          ${this.escapeHtml(title)}
+        </h3>
+        <p style="margin: 0; font-size: 14px; color: #9e9e9e;">
+          ${this.escapeHtml(message)}
+        </p>
+        <p class="princhat-delete-error" style="margin: 10px 0 0 0; font-size: 13px; color: #f44336; display: none;"></p>
+      </div>
+      <div style="display: flex; gap: 12px; justify-content: flex-end;">
+        <button class="cancel-btn" style="
+          padding: 8px 20px;
+          border: 1px solid #3a3a3a;
+          background: transparent;
+          color: white;
+          border-radius: 8px;
+          cursor: pointer;
+          font-size: 11px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          transition: all 0.2s;
+        ">${this.escapeHtml(cancelText)}</button>
+        <button class="confirm-btn" style="
+          padding: 8px 20px;
+          border: none;
+          background: #f44336;
+          color: white;
+          border-radius: 8px;
+          cursor: pointer;
+          font-size: 11px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          transition: all 0.2s;
+        ">${this.escapeHtml(confirmText)}</button>
+      </div>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const cancelBtn = modal.querySelector('.cancel-btn') as HTMLButtonElement | null;
+    const confirmBtn = modal.querySelector('.confirm-btn') as HTMLButtonElement | null;
+    const errorEl = modal.querySelector('.princhat-delete-error') as HTMLElement | null;
+    const originalConfirmLabel = confirmBtn?.textContent || confirmText;
+
+    const closeModal = () => {
+      overlay.remove();
+    };
+
+    if (cancelBtn) {
+      cancelBtn.addEventListener('mouseenter', () => {
+        cancelBtn.style.background = 'var(--bg-hover)';
+        cancelBtn.style.borderColor = '#e91e63';
+      });
+      cancelBtn.addEventListener('mouseleave', () => {
+        cancelBtn.style.background = 'transparent';
+        cancelBtn.style.borderColor = 'var(--border-color)';
+      });
+    }
+
+    if (confirmBtn) {
+      confirmBtn.addEventListener('mouseenter', () => {
+        confirmBtn.style.background = '#c62828';
+      });
+      confirmBtn.addEventListener('mouseleave', () => {
+        confirmBtn.style.background = '#f44336';
+      });
+    }
+
+    cancelBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeModal();
+    });
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        closeModal();
+      }
+    });
+
+    confirmBtn?.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!confirmBtn || confirmBtn.disabled) return;
+
+      if (errorEl) {
+        errorEl.style.display = 'none';
+        errorEl.textContent = '';
+      }
+
+      confirmBtn.disabled = true;
+      if (cancelBtn) cancelBtn.disabled = true;
+      confirmBtn.style.opacity = '0.7';
+      confirmBtn.style.pointerEvents = 'none';
+      confirmBtn.textContent = 'EXCLUINDO...';
+
+      try {
+        await onConfirm();
+        closeModal();
+      } catch (error: any) {
+        const errorMsg = String(error?.message || 'Erro ao excluir item');
+        if (errorEl) {
+          errorEl.textContent = errorMsg;
+          errorEl.style.display = 'block';
+        } else {
+          console.error('[PrinChat UI] Confirmation modal error:', errorMsg);
+        }
+
+        confirmBtn.disabled = false;
+        if (cancelBtn) cancelBtn.disabled = false;
+        confirmBtn.style.opacity = '1';
+        confirmBtn.style.pointerEvents = 'auto';
+        confirmBtn.textContent = originalConfirmLabel;
+      }
+    });
+  }
+
+  private showKanbanLeadDeleteConfirmation(leadId: string, leadName: string, cardElement?: HTMLElement | null) {
+    const safeLeadName = leadName || 'este card';
+    this.showScheduleStyledConfirmationModal({
+      title: 'Excluir card',
+      message: `Tem certeza que deseja remover "${safeLeadName}" do Kanban?`,
+      modalClassName: 'princhat-kanban-lead-delete-modal',
+      onConfirm: async () => {
+        const result = await this.requestFromContentScript({
+          type: 'DELETE_KANBAN_LEAD',
+          payload: { leadId }
+        });
+
+        if (!result?.success) {
+          throw new Error(result?.error || 'Erro ao excluir card');
+        }
+
+        if (cardElement) {
+          cardElement.style.transition = 'all 0.25s ease';
+          cardElement.style.opacity = '0';
+          cardElement.style.transform = 'scale(0.95)';
+          setTimeout(() => cardElement.remove(), 250);
+        }
+
+        await this.renderKanbanColumns();
+      }
+    });
+  }
+
+  private openKanbanCardDropdown(menuBtn: HTMLElement, leadId: string, chatId: string) {
+    this.closeKanbanCardDropdown();
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'princhat-kanban-card-dropdown';
+    dropdown.innerHTML = `
+      <div class="princhat-kanban-card-dropdown-item" data-action="open-chat" data-chat-id="${chatId}" data-lead-id="${leadId}">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+        <span>Abrir conversa</span>
+      </div>
+      <div class="princhat-kanban-card-dropdown-item" data-action="close-deal" data-chat-id="${chatId}" data-lead-id="${leadId}">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" x2="12" y1="2" y2="22"/>
+          <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+        </svg>
+        <span>Faturar card</span>
+      </div>
+      <div class="princhat-kanban-card-dropdown-item" data-action="delete-card" data-chat-id="${chatId}" data-lead-id="${leadId}">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="3 6 5 6 21 6"></polyline>
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+        </svg>
+        <span>Excluir card</span>
+      </div>
+    `;
+
+    const rect = menuBtn.getBoundingClientRect();
+    const dropdownWidth = 220;
+    const dropdownEstimatedHeight = 148;
+    const maxLeft = window.innerWidth - dropdownWidth - 8;
+
+    let left = Math.max(8, rect.right - dropdownWidth);
+    if (left > maxLeft) {
+      left = Math.max(8, maxLeft);
+    }
+
+    let top = rect.bottom + 6;
+    if (top + dropdownEstimatedHeight > window.innerHeight - 8) {
+      top = Math.max(8, rect.top - dropdownEstimatedHeight - 6);
+    }
+
+    dropdown.style.position = 'fixed';
+    dropdown.style.top = `${top}px`;
+    dropdown.style.left = `${left}px`;
+
+    document.body.appendChild(dropdown);
+
+    dropdown.addEventListener('click', async (event: Event) => {
+      const item = (event.target as HTMLElement).closest('.princhat-kanban-card-dropdown-item') as HTMLElement | null;
+      if (!item) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const action = item.getAttribute('data-action');
+      const itemChatId = item.getAttribute('data-chat-id') || chatId;
+      const itemLeadId = item.getAttribute('data-lead-id') || leadId;
+
+      this.closeKanbanCardDropdown();
+
+      switch (action) {
+        case 'open-chat':
+          if (itemChatId) {
+            this.closeKanbanOverlay();
+            await this.requestFromContentScript({
+              type: 'NAVIGATE_TO_CHAT',
+              payload: { chatId: itemChatId }
+            });
+          }
+          break;
+        case 'close-deal':
+          if (itemChatId) {
+            console.log('[PrinChat] Close deal for:', itemChatId);
+          }
+          break;
+        case 'delete-card': {
+          if (!itemLeadId) break;
+          const cardElement = this.findKanbanCardElementByLeadId(itemLeadId);
+          const leadName = cardElement?.querySelector('.princhat-kanban-lead-name')?.textContent || 'este card';
+          this.showKanbanLeadDeleteConfirmation(itemLeadId, leadName, cardElement);
+          break;
+        }
+        default:
+          break;
+      }
+    });
+
+    const card = menuBtn.closest('.princhat-kanban-lead-card') as HTMLElement | null;
+    if (card) {
+      card.classList.add('active-menu');
+    }
+
+    this.activeKanbanCardMenu = dropdown;
+    this.activeKanbanCardMenuButton = menuBtn;
+    this.activeKanbanCardMenuCard = card;
+    this.activeKanbanCardMenuOutsideHandler = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!dropdown.contains(target) && !menuBtn.contains(target)) {
+        this.closeKanbanCardDropdown();
+      }
+    };
+
+    document.addEventListener('mousedown', this.activeKanbanCardMenuOutsideHandler, true);
+    document.addEventListener('click', this.activeKanbanCardMenuOutsideHandler, true);
+  }
+
   /**
    * Setup global click listeners (delegated)
    * Separated from Drag listeners since we used SortableJS for drags
    */
   private setupGlobalClickListeners(overlay: HTMLElement) {
+    // Avoid duplicate handlers on every Kanban re-render
+    if ((overlay as any).__princhatKanbanClickListenersAttached) {
+      return;
+    }
+    (overlay as any).__princhatKanbanClickListenersAttached = true;
+
     // CLICK - Delegated to Delete Button
     overlay.addEventListener('click', async (e: Event) => {
       // 1. Check Dropdown Item FIRST
@@ -12334,7 +14948,7 @@ class WhatsAppUIOverlay {
         console.log('[PrinChat] Dropdown action:', action, 'ChatID:', chatId, 'LeadID:', menuLeadId);
 
         // Close dropdown
-        dropdownItem.closest('.princhat-kanban-card-dropdown')?.remove();
+        this.closeKanbanCardDropdown();
 
         switch (action) {
           case 'open-chat':
@@ -12370,7 +14984,7 @@ class WhatsAppUIOverlay {
               }
             } else {
               // Try to find card by ID if we have leadId but no direct DOM ancestry (rare)
-              cardElement = overlay.querySelector(`.princhat-kanban-lead-card[data-lead-id="${leadId}"]`) as HTMLElement;
+              cardElement = this.findKanbanCardElementByLeadId(leadId);
               if (cardElement) {
                 leadName = cardElement.querySelector('.princhat-kanban-lead-name')?.textContent || 'este card';
               }
@@ -12379,29 +14993,7 @@ class WhatsAppUIOverlay {
             console.log('[PrinChat] Delete request for LeadID:', leadId);
 
             if (leadId) {
-              if (window.confirm(`Tem certeza que deseja remover "${leadName}" do Kanban?`)) {
-                console.log('[PrinChat] User confirmed deletion for:', leadId);
-
-                // Visual removal
-                if (cardElement) {
-                  cardElement.style.transition = 'all 0.3s ease';
-                  cardElement.style.opacity = '0';
-                  cardElement.style.transform = 'scale(0.8)';
-                  setTimeout(() => cardElement?.remove(), 300);
-                }
-
-                try {
-                  await this.requestFromContentScript({
-                    type: 'DELETE_KANBAN_LEAD',
-                    payload: { leadId }
-                  });
-                  console.log('[PrinChat] Lead deleted successfully via API');
-                } catch (error) {
-                  console.error('[PrinChat] Error deleting lead:', error);
-                }
-              } else {
-                console.log('[PrinChat] User cancelled deletion');
-              }
+              this.showKanbanLeadDeleteConfirmation(leadId, leadName, cardElement);
             } else {
               console.error('[PrinChat] Could not identify Lead ID for deletion');
             }
@@ -12416,65 +15008,17 @@ class WhatsAppUIOverlay {
         e.preventDefault();
         e.stopPropagation();
 
-        // Close any other open dropdowns
-        overlay.querySelectorAll('.princhat-kanban-card-dropdown').forEach(d => d.remove());
-        // Remove active class from other cards
-        overlay.querySelectorAll('.princhat-kanban-lead-card.active-menu').forEach(c => c.classList.remove('active-menu'));
-
         // Get info from button
-        const chatId = menuBtn.getAttribute('data-chat-id');
-        const leadId = menuBtn.getAttribute('data-lead-id');
-
-        const card = menuBtn.closest('.princhat-kanban-lead-card');
-        if (card) {
-          card.classList.add('active-menu');
-        }
+        const chatId = menuBtn.getAttribute('data-chat-id') || '';
+        const leadId = menuBtn.getAttribute('data-lead-id') || '';
 
         console.log('[PrinChat] Opening menu for Lead:', leadId, 'Chat:', chatId);
 
-        // Create dropdown
-        const dropdown = document.createElement('div');
-        dropdown.className = 'princhat-kanban-card-dropdown';
-        // Pass data-lead-id to the items!
-        dropdown.innerHTML = `
-          <div class="princhat-kanban-card-dropdown-item" data-action="open-chat" data-chat-id="${chatId}" data-lead-id="${leadId}">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
-              <circle cx="12" cy="12" r="3"/>
-            </svg>
-            <span>Abrir conversa</span>
-          </div>
-          <div class="princhat-kanban-card-dropdown-item" data-action="close-deal" data-chat-id="${chatId}" data-lead-id="${leadId}">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="12" x2="12" y1="2" y2="22"/>
-              <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
-            </svg>
-            <span>Faturar card</span>
-          </div>
-          <div class="princhat-kanban-card-dropdown-item" data-action="delete-card" data-chat-id="${chatId}" data-lead-id="${leadId}">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="3 6 5 6 21 6"></polyline>
-              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-            </svg>
-            <span>Excluir card</span>
-          </div>
-        `;
-
-        // Position dropdown
-        menuBtn.style.position = 'relative';
-        menuBtn.appendChild(dropdown);
-
-        // Close dropdown when clicking outside
-        setTimeout(() => {
-          const closeDropdown = (event: MouseEvent) => {
-            if (!dropdown.contains(event.target as Node)) {
-              dropdown.remove();
-              if (card) card.classList.remove('active-menu');
-              document.removeEventListener('click', closeDropdown);
-            }
-          };
-          document.addEventListener('click', closeDropdown);
-        }, 0);
+        if (this.activeKanbanCardMenu && this.activeKanbanCardMenuButton === menuBtn) {
+          this.closeKanbanCardDropdown();
+        } else {
+          this.openKanbanCardDropdown(menuBtn, leadId, chatId);
+        }
 
         return;
       }
@@ -12491,27 +15035,8 @@ class WhatsAppUIOverlay {
         const leadId = card.getAttribute('data-lead-id');
         const leadName = card.querySelector('.princhat-kanban-lead-name')?.textContent || 'este card';
 
-        if (window.confirm(`Tem certeza que deseja remover "${leadName}" do Kanban?`)) {
-          console.log('[PrinChat] Deleting lead:', leadId);
-
-          // Visual removal immediately
-          card.style.transition = 'all 0.3s ease';
-          card.style.opacity = '0';
-          card.style.transform = 'scale(0.8)';
-
-          setTimeout(() => card.remove(), 300);
-
-          if (leadId) {
-            try {
-              await this.requestFromContentScript({
-                type: 'DELETE_KANBAN_LEAD',
-                payload: { leadId }
-              });
-              console.log('[PrinChat] Lead deleted successfully');
-            } catch (error) {
-              console.error('[PrinChat] Error deleting lead:', error);
-            }
-          }
+        if (leadId) {
+          this.showKanbanLeadDeleteConfirmation(leadId, leadName, card);
         }
       }
     });
@@ -12521,6 +15046,11 @@ class WhatsAppUIOverlay {
     // CRITICAL: Stop propagation on MOUSE DOWN to prevent SortableJS from starting drag
     // This must use CAPTURE phase to run before Sortable's listeners
     this.kanbanOverlay?.addEventListener('mousedown', (e) => {
+      const menuTarget = (e.target as HTMLElement).closest('.princhat-kanban-card-menu-btn, .princhat-kanban-card-dropdown, .princhat-kanban-card-dropdown-item') as HTMLElement;
+      if (menuTarget) {
+        e.stopPropagation(); // Prevent Sortable drag start from stealing menu clicks
+      }
+
       const moreTagsBtn = (e.target as HTMLElement).closest('[data-action="show-more-tags"]') as HTMLElement;
       if (moreTagsBtn) {
         console.log('[PrinChat UI] Blocking drag on tag button (Capture Phase) & Opening Tooltip');
@@ -12633,18 +15163,15 @@ class WhatsAppUIOverlay {
             const styleSheet = document.createElement('style');
             styleSheet.id = styleId;
             styleSheet.textContent = `
-              .princhat - kanban - tooltip - tag {
-              background: rgba(33, 150, 243, 0.15);
-              color: #2196f3;
-              padding: 4px 8px;
-              border - radius: 4px;
-              font - size: 12px;
-              white - space: nowrap;
-              border - radius: 4px;
-              font - size: 12px;
-              white - space: nowrap;
-              /* text-transform: uppercase removed based on user feedback */
-            }
+              .princhat-kanban-tooltip-tag {
+                background: rgba(33, 150, 243, 0.15);
+                color: #2196f3;
+                padding: 4px 8px;
+                border-radius: 4px;
+                font-size: 12px;
+                white-space: nowrap;
+                /* text-transform: uppercase removed based on user feedback */
+              }
             `;
             document.head.appendChild(styleSheet);
           }
@@ -13062,8 +15589,9 @@ class WhatsAppUIOverlay {
 
     // Also listen for KeyDown (Alt+Tab or Arrow keys could switch chat)
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'PageDown' || e.key === 'PageUp') {
         // Potential navigation via keyboard
+        this.handleNavigationStart();
       }
     });
   }
@@ -13072,11 +15600,14 @@ class WhatsAppUIOverlay {
    * Handle start of navigation: clear artifacts and prepare for switch
    */
   private handleNavigationStart() {
+    this.closeKanbanCardDropdown();
+
     // Cleanup global dropdowns
-    document.querySelectorAll('.princhat-kanban-tags-tooltip, .princhat-kanban-card-dropdown').forEach(el => el.remove());
+    document.querySelectorAll('.princhat-kanban-tags-tooltip').forEach(el => el.remove());
     document.querySelectorAll('.princhat-kanban-lead-card.active-menu').forEach(c => c.classList.remove('active-menu'));
 
-    this.invalidateChatCache();
+    this.invalidateChatCache(true);
+    this.closeMoveToColumnPopup();
     this.setButtonsLoadingState(true);
   }
 
@@ -13091,7 +15622,7 @@ class WhatsAppUIOverlay {
       const check = async () => {
         attempts++;
         // Force fetch current ID from store (bypassing our cache)
-        this.invalidateChatCache();
+        this.invalidateChatCache(true);
         const newId = await this.getActiveChatId();
 
         // If ID is different and valid, WE ARE SYNCED
@@ -13117,32 +15648,15 @@ class WhatsAppUIOverlay {
   /**
    * Helper to set buttons to loading state (hide badges)
    */
-  /**
-   * Calculate optimal text color (black or white) based on background color
-   * Uses WCAG luminance formula for accessibility
-   */
-  private getContrastColor(hexColor: string): string {
-    // Remove # if present
-    const hex = hexColor.replace('#', '');
-
-    // Convert to RGB
-    const r = parseInt(hex.substring(0, 2), 16);
-    const g = parseInt(hex.substring(2, 4), 16);
-    const b = parseInt(hex.substring(4, 6), 16);
-
-    // Calculate relative luminance (WCAG formula)
-    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-
-    // Return white for dark backgrounds, black for light backgrounds
-    return luminance > 0.5 ? '#000000' : '#FFFFFF';
-  }
-
   private setButtonsLoadingState(isLoading: boolean) {
     const notesBadge = document.querySelector('.notes-badge') as HTMLElement;
     if (notesBadge) notesBadge.style.opacity = isLoading ? '0.5' : '1';
 
     const scheduleBtn = document.querySelector('.princhat-schedule-button');
     if (scheduleBtn) scheduleBtn.classList.toggle('loading', isLoading);
+
+    const moveColumnBtn = document.querySelector('.princhat-move-column-button');
+    if (moveColumnBtn) moveColumnBtn.classList.toggle('loading', isLoading);
   }
 
 }

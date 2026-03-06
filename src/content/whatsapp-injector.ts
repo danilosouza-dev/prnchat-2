@@ -485,6 +485,9 @@
     private isReady = false;
     private pendingRequests = new Map<string, { resolve: Function, reject: Function }>();
     private scriptExecutor: ScriptExecutor;
+    private currentInstanceCache: { value: string } | null = null;
+    private injectScriptsInFlight: Promise<void> | null = null;
+    private pendingPhotoRefreshByLead = new Map<string, Promise<void>>();
 
     // Map to track multiple direct script executions (from footer shortcuts)
     // Each script has its own isolated state instead of shared global flags
@@ -497,6 +500,549 @@
       this.scriptExecutor = new ScriptExecutor();
       this.scriptExecutor.setInjector(this);
       this.init();
+    }
+
+    private isScopedDataMessage(type: string): boolean {
+      return type === 'SAVE_SCHEDULE' ||
+        type === 'GET_SCHEDULES_BY_CHAT' ||
+        type === 'GET_ALL_SCHEDULES' ||
+        type === 'DELETE_SCHEDULE' ||
+        type === 'UPDATE_SCHEDULE_STATUS' ||
+        type === 'CREATE_NOTE' ||
+        type === 'UPDATE_NOTE' ||
+        type === 'GET_NOTES_BY_CHAT' ||
+        type === 'GET_NOTE' ||
+        type === 'DELETE_NOTE' ||
+        type === 'GET_ALL_NOTES' ||
+        type === 'GET_KANBAN_COLUMNS' ||
+        type === 'CREATE_KANBAN_COLUMN' ||
+        type === 'UPDATE_KANBAN_COLUMN' ||
+        type === 'DELETE_KANBAN_COLUMN' ||
+        type === 'UPDATE_COLUMN_ORDER' ||
+        type === 'GET_ALL_KANBAN_LEADS' ||
+        type === 'CREATE_KANBAN_LEAD' ||
+        type === 'MOVE_KANBAN_LEAD' ||
+        type === 'UPDATE_KANBAN_LEAD' ||
+        type === 'DELETE_KANBAN_LEAD' ||
+        type === 'FORCE_INIT' ||
+        type === 'TRIGGER_MANUAL_SYNC';
+    }
+
+    private normalizeChatIdentifier(chatId?: string): string {
+      const raw = this.extractRawChatIdentifier(chatId);
+      if (!raw) return '';
+
+      let normalized = raw;
+      const atIndex = normalized.indexOf('@');
+      const userPart = (atIndex >= 0 ? normalized.slice(0, atIndex) : normalized).replace(/:\d+$/g, '');
+      const domainPart = atIndex >= 0 ? normalized.slice(atIndex) : '';
+      if (!userPart) return '';
+
+      return `${userPart}${domainPart}`;
+    }
+
+    private extractRawChatIdentifier(chatId?: string): string {
+      if (!chatId || typeof chatId !== 'string') return '';
+      let normalized = chatId.trim().toLowerCase();
+      if (!normalized) return '';
+
+      const scopedSeparator = normalized.lastIndexOf('::');
+      if (scopedSeparator >= 0) {
+        normalized = normalized.slice(scopedSeparator + 2);
+      }
+
+      normalized = normalized.replace(/^waid?:/, '');
+      return normalized;
+    }
+
+    private getCanonicalChatIdentity(chatId?: string): string {
+      const normalized = this.normalizeChatIdentifier(chatId);
+      if (!normalized) return '';
+
+      const atIndex = normalized.indexOf('@');
+      const userPart = atIndex >= 0 ? normalized.slice(0, atIndex) : normalized;
+      return userPart.trim();
+    }
+
+    private buildChatIdVariants(chatId?: string): string[] {
+      const raw = this.extractRawChatIdentifier(chatId);
+      const normalized = this.normalizeChatIdentifier(chatId);
+      const identity = this.getCanonicalChatIdentity(chatId);
+      const variants = new Set<string>();
+
+      if (raw) variants.add(raw);
+      if (normalized) variants.add(normalized);
+      if (identity) {
+        variants.add(identity);
+        if (identity !== 'status') {
+          variants.add(`${identity}@c.us`);
+          variants.add(`${identity}@s.whatsapp.net`);
+          variants.add(`${identity}@lid`);
+        }
+      }
+
+      return Array.from(variants).filter(Boolean);
+    }
+
+    private logPhotoResolution(
+      rawChatId: string,
+      phase: 'create' | 'update' | 'rehydrate',
+      photoSource: string,
+      photo?: string
+    ) {
+      if (!this.isRenderablePhotoUrl(photo)) return;
+      console.log('[PrinChat Kanban] Photo resolved', {
+        phase,
+        rawChatId,
+        canonicalChatId: this.getCanonicalChatIdentity(rawChatId),
+        photoSource
+      });
+    }
+
+    private shouldIgnoreKanbanChat(chatId?: string): boolean {
+      const normalized = this.normalizeChatIdentifier(chatId);
+      if (!normalized) return true;
+
+      const identity = this.getCanonicalChatIdentity(normalized);
+      if (identity === 'status') return true;
+      if (normalized === 'status@broadcast') return true;
+      if (normalized.endsWith('@broadcast')) return true;
+
+      return false;
+    }
+
+    private isRenderablePhotoUrl(value?: string): boolean {
+      if (!value || typeof value !== 'string') return false;
+      const src = value.trim();
+      if (!src || src === 'data:' || src === 'about:blank') return false;
+      if (this.isLikelyPlaceholderPhotoUrl(src)) return false;
+      if (/^https?:\/\//i.test(src)) return true;
+      if (src.startsWith('blob:')) return true;
+      if (/^data:image\//i.test(src) && !/^data:image\/svg/i.test(src)) return true;
+      if (src.startsWith('//')) return true;
+      return false;
+    }
+
+    private isLikelyPlaceholderPhotoUrl(value?: string): boolean {
+      if (typeof value !== 'string') return true;
+      const src = value.trim();
+      if (!src) return true;
+
+      const lower = src.toLowerCase();
+      if (lower.includes('ui-avatars.com')) return true;
+
+      try {
+        const parsed = new URL(
+          src.startsWith('//') ? `https:${src}` : src,
+          window.location.origin
+        );
+        const host = parsed.hostname.toLowerCase();
+        const path = parsed.pathname.toLowerCase();
+        const looksAvatarPath =
+          path.includes('avatar')
+          || path.includes('default-user')
+          || path.includes('default-group')
+          || path.includes('profile-placeholder');
+
+        if (host === 'web.whatsapp.com' && (looksAvatarPath || path.endsWith('.svg'))) {
+          return true;
+        }
+        if (looksAvatarPath && path.endsWith('.svg')) {
+          return true;
+        }
+      } catch (_error) {
+        if (lower.includes('avatar') && lower.includes('.svg')) return true;
+      }
+
+      return false;
+    }
+
+    private isTrustedChatInfoPhotoSource(source?: string): boolean {
+      const normalized = typeof source === 'string' ? source.trim().toLowerCase() : '';
+      if (!normalized) return false;
+
+      if (normalized === 'chatinfo.local') return true;
+      if (normalized === 'chatinfo.profilepicthumb.find') return true;
+      if (normalized === 'chatinfo.profilepicthumb.find.genurl') return true;
+      if (normalized === 'chatinfo.profilepicthumb.find.geturl') return true;
+      if (normalized === 'chatinfo.profilepicthumb.get') return true;
+      if (normalized === 'chatinfo.profilepicthumb.get.genurl') return true;
+      if (normalized === 'chatinfo.profilepicthumb.get.geturl') return true;
+      if (normalized === 'chatinfo.wpp') return true;
+      if (normalized === 'chatinfo.wpp_whatsapp_pptstore') return true;
+      if (normalized === 'chatinfo.wpp_whatsapp_profilepicfind') return true;
+      if (normalized === 'chatinfo.store') return true;
+      if (normalized === 'chatinfo.phone_fallback') return true;
+      if (normalized === 'chatinfo.sidebar') return true;
+      if (normalized === 'chatinfo.dom.header') return true;
+      if (normalized === 'chatinfo.dom.background') return true;
+
+      return false;
+    }
+
+    private normalizePhotoStability(stability?: string): 'stable' | 'volatile' | '' {
+      if (typeof stability !== 'string') return '';
+      const normalized = stability.trim().toLowerCase();
+      if (normalized === 'stable') return 'stable';
+      if (normalized === 'volatile') return 'volatile';
+      return '';
+    }
+
+    private isChatInfoPhotoPersistable(
+      photo: string,
+      source?: string,
+      stability?: string,
+      validated?: boolean,
+      options: { allowUnknownSource?: boolean } = {}
+    ): boolean {
+      if (!this.isRenderablePhotoUrl(photo)) return false;
+
+      const sourceTrusted = this.isTrustedChatInfoPhotoSource(source);
+      if (!sourceTrusted && !options.allowUnknownSource) return false;
+
+      const normalizedStability = this.normalizePhotoStability(stability);
+      if (normalizedStability === 'volatile') {
+        return validated === true;
+      }
+
+      // stable/unknown are allowed for trusted (or explicitly allowed unknown-source) candidates
+      return true;
+    }
+
+    private isChatInfoPayloadPhotoPersistable(
+      payload: any,
+      options: { allowUnknownSource?: boolean } = {}
+    ): boolean {
+      const photo = typeof payload?.chatPhoto === 'string' ? payload.chatPhoto : '';
+      const source = typeof payload?.chatPhotoSource === 'string'
+        ? payload.chatPhotoSource
+        : (typeof payload?.photoSource === 'string' ? payload.photoSource : '');
+      const stability = typeof payload?.chatPhotoStability === 'string' ? payload.chatPhotoStability : '';
+      const validated = payload?.chatPhotoValidated === true;
+      return this.isChatInfoPhotoPersistable(photo, source, stability, validated, options);
+    }
+
+    private async refreshLeadPhotoFromChat(leadId: string, chatId: string): Promise<void> {
+      if (!leadId || !chatId) return;
+
+      const inFlight = this.pendingPhotoRefreshByLead.get(leadId);
+      if (inFlight) {
+        return inFlight;
+      }
+
+      const task = (async () => {
+        const attempts = [600, 1400, 3000, 6000, 12000];
+        const variants = this.buildChatIdVariants(chatId);
+        const dynamicVariantSet = new Set<string>(variants);
+        const addDynamicVariants = (value?: string) => {
+          if (!value || typeof value !== 'string') return;
+          const discovered = this.buildChatIdVariants(value);
+          discovered.forEach((variant) => dynamicVariantSet.add(variant));
+        };
+        const primaryChatId = variants[0] || this.normalizeChatIdentifier(chatId) || chatId;
+
+        for (const delayMs of attempts) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+
+          try {
+            let photo = '';
+            let bestName = '';
+            let bestTags: string[] = [];
+            let bestLabels: any[] = [];
+            for (const variant of variants) {
+              const info = await this.getChatInfo(variant);
+              const infoData = info?.success ? info.data : null;
+              const candidatePhoto = infoData?.chatPhoto || '';
+              const candidatePhotoSource = infoData?.chatPhotoSource;
+              const candidatePhotoStability = infoData?.chatPhotoStability;
+              const candidatePhotoValidated = infoData?.chatPhotoValidated === true;
+              if (
+                this.isChatInfoPhotoPersistable(
+                  candidatePhoto,
+                  candidatePhotoSource,
+                  candidatePhotoStability,
+                  candidatePhotoValidated
+                )
+              ) {
+                photo = candidatePhoto;
+                this.logPhotoResolution(
+                  primaryChatId,
+                  'rehydrate',
+                  `retry.${String(candidatePhotoSource || 'unknown')}`,
+                  photo
+                );
+              }
+
+              if (!bestName && typeof infoData?.chatName === 'string' && infoData.chatName.trim()) {
+                bestName = infoData.chatName.trim();
+              }
+
+              if (typeof infoData?.chatId === 'string' && infoData.chatId.trim()) {
+                addDynamicVariants(infoData.chatId);
+              }
+              if (typeof infoData?.phoneNumber === 'string' && infoData.phoneNumber.trim()) {
+                addDynamicVariants(infoData.phoneNumber);
+              }
+
+              if (bestTags.length === 0 && Array.isArray(infoData?.tags) && infoData.tags.length > 0) {
+                bestTags = infoData.tags.filter(Boolean);
+              }
+
+              if (bestLabels.length === 0 && Array.isArray(infoData?.labels) && infoData.labels.length > 0) {
+                bestLabels = infoData.labels.filter(Boolean);
+                if (bestTags.length === 0) {
+                  bestTags = bestLabels.map((label: any) => label?.id || label?.name).filter(Boolean);
+                }
+              }
+
+              if (photo && bestTags.length > 0 && bestLabels.length > 0) {
+                break;
+              }
+            }
+
+            if (!photo) {
+              const photoLookupVariants = Array.from(dynamicVariantSet);
+              for (const variant of photoLookupVariants) {
+                const photoResponse = await this.sendRuntimeMessage({
+                  type: 'GET_CHAT_PHOTO',
+                  payload: { chatId: variant }
+                });
+                const responseData = photoResponse?.data;
+                const candidatePhoto = photoResponse?.success
+                  ? (typeof responseData === 'string'
+                    ? responseData
+                    : (responseData?.chatPhoto || ''))
+                  : '';
+                const hasPhotoMetadata =
+                  !!(responseData && typeof responseData === 'object' && (
+                    Object.prototype.hasOwnProperty.call(responseData, 'chatPhotoSource')
+                    || Object.prototype.hasOwnProperty.call(responseData, 'photoSource')
+                    || Object.prototype.hasOwnProperty.call(responseData, 'chatPhotoStability')
+                    || Object.prototype.hasOwnProperty.call(responseData, 'chatPhotoValidated')
+                  ));
+                const canUsePhoto = hasPhotoMetadata
+                  ? this.isChatInfoPhotoPersistable(
+                    candidatePhoto,
+                    responseData?.chatPhotoSource || responseData?.photoSource,
+                    responseData?.chatPhotoStability,
+                    responseData?.chatPhotoValidated === true,
+                    { allowUnknownSource: true }
+                  )
+                  : this.isRenderablePhotoUrl(candidatePhoto);
+                if (canUsePhoto) {
+                  photo = candidatePhoto;
+                  const candidatePhotoSource = typeof responseData === 'string'
+                    ? 'get_chat_photo'
+                    : (responseData?.chatPhotoSource || 'get_chat_photo');
+                  this.logPhotoResolution(
+                    primaryChatId,
+                    'rehydrate',
+                    `chatInfo.${String(candidatePhotoSource)}`,
+                    photo
+                  );
+                  break;
+                }
+              }
+            }
+
+            const updates: any = {};
+            if (this.isRenderablePhotoUrl(photo)) {
+              updates.photo = photo;
+            }
+            if (bestName) {
+              updates.name = bestName;
+            }
+            if (bestTags.length > 0) {
+              updates.tags = bestTags;
+            }
+            if (bestLabels.length > 0) {
+              updates.labels = bestLabels;
+            }
+
+            if (Object.keys(updates).length === 0) {
+              continue;
+            }
+
+            const updateResult = await this.sendRuntimeMessage({
+              type: 'UPDATE_KANBAN_LEAD',
+              payload: {
+                leadId,
+                updates
+              }
+            });
+
+            if (updateResult?.success) {
+              document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
+                detail: {
+                  leadId,
+                  updates
+                }
+              }));
+            }
+
+            return;
+          } catch (_error) {
+            // ignore and keep retrying
+          }
+        }
+
+      })();
+
+      this.pendingPhotoRefreshByLead.set(leadId, task);
+      try {
+        await task;
+      } finally {
+        const current = this.pendingPhotoRefreshByLead.get(leadId);
+        if (current === task) {
+          this.pendingPhotoRefreshByLead.delete(leadId);
+        }
+      }
+    }
+
+    private async reinjectPageScripts(): Promise<void> {
+      if (this.injectScriptsInFlight) {
+        await this.injectScriptsInFlight;
+        return;
+      }
+
+      this.injectScriptsInFlight = (async () => {
+        try {
+          await this.injectScripts();
+        } catch (error) {
+          console.warn('[PrinChat] Reinjection attempt failed:', error);
+        }
+      })();
+
+      try {
+        await this.injectScriptsInFlight;
+      } finally {
+        this.injectScriptsInFlight = null;
+      }
+    }
+
+    private async withCurrentInstance(message: any): Promise<any> {
+      if (!message || !this.isScopedDataMessage(message.type)) {
+        return message;
+      }
+
+      const legacyScope = 'legacy_unassigned';
+      const payload = (message.payload && typeof message.payload === 'object')
+        ? { ...message.payload }
+        : {};
+
+      if (payload.instanceId === legacyScope) {
+        throw new Error('INSTANCE_NOT_READY: Invalid legacy scope for scoped operation');
+      }
+
+      if (!payload.instanceId || typeof payload.instanceId !== 'string') {
+        payload.instanceId = await this.getCurrentInstanceId(false);
+      }
+
+      if (payload.instanceId === legacyScope) {
+        throw new Error('INSTANCE_NOT_READY: Could not resolve current WhatsApp instance');
+      }
+
+      return { ...message, payload };
+    }
+
+    private async sendRuntimeMessage(message: any): Promise<any> {
+      const maxAttempts = 3;
+      const messageType = String(message?.type || '');
+      const scopedMessage = this.isScopedDataMessage(messageType);
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const messageWithScope = await this.withCurrentInstance(message);
+          const response = await chrome.runtime.sendMessage(messageWithScope);
+
+          if (scopedMessage && response && response.success === false) {
+            const responseError = String(response.error || '');
+            const instanceResponseError =
+              responseError.includes('INSTANCE_REQUIRED') ||
+              responseError.includes('INSTANCE_NOT_READY');
+
+            if (instanceResponseError) {
+              throw new Error(`INSTANCE_NOT_READY: ${responseError}`);
+            }
+          }
+
+          return response;
+        } catch (error: any) {
+          const errorMsg = String(error?.message || error || '');
+          const isInstanceError =
+            errorMsg.includes('INSTANCE_NOT_READY') ||
+            errorMsg.includes('INSTANCE_REQUIRED');
+
+          if (!isInstanceError || attempt === maxAttempts) {
+            throw error;
+          }
+
+          this.currentInstanceCache = null;
+          if (attempt === 1) {
+            await this.reinjectPageScripts();
+          }
+          await new Promise(resolve => setTimeout(resolve, 300 * attempt));
+        }
+      }
+
+      throw new Error('INSTANCE_NOT_READY: Could not send scoped message');
+    }
+
+    private requestCurrentInstanceId(): Promise<string> {
+      const now = Date.now();
+
+      return new Promise((resolve, reject) => {
+        const requestId = `instance-${now}-${Math.random().toString(36).slice(2, 9)}`;
+        const timeout = setTimeout(() => {
+          document.removeEventListener('PrinChatCurrentInstanceResult', handler);
+          reject(new Error('INSTANCE_NOT_READY: Timeout resolving current WhatsApp instance'));
+        }, 5000);
+
+        const handler = (event: any) => {
+          if (event.detail?.requestId !== requestId) return;
+          clearTimeout(timeout);
+          document.removeEventListener('PrinChatCurrentInstanceResult', handler);
+
+          if (event.detail?.success && event.detail?.instanceId && event.detail.instanceId !== 'legacy_unassigned') {
+            resolve(String(event.detail.instanceId));
+            return;
+          }
+
+          reject(new Error(event.detail?.error || 'INSTANCE_NOT_READY: Could not resolve current WhatsApp instance'));
+        };
+
+        document.addEventListener('PrinChatCurrentInstanceResult', handler);
+        document.dispatchEvent(new CustomEvent('PrinChatGetCurrentInstance', {
+          detail: { requestId }
+        }));
+      });
+    }
+
+    async getCurrentInstanceId(forceRefresh: boolean = false): Promise<string> {
+      if (!forceRefresh && this.currentInstanceCache) {
+        return this.currentInstanceCache.value;
+      }
+
+      const attempts = forceRefresh ? 1 : 2;
+
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        try {
+          const resolved = await this.requestCurrentInstanceId();
+          this.currentInstanceCache = { value: resolved };
+          return resolved;
+        } catch (error) {
+          if (attempt === 1) {
+            await this.reinjectPageScripts();
+          }
+          if (attempt < attempts) {
+            await new Promise(resolve => setTimeout(resolve, 350));
+            continue;
+          }
+        }
+      }
+
+      this.currentInstanceCache = null;
+      throw new Error('INSTANCE_NOT_READY: Could not resolve current WhatsApp instance');
     }
 
     private async init() {
@@ -544,30 +1090,41 @@
         if (success && chatId) {
           try {
             console.log('[PrinChat Kanban] Message sent, updating lead for:', chatId);
-            const leadsResponse = await chrome.runtime.sendMessage({ type: 'GET_ALL_KANBAN_LEADS' });
+            const leadsResponse = await this.sendRuntimeMessage({ type: 'GET_ALL_KANBAN_LEADS' });
+            if (!leadsResponse?.success) {
+              throw new Error(leadsResponse?.error || 'Failed to fetch Kanban leads');
+            }
             const allLeads = leadsResponse?.data || [];
 
-            // Normalize chatId for comparison (remove @c.us, @lid, etc.)
-            const normalizeId = (id: string) => {
-              if (!id) return '';
-              return id.replace(/@c\.us|@lid|@g\.us|@s\.whatsapp\.net/g, '');
-            };
-            const normalizedChatId = normalizeId(chatId);
+            const chatIdVariants = this.buildChatIdVariants(chatId);
+            const chatVariantSet = new Set(chatIdVariants);
+            const normalizedChatId = this.getCanonicalChatIdentity(chatId);
 
             // Find lead with flexible matching
             const existingLead = allLeads.find((l: any) => {
-              const leadId = l.id || '';
-              const leadChatId = l.chatId || '';
-              return normalizeId(leadId) === normalizedChatId ||
-                normalizeId(leadChatId) === normalizedChatId ||
-                leadId === chatId ||
-                leadChatId === chatId;
+              const leadCandidates = [l?.id, l?.chatId, l?.phone];
+
+              for (const candidate of leadCandidates) {
+                const candidateVariants = this.buildChatIdVariants(candidate);
+                if (candidateVariants.some((variant) => chatVariantSet.has(variant))) {
+                  return true;
+                }
+
+                const candidateIdentity = this.getCanonicalChatIdentity(candidate);
+                if (candidateIdentity && normalizedChatId && candidateIdentity === normalizedChatId) {
+                  return true;
+                }
+              }
+
+              return false;
             });
 
             console.log('[PrinChat Kanban] Looking for lead with chatId:', chatId, 'normalized:', normalizedChatId, 'found:', !!existingLead);
 
             if (existingLead) {
               const updates: any = {};
+
+              // Do not auto-move columns during send/message updates.
 
               // Reset unread count if > 0
               if (existingLead.unreadCount > 0) {
@@ -582,13 +1139,16 @@
 
               // Only update if there are changes
               if (Object.keys(updates).length > 0) {
-                await chrome.runtime.sendMessage({
+                const updateResult = await this.sendRuntimeMessage({
                   type: 'UPDATE_KANBAN_LEAD',
                   payload: {
                     leadId: existingLead.id,
                     updates
                   }
                 });
+                if (!updateResult?.success) {
+                  throw new Error(updateResult?.error || 'Failed to update Kanban lead');
+                }
                 console.log('[PrinChat Kanban] ✅ Lead updated:', chatId, updates);
 
                 // Dispatch event for real-time UI update
@@ -662,8 +1222,16 @@
 
       // Listen for incoming messages from page script (for triggers)
       document.addEventListener('PrinChatIncomingMessage', async (event: any) => {
-        const { messageText, chatId, timestamp, fromMe } = event.detail;
-        console.log('[PrinChat] Message detected:', messageText, 'from:', chatId, 'fromMe:', fromMe);
+        const {
+          messageText,
+          chatId,
+          timestamp,
+          fromMe,
+          chatName: eventChatName,
+          chatLabels: eventChatLabels,
+          chatTags: eventChatTags
+        } = event.detail;
+        console.log('[PrinChat] Message detected:', messageText, 'from:', chatId, 'fromMe:', fromMe, 'eventLabels:', eventChatTags);
 
         // Send to service worker to check triggers (ONLY for incoming messages)
         if (!fromMe) {
@@ -690,6 +1258,11 @@
         // AUTO-ADD TO KANBAN / UPDATE KANBAN LEADS
         // Check if this contact should be added to Kanban or updated
         try {
+          if (this.shouldIgnoreKanbanChat(chatId)) {
+            console.log('[PrinChat Kanban] Skipping system chat:', chatId);
+            return;
+          }
+
           // Skip group chats
           if (chatId.includes('@g.us')) {
             console.log('[PrinChat Kanban] Skipping group chat');
@@ -697,24 +1270,58 @@
           }
 
           // Get all leads to check if contact already exists
-          const leadsResponse = await chrome.runtime.sendMessage({ type: 'GET_ALL_KANBAN_LEADS' });
+          const leadsResponse = await this.sendRuntimeMessage({ type: 'GET_ALL_KANBAN_LEADS' });
+          if (!leadsResponse?.success) {
+            throw new Error(leadsResponse?.error || 'Failed to fetch Kanban leads');
+          }
           const allLeads = leadsResponse?.data || [];
 
-          // Normalize ID helper for consistent matching
-          const normalizeId = (id: string) => {
-            if (!id) return '';
-            return id.replace(/@c\.us|@lid|@g\.us|@s\.whatsapp\.net/g, '');
-          };
-          const normalizedChatId = normalizeId(chatId);
+          const chatIdVariants = this.buildChatIdVariants(chatId);
+          const chatVariantSet = new Set(chatIdVariants);
+          const canonicalChatId = this.normalizeChatIdentifier(chatId);
+          const canonicalChatIdentity = this.getCanonicalChatIdentity(chatId);
 
-          // Check if contact already in Kanban (check both id and chatId)
+          const resolveBestChatInfo = async () => {
+            let bestData: any = null;
+            let bestScore = -1;
+
+            for (const variant of chatIdVariants) {
+              const info = await this.getChatInfo(variant);
+              if (!info?.success || !info?.data) continue;
+
+              const hasName = typeof info.data.chatName === 'string' && info.data.chatName.trim().length > 0;
+              const hasPhoto = this.isChatInfoPayloadPhotoPersistable(info.data);
+              const hasTags = Array.isArray(info.data.tags) && info.data.tags.length > 0;
+              const score = (hasPhoto ? 4 : 0) + (hasName ? 2 : 0) + (hasTags ? 1 : 0);
+
+              if (score > bestScore) {
+                bestScore = score;
+                bestData = info.data;
+              }
+
+              if (score >= 7) {
+                break;
+              }
+            }
+
+            return bestData;
+          };
+
+          // Check if contact already in Kanban (canonical variant matching)
           const existingLead = allLeads.find((l: any) => {
-            const leadId = l.id || '';
-            const leadChatId = l.chatId || '';
-            return normalizeId(leadId) === normalizedChatId ||
-              normalizeId(leadChatId) === normalizedChatId ||
-              leadId === chatId ||
-              leadChatId === chatId;
+            const leadCandidates = [l?.id, l?.chatId, l?.phone];
+            for (const candidate of leadCandidates) {
+              const leadVariants = this.buildChatIdVariants(candidate);
+              if (leadVariants.some((variant) => chatVariantSet.has(variant))) {
+                return true;
+              }
+
+              const leadIdentity = this.getCanonicalChatIdentity(candidate);
+              if (leadIdentity && canonicalChatIdentity && leadIdentity === canonicalChatIdentity) {
+                return true;
+              }
+            }
+            return false;
           });
 
           if (existingLead) {
@@ -725,6 +1332,9 @@
               // TRICK: Use negative timestamp to always force to top (smallest number)
               order: -Date.now()
             };
+
+            // Do not auto-move columns during message updates.
+            // Column placement must be preserved unless user explicitly drags/moves.
 
             // Only update lastMessage if this message is newer than what we have
             // This prevents old messages (ghosts) from overwriting newer ones
@@ -752,20 +1362,61 @@
             }
 
             // Sync latest contact info to keep it fresh
-            const chatInfo = await this.getChatInfo(chatId);
-            if (chatInfo.success && chatInfo.data) {
-              if (chatInfo.data.chatName) updates.name = chatInfo.data.chatName;
-              if (chatInfo.data.chatPhoto) updates.photo = chatInfo.data.chatPhoto;
-              if (chatInfo.data.tags) updates.tags = chatInfo.data.tags;
+            const chatInfo = await resolveBestChatInfo();
+            if (chatInfo) {
+              if (chatInfo.chatName) updates.name = chatInfo.chatName;
+              if (this.isChatInfoPayloadPhotoPersistable(chatInfo)) {
+                updates.photo = chatInfo.chatPhoto;
+                this.logPhotoResolution(
+                  chatId,
+                  'update',
+                  `chatInfo.${String(chatInfo.chatPhotoSource || 'unknown')}`,
+                  updates.photo
+                );
+              }
+              if (Array.isArray(chatInfo.tags) && chatInfo.tags.length > 0) {
+                updates.tags = chatInfo.tags.filter(Boolean);
+              }
+              if (Array.isArray(chatInfo.labels) && chatInfo.labels.length > 0) {
+                updates.labels = chatInfo.labels.filter(Boolean);
+                if (!updates.tags || updates.tags.length === 0) {
+                  updates.tags = updates.labels.map((label: any) => label?.id || label?.name).filter(Boolean);
+                }
+              }
+
+              const resolvedChatId = this.normalizeChatIdentifier(chatInfo.chatId || canonicalChatId || chatId);
+              if (resolvedChatId && resolvedChatId !== existingLead.chatId) {
+                updates.chatId = resolvedChatId;
+              }
             }
 
-            await chrome.runtime.sendMessage({
+            // FALLBACK: Use labels/name from the PrinChatIncomingMessage event
+            // (extracted directly from WhatsApp Store by the page script)
+            if ((!updates.tags || updates.tags.length === 0) && Array.isArray(eventChatTags) && eventChatTags.length > 0) {
+              updates.tags = eventChatTags;
+              console.log('[PrinChat Kanban] Using event tags for existing lead:', eventChatTags);
+            }
+            if ((!updates.labels || updates.labels.length === 0) && Array.isArray(eventChatLabels) && eventChatLabels.length > 0) {
+              updates.labels = eventChatLabels;
+              console.log('[PrinChat Kanban] Using event labels for existing lead:', eventChatLabels);
+              if (!updates.tags || updates.tags.length === 0) {
+                updates.tags = eventChatLabels.map((l: any) => l?.id || l?.name).filter(Boolean);
+              }
+            }
+            if (!updates.name && eventChatName) {
+              updates.name = eventChatName;
+            }
+
+            const updateResult = await this.sendRuntimeMessage({
               type: 'UPDATE_KANBAN_LEAD',
               payload: {
                 leadId: existingLead.id,
                 updates: updates
               }
             });
+            if (!updateResult?.success) {
+              throw new Error(updateResult?.error || 'Failed to update existing Kanban lead');
+            }
 
             // Dispatch event for real-time UI update
             document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
@@ -774,6 +1425,11 @@
                 updates: updates
               }
             }));
+
+            const hasRenderableExistingPhoto = this.isRenderablePhotoUrl(updates.photo || existingLead.photo || '');
+            if (!hasRenderableExistingPhoto && existingLead.id) {
+              this.refreshLeadPhotoFromChat(existingLead.id, chatId).catch(() => null);
+            }
 
             return;
           }
@@ -787,25 +1443,43 @@
 
           // Get contact info using getChatInfo (works for LIDs too)
           console.log('[PrinChat Kanban] Fetching contact info for new lead:', chatId);
-          const chatInfoResponse = await this.getChatInfo(chatId);
+          const chatInfo = await resolveBestChatInfo();
 
           let chatName = '';
           let chatPhoto = '';
-          let phoneNumber = chatId.split('@')[0]; // Default to chatId
+          let resolvedChatId = this.normalizeChatIdentifier(canonicalChatId || chatId);
+          let phoneNumber = this.getCanonicalChatIdentity(chatId); // Default to canonical identity
 
-          if (chatInfoResponse.success && chatInfoResponse.data) {
-            chatName = chatInfoResponse.data.chatName || '';
-            chatPhoto = chatInfoResponse.data.chatPhoto || '';
+          if (chatInfo) {
+            chatName = chatInfo.chatName || '';
+            if (this.isChatInfoPayloadPhotoPersistable(chatInfo)) {
+              chatPhoto = chatInfo.chatPhoto;
+              this.logPhotoResolution(
+                chatId,
+                'create',
+                `chatInfo.${String(chatInfo.chatPhotoSource || 'unknown')}`,
+                chatPhoto
+              );
+            }
+
+            resolvedChatId = this.normalizeChatIdentifier(chatInfo.chatId || resolvedChatId || chatId);
+
             // Use the real phone number from API (not Instagram/Facebook ID)
-            if (chatInfoResponse.data.phoneNumber) {
-              phoneNumber = chatInfoResponse.data.phoneNumber;
+            if (chatInfo.phoneNumber) {
+              const normalizedPhone = this.getCanonicalChatIdentity(chatInfo.phoneNumber) || String(chatInfo.phoneNumber).replace(/\D/g, '');
+              if (normalizedPhone) {
+                phoneNumber = normalizedPhone;
+              }
             }
           } else {
             console.warn('[PrinChat Kanban] Could not get chat info, using chatId as name');
           }
 
           // Get Recentes column ID
-          const columnsResponse = await chrome.runtime.sendMessage({ type: 'GET_KANBAN_COLUMNS' });
+          const columnsResponse = await this.sendRuntimeMessage({ type: 'GET_KANBAN_COLUMNS' });
+          if (!columnsResponse?.success) {
+            throw new Error(columnsResponse?.error || 'Failed to fetch Kanban columns');
+          }
           const columns = columnsResponse?.data || [];
           const recentesColumn = columns.find((c: any) => c.isDefault === true);
 
@@ -816,11 +1490,27 @@
 
           // Format phone number for display if no name
           const formattedName = chatName || this.formatPhoneNumber(phoneNumber);
+          const normalizedLeadChatId = resolvedChatId || (phoneNumber ? `${phoneNumber}@c.us` : this.normalizeChatIdentifier(chatId));
 
           // Create new lead with unread count
+          // Use labels from chatInfo, OR fallback to event labels from page script
+          let chatInfoLabels = Array.isArray(chatInfo?.labels) ? chatInfo.labels.filter(Boolean) : [];
+          if (chatInfoLabels.length === 0 && Array.isArray(eventChatLabels) && eventChatLabels.length > 0) {
+            chatInfoLabels = eventChatLabels;
+            console.log('[PrinChat Kanban] Using event labels for new lead:', chatInfoLabels);
+          }
+          let chatInfoTagsRaw = Array.isArray(chatInfo?.tags) ? chatInfo.tags.filter(Boolean) : [];
+          if (chatInfoTagsRaw.length === 0 && Array.isArray(eventChatTags) && eventChatTags.length > 0) {
+            chatInfoTagsRaw = eventChatTags;
+            console.log('[PrinChat Kanban] Using event tags for new lead:', chatInfoTagsRaw);
+          }
+          const chatInfoTags = chatInfoTagsRaw.length > 0
+            ? chatInfoTagsRaw
+            : chatInfoLabels.map((label: any) => label?.id || label?.name).filter(Boolean);
+
           const newLead = {
             phone: phoneNumber,
-            chatId: chatId,
+            chatId: normalizedLeadChatId,
             name: formattedName,
             photo: chatPhoto || '',
             columnId: recentesColumn.id,
@@ -829,20 +1519,32 @@
             lastMessage: messageText,
             lastMessageTime: timestamp || Date.now(),
             unreadCount: 1,  // New message just arrived
-            tags: chatInfoResponse.data?.tags || [] // Add tags from WA Business
+            tags: chatInfoTags,
+            labels: chatInfoLabels
           };
 
           console.log('[PrinChat Kanban] Auto-adding contact to Recentes:', newLead.name);
 
           // Save to database
-          await chrome.runtime.sendMessage({
+          const createResult = await this.sendRuntimeMessage({
             type: 'CREATE_KANBAN_LEAD',
             payload: newLead
           });
+          if (!createResult?.success) {
+            throw new Error(createResult?.error || 'Failed to create Kanban lead');
+          }
+
+          const createdLeadId = createResult?.data?.id;
+          const refreshLeadKey = createdLeadId || normalizedLeadChatId || chatId;
+          if (refreshLeadKey) {
+            // Use the original incoming chatId first: it is the most accurate
+            // identifier for non-active incoming messages.
+            this.refreshLeadPhotoFromChat(refreshLeadKey, chatId).catch(() => null);
+          }
 
           // Notify UI to re-render
           document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadCreated', {
-            detail: { lead: newLead }
+            detail: { lead: createResult.data || newLead }
           }));
 
         } catch (kanbanError: any) {
@@ -851,28 +1553,112 @@
 
       });
 
+      // Listen for delayed photo hints from page script (sidebar retry).
+      // These hints are not persisted directly because sidebar matching can be ambiguous.
+      document.addEventListener('PrinChatPhotoUpdate', async (event: any) => {
+        const { chatId: updateChatId, chatPhoto } = event.detail || {};
+        if (!updateChatId || !this.isRenderablePhotoUrl(chatPhoto)) return;
+
+        console.log('[PrinChat Kanban] Received delayed sidebar photo hint for', updateChatId);
+        try {
+          // Find the lead by chatId
+          const variants = this.buildChatIdVariants(updateChatId);
+          const variantSet = new Set(variants);
+          const incomingIdentity = this.getCanonicalChatIdentity(updateChatId);
+          const allLeads = await this.sendRuntimeMessage({ type: 'GET_ALL_KANBAN_LEADS' });
+          if (!allLeads?.success || !Array.isArray(allLeads.data)) return;
+
+          const matchLead = allLeads.data.find((lead: any) => {
+            const leadCandidates = [lead?.id, lead?.chatId, lead?.phone];
+            for (const candidate of leadCandidates) {
+              const leadVariants = this.buildChatIdVariants(candidate);
+              if (leadVariants.some((variant) => variantSet.has(variant))) {
+                return true;
+              }
+
+              const leadIdentity = this.getCanonicalChatIdentity(candidate);
+              if (incomingIdentity && leadIdentity && incomingIdentity === leadIdentity) {
+                return true;
+              }
+            }
+            return false;
+          });
+
+          if (matchLead?.id) {
+            const hasValidPhoto = this.isRenderablePhotoUrl(matchLead.photo || '');
+            if (!hasValidPhoto) {
+              this.refreshLeadPhotoFromChat(matchLead.id, updateChatId).catch(() => null);
+            }
+          }
+        } catch (err) {
+          console.warn('[PrinChat Kanban] Delayed photo update failed:', err);
+        }
+      });
+
       // Listen for label/tag changes (from page script)
       document.addEventListener('PrinChatLabelsChanged', async (event: any) => {
-        const { chatId, tags, name, photo, isGroup } = event.detail;
-        console.log('[PrinChat DEBUG] 4. Injector received PrinChatLabelsChanged!', chatId, tags);
+        const { chatId, tags, labels, name, photo, isGroup } = event.detail;
+        console.log('[PrinChat DEBUG] 4. Injector received PrinChatLabelsChanged!', chatId, tags, labels?.length);
 
         if (!chatId || !tags) {
           console.warn('[PrinChat DEBUG] ⚠️ Missing chatId or tags in event');
           return;
         }
 
-        try {
-          // CRITICAL: Normalize chatId to match database format (without @lid, @c.us, etc.)
-          const normalizedChatId = chatId.replace(/@lid$|@c\.us$|@s\.whatsapp\.net$|@g\.us$/g, '');
-          console.log(`[PrinChat DEBUG] 5. Normalized chatId: "${chatId}" → "${normalizedChatId}"`);
+        if (this.shouldIgnoreKanbanChat(chatId)) {
+          console.log('[PrinChat DEBUG] 🛑 Skipping label sync for system chat:', chatId);
+          return;
+        }
 
-          console.log('[PrinChat DEBUG] 5. Sending UPDATE_KANBAN_LEAD to Background...');
+        try {
+          const normalizedChatId = this.normalizeChatIdentifier(chatId);
+          const canonicalIdentity = this.getCanonicalChatIdentity(chatId);
+          const chatVariants = this.buildChatIdVariants(chatId);
+          const chatVariantSet = new Set(chatVariants);
+          console.log('[PrinChat DEBUG] 5. Normalized chatId', {
+            rawChatId: chatId,
+            canonicalChatId: normalizedChatId,
+            canonicalIdentity
+          });
+
+          // Build updates with tags AND labels (names/colors)
+          const updatePayload: any = { tags: tags };
+          if (Array.isArray(labels) && labels.length > 0) {
+            updatePayload.labels = labels;
+          }
+
+          let resolvedLeadId = normalizedChatId || chatId;
+          try {
+            const leadsResponse = await this.sendRuntimeMessage({ type: 'GET_ALL_KANBAN_LEADS' });
+            const allLeads = Array.isArray(leadsResponse?.data) ? leadsResponse.data : [];
+            const matchedLead = allLeads.find((lead: any) => {
+              const leadCandidates = [lead?.id, lead?.chatId, lead?.phone];
+              for (const candidate of leadCandidates) {
+                const leadVariants = this.buildChatIdVariants(candidate);
+                if (leadVariants.some((variant) => chatVariantSet.has(variant))) {
+                  return true;
+                }
+                const leadIdentity = this.getCanonicalChatIdentity(candidate);
+                if (leadIdentity && canonicalIdentity && leadIdentity === canonicalIdentity) {
+                  return true;
+                }
+              }
+              return false;
+            });
+            if (matchedLead?.id) {
+              resolvedLeadId = matchedLead.id;
+            }
+          } catch (_lookupError) {
+            // best-effort lookup only
+          }
+
+          console.log('[PrinChat DEBUG] 5. Sending UPDATE_KANBAN_LEAD to Background...', { leadId: resolvedLeadId });
           // Update database directly
-          const updateResult = await chrome.runtime.sendMessage({
+          const updateResult = await this.sendRuntimeMessage({
             type: 'UPDATE_KANBAN_LEAD',
             payload: {
-              leadId: normalizedChatId, // Use normalized ID
-              updates: { tags: tags }
+              leadId: resolvedLeadId,
+              updates: updatePayload
             }
           });
 
@@ -885,8 +1671,9 @@
             // We use LEAD_UPDATED event which UI Overlay listens to
             document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
               detail: {
-                leadId: updateResult.data?.id, // This might be undefined if background doesn't return data object
-                changes: { tags: tags }
+                leadId: updateResult.data?.id || normalizedChatId || chatId,
+                updates: updatePayload,
+                chatId: normalizedChatId || chatId
               }
             }));
             console.log('[PrinChat DEBUG] 8. Dispatched PrinChatKanbanLeadUpdated');
@@ -899,19 +1686,29 @@
               return;
             }
 
+            const columnsResponse = await this.sendRuntimeMessage({ type: 'GET_KANBAN_COLUMNS' });
+            const columns = columnsResponse?.data || [];
+            const defaultColumn = columns.find((c: any) => c.isDefault === true);
+
+            if (!defaultColumn) {
+              console.warn('[PrinChat DEBUG] 🛑 No default column found for CREATE fallback.');
+              return;
+            }
+
             const newLead = {
-              id: chatId,
+              chatId: normalizedChatId || chatId,
               name: name || 'Novo Contato',
-              number: chatId.split('@')[0],
+              phone: canonicalIdentity || normalizedChatId || '',
               photo: photo || '',
-              columnId: 'column-1', // Default to "Recentes" (assuming column-1 exists, or backend handles it)
+              columnId: defaultColumn.id,
+              order: -Date.now(),
               tags: tags,
               unreadCount: 0,
               lastMessage: '',
               lastMessageTime: Date.now()
             };
 
-            const createResult = await chrome.runtime.sendMessage({
+            const createResult = await this.sendRuntimeMessage({
               type: 'CREATE_KANBAN_LEAD',
               payload: newLead
             });
@@ -920,8 +1717,9 @@
               console.log('[PrinChat DEBUG] 7b. Lead CREATED in DB. Dispatching PrinChatKanbanLeadUpdated...');
               document.dispatchEvent(new CustomEvent('PrinChatKanbanLeadUpdated', {
                 detail: {
-                  leadId: chatId,
-                  changes: { tags: tags } // Treat creation as an update for UI
+                  leadId: createResult.data?.id || normalizedChatId || chatId,
+                  updates: updatePayload,
+                  chatId: normalizedChatId || chatId
                 }
               }));
               // Also dispatch Created event if UI listens to it specifically
@@ -940,10 +1738,27 @@
       this.isReady = true;
       console.log('[PrinChat] WhatsApp Web injector ready');
 
+      // Warm up instance scope cache early to avoid missing first Kanban writes.
+      this.getCurrentInstanceId(false)
+        .then((instanceId) => console.log('[PrinChat] Current WhatsApp instance resolved:', instanceId))
+        .catch((error) => console.warn('[PrinChat] Could not pre-resolve instance scope yet:', error?.message || error));
+
       // Listen for messages from popup
       try {
         chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           console.log('[PrinChat] Message received from popup:', message.type);
+
+          if (message.type === 'SESSION_CONFLICT_LOGOUT') {
+            chrome.storage.sync.remove(['auth_session'], () => {
+              document.dispatchEvent(new CustomEvent('PrinChatSessionConflict', {
+                detail: { reason: 'SESSION_CONFLICT' }
+              }));
+              setTimeout(() => window.location.reload(), 150);
+            });
+            sendResponse({ success: true });
+            return true;
+          }
+
           this.handleAction(message)
             .then(response => {
               console.log('[PrinChat] Sending response:', response);
@@ -992,7 +1807,7 @@
             }
 
             // Forward to background service worker
-            response = await chrome.runtime.sendMessage(message);
+            response = await this.sendRuntimeMessage(message);
             console.log('[PrinChat] Got response from background:', response);
 
             // Restore large media data from temp storage (for GET_SCRIPTS_AND_MESSAGES)
@@ -1034,21 +1849,18 @@
           }));
           console.log('[PrinChat] ✅ Response sent to UI overlay');
         } catch (error: any) {
-          // Suppress "Extension context invalidated" error logs as requested
-          if (error.message?.includes('Extension context invalidated')) {
-            // Silently fail/ignore as user requested no error logs/banner for this
-            return;
+          const errorMessage = error.message || 'Unknown error';
+
+          // Suppress "Extension context invalidated" log noise, but ALWAYS
+          // send a response back so the UI overlay doesn't hang until timeout.
+          if (!error.message?.includes('Extension context invalidated')) {
+            console.error('[PrinChat] ❌ Error handling UI request:', error);
           }
-
-          console.error('[PrinChat] ❌ Error handling UI request:', error);
-
-          // Provide better error message for context invalidation
-          let errorMessage = error.message || 'Unknown error';
 
           document.dispatchEvent(new CustomEvent('PrinChatUIResponse', {
             detail: {
               requestId,
-              response: { success: false, error: errorMessage }
+              response: { success: false, error: errorMessage, isContextInvalidated: error.message?.includes('Extension context invalidated') }
             }
           }));
         }
@@ -1438,12 +2250,14 @@
           console.log('[PrinChat] Navigation detected!', 'Old:', lastUrl, 'New:', currentUrl);
           lastUrl = currentUrl;
           lastInjectionTime = Date.now();
+          this.currentInstanceCache = null;
 
           // Reinject scripts after navigation
           setTimeout(async () => {
             console.log('[PrinChat] Reinjecting scripts after navigation...');
             try {
               await this.injectScripts();
+              this.getCurrentInstanceId(false).catch(() => { });
               console.log('[PrinChat] ✅ Scripts reinjected successfully');
             } catch (error) {
               console.error('[PrinChat] ❌ Error reinjecting scripts:', error);
@@ -1635,13 +2449,22 @@
         case 'GET_CHAT_INFO':
           return await this.getChatInfo(action.payload?.chatId);
 
-        case 'GET_CHAT_PHOTO':
+        case 'GET_CHAT_PHOTO': {
           const chatInfo = await this.getChatInfo(action.payload?.chatId);
           if (chatInfo.success && chatInfo.data) {
-            return { success: true, data: chatInfo.data.chatPhoto };
-          } else {
-            return { success: false, error: chatInfo.error || 'Could not get chat info' };
+            return {
+              success: true,
+              data: {
+                chatPhoto: chatInfo.data.chatPhoto,
+                chatPhotoSource: chatInfo.data.chatPhotoSource,
+                chatPhotoValidated: chatInfo.data.chatPhotoValidated === true,
+                chatPhotoStability: chatInfo.data.chatPhotoStability,
+                chatPhotoCheckedAt: chatInfo.data.chatPhotoCheckedAt
+              }
+            };
           }
+          return { success: false, error: chatInfo.error || 'Could not get chat info' };
+        }
 
         case 'GET_ALL_LABELS':
           return await this.getAllLabels();
@@ -1651,27 +2474,34 @@
 
         case 'SAVE_SCHEDULE':
         case 'GET_SCHEDULES_BY_CHAT':
+        case 'GET_ALL_SCHEDULES':
         case 'DELETE_SCHEDULE':
         case 'UPDATE_SCHEDULE_STATUS':
           // Forward schedule operations to background service worker
           console.log('[PrinChat] Forwarding schedule operation to background:', action.type);
-          return await chrome.runtime.sendMessage(action);
+          return await this.sendRuntimeMessage(action);
 
         case 'CREATE_NOTE':
         case 'UPDATE_NOTE':
         case 'GET_NOTES_BY_CHAT':
         case 'GET_NOTE':
         case 'DELETE_NOTE':
+        case 'GET_ALL_NOTES':
         case 'FORCE_INIT':
+        case 'TRIGGER_MANUAL_SYNC':
         case 'GET_KANBAN_COLUMNS':
-        case 'SAVE_KANBAN_COLUMN':
+        case 'CREATE_KANBAN_COLUMN':
+        case 'UPDATE_KANBAN_COLUMN':
         case 'DELETE_KANBAN_COLUMN':
+        case 'UPDATE_COLUMN_ORDER':
+        case 'GET_ALL_KANBAN_LEADS':
+        case 'CREATE_KANBAN_LEAD':
         case 'MOVE_KANBAN_LEAD': // Whitelist lead movement
         case 'UPDATE_KANBAN_LEAD': // Whitelist lead update
         case 'DELETE_KANBAN_LEAD': // Whitelist lead deletion
           // Forward note operations to background service worker
           console.log('[PrinChat] Forwarding note/kanban operation to background:', action.type);
-          return await chrome.runtime.sendMessage(action);
+          return await this.sendRuntimeMessage(action);
 
         case 'SET_ACTIVE_SIGNATURE':
         case 'TOGGLE_SIGNATURE_ACTIVE':
@@ -2248,8 +3078,7 @@
             document.removeEventListener('PrinChatActiveChatResult', handler);
             console.log('[PrinChat Injector] ✅ Received active chat result:', event.detail);
             if (event.detail.success) {
-              // Use fallback getChatPhoto() if API didn't return photo
-              const chatPhoto = event.detail.chatPhoto || this.getChatPhoto();
+              const chatPhoto = event.detail.chatPhoto;
 
               const responseData = { active: true, chatName: event.detail.chatName, chatId: event.detail.chatId, chatPhoto };
               console.log('[PrinChat Injector] 📤 RESOLVING getActiveChat with:', JSON.stringify(responseData));
@@ -2304,8 +3133,9 @@
       return new Promise((resolve) => {
         const requestId = `chat-info-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
         const timeout = setTimeout(() => {
+          document.removeEventListener('PrinChatChatInfoResult', handler);
           resolve({ success: false, error: 'Timeout' });
-        }, 3000);
+        }, 15000);
 
         const handler = (event: any) => {
           if (event.detail?.requestId === requestId) {
@@ -2321,6 +3151,11 @@
                   chatName: event.detail.chatName,
                   chatId: event.detail.chatId,
                   chatPhoto,
+                  chatPhotoSource: event.detail.chatPhotoSource || event.detail.photoSource,
+                  chatPhotoValidated: event.detail.chatPhotoValidated === true,
+                  chatPhotoStability: event.detail.chatPhotoStability,
+                  chatPhotoCheckedAt: event.detail.chatPhotoCheckedAt,
+                  phoneNumber: event.detail.phoneNumber,
                   tags: event.detail.tags,
                   labels: event.detail.labels
                 }
@@ -2412,31 +3247,6 @@
           detail: { requestId }
         }));
       });
-    }
-
-    private getChatPhoto(): string | undefined {
-      console.log('[PrinChat Injector] Getting chat photo from DOM as fallback...');
-
-      // Try multiple selectors for profile picture
-      const selectors = [
-        '#main header img[src*="https://"]',  // Profile pic with https URL
-        '#main header img[src*="blob:"]',     // Profile pic as blob
-        '#main [data-testid="conversation-info-header"] img',
-        '#main header [data-testid="default-user"] img',
-        '#main header [data-testid="default-group"] img',
-        '#main header img',  // Any image in header
-      ];
-
-      for (const selector of selectors) {
-        const img = document.querySelector(selector) as HTMLImageElement;
-        if (img?.src && img.src !== 'data:') {
-          console.log('[PrinChat Injector] Found chat photo from selector:', selector, '→', img.src);
-          return img.src;
-        }
-      }
-
-      console.log('[PrinChat Injector] No chat photo found in DOM');
-      return undefined;
     }
 
     // Note: openChat() is kept for potential future use but currently not needed

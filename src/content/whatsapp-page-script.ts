@@ -7,6 +7,13 @@
 (function () {
   'use strict';
 
+  // Prevent duplicate initialisation when script is injected multiple times.
+  if ((window as any).__PRINCHAT_PAGE_SCRIPT_READY__) {
+    console.log('[PrinChat Page] Already initialized. Skipping duplicate injection.');
+    return;
+  }
+  (window as any).__PRINCHAT_PAGE_SCRIPT_READY__ = true;
+
   // Configuration
   const DEBUG_MODE = false; // Set to true to enable debug panel
   const MAX_VIDEO_SIZE_MB = 16; // WhatsApp video size limit
@@ -52,6 +59,1182 @@
         logsDiv.scrollTop = logsDiv.scrollHeight;
       }
     }
+  };
+
+  const sanitizeScopedChatId = (value: any): string => {
+    if (typeof value !== 'string') return '';
+    let chatId = value.trim();
+    if (!chatId) return '';
+
+    // Scoped IDs are stored as: wa:<instance>::<chatIdentity>.
+    // Page-store lookups require only the chat identity part.
+    const scopedSeparator = chatId.lastIndexOf('::');
+    if (scopedSeparator >= 0) {
+      chatId = chatId.slice(scopedSeparator + 2);
+    }
+
+    chatId = chatId.replace(/^waid?:/i, '');
+
+    return chatId.trim();
+  };
+
+  const getCanonicalChatIdentity = (value: any): string => {
+    const normalized = sanitizeScopedChatId(value);
+    if (!normalized) return '';
+
+    const atIndex = normalized.indexOf('@');
+    const userPart = (atIndex >= 0 ? normalized.slice(0, atIndex) : normalized)
+      .replace(/:\d+$/g, '')
+      .trim();
+
+    return userPart;
+  };
+
+  const normalizeChatIdWithDomain = (value: any): string => {
+    const normalized = sanitizeScopedChatId(value);
+    if (!normalized) return '';
+
+    const atIndex = normalized.indexOf('@');
+    const domain = atIndex >= 0 ? normalized.slice(atIndex).toLowerCase() : '';
+    const identity = getCanonicalChatIdentity(normalized);
+    if (!identity) return '';
+
+    if (domain) {
+      return `${identity}${domain}`;
+    }
+
+    if (/^\d+$/.test(identity)) {
+      return `${identity}@c.us`;
+    }
+
+    return identity;
+  };
+
+  const safeRead = <T>(reader: () => T): T | undefined => {
+    try {
+      return reader();
+    } catch (_error) {
+      return undefined;
+    }
+  };
+
+  const normalizeComparableText = (value: any): string => {
+    if (typeof value !== 'string') return '';
+    return value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
+  const isLikelyPlaceholderPhotoUrl = (value: string): boolean => {
+    const src = String(value || '').trim();
+    if (!src) return true;
+
+    const rawLower = src.toLowerCase();
+    if (rawLower.includes('ui-avatars.com')) return true;
+
+    try {
+      const parsed = new URL(
+        src.startsWith('//')
+          ? `https:${src}`
+          : (src.startsWith('/') ? new URL(src, window.location.origin).href : src),
+        window.location.origin
+      );
+
+      const host = parsed.hostname.toLowerCase();
+      const path = parsed.pathname.toLowerCase();
+
+      const looksAvatarPath =
+        path.includes('avatar')
+        || path.includes('default-user')
+        || path.includes('default-group')
+        || path.includes('profile-placeholder');
+
+      if (host === 'web.whatsapp.com' && (looksAvatarPath || path.endsWith('.svg'))) {
+        return true;
+      }
+
+      if (looksAvatarPath && path.endsWith('.svg')) {
+        return true;
+      }
+    } catch (_error) {
+      if (rawLower.includes('avatar') && rawLower.includes('.svg')) {
+        return true;
+      }
+    }
+
+    return false;
+  };
+
+  const isKnownWppInteropError = (error: any): boolean => {
+    const message = String(error?.message || error || '').toLowerCase();
+    return message.includes("reading 'm'") || message.includes('reading "m"');
+  };
+
+  const isExpectedWppChatGetFormatError = (error: any): boolean => {
+    const message = String(error?.message || error || '').toLowerCase();
+    return (
+      message.includes('invalid chatid format')
+      || message.includes('invalid chat id format')
+      || (message.includes('invalid') && message.includes('chatid'))
+      || (message.includes('invalid') && message.includes('wid'))
+    );
+  };
+
+  const extractPhotoUrl = (source: any): string | undefined => {
+    if (!source) return undefined;
+
+    const getters = [
+      () => source?.__x_profilePicThumbObj?.eurl,
+      () => source?.__x_profilePicThumbObj?.imgFull,
+      () => source?.__x_profilePicThumbObj?.img,
+      () => source?.__x_profilePicThumb?.eurl,
+      () => source?.__x_profilePicThumb?.imgFull,
+      () => source?.__x_profilePicThumb?.img,
+      () => source?.profilePicThumbObj?.eurl,
+      () => source?.profilePicThumbObj?.imgFull,
+      () => source?.profilePicThumbObj?.img,
+      () => source?.profilePicThumbObj?.url,
+      () => source?.profilePicThumbObj?.imgLarge,
+      () => source?.profilePicThumbObj?.imgHd,
+      () => source?.profilePicThumbObj?.preview,
+      () => source?.profilePicThumbObj?.thumbnail,
+      () => source?.profilePicThumb?.eurl,
+      () => source?.profilePicThumb?.imgFull,
+      () => source?.profilePicThumb?.img,
+      () => source?.profilePicThumb?.url,
+      () => source?.profilePicThumb?.imgHd,
+      () => source?.profilePicThumb?.preview,
+      () => source?.profilePicThumb?.thumbnail,
+      () => source?.profilePic?.eurl,
+      () => source?.profilePic?.imgFull,
+      () => source?.profilePic?.img,
+      () => source?.profilePic?.url,
+      () => source?.avatar,
+      () => source?.thumb,
+      () => source?.imgThumb,
+      () => source?.eurl,
+      () => source?.imgFull,
+      () => source?.img,
+      () => source?.url,
+      () => source?.attributes?.eurl,
+      () => source?.attributes?.imgFull,
+      () => source?.attributes?.img,
+      () => source?.attributes?.url,
+      () => source?.preview?.url,
+      () => source?.preview?.eurl,
+      () => source?.metadata?.url,
+      () => source?.metadata?.eurl,
+    ];
+
+    for (const getter of getters) {
+      const value = safeRead(getter);
+      const normalizedValue = normalizeImageSourceCandidate(value);
+      if (normalizedValue) {
+        return normalizedValue;
+      }
+    }
+
+    const queue: Array<{ value: any; depth: number }> = [{ value: source, depth: 0 }];
+    const visited = new WeakSet<object>();
+    let inspectedNodes = 0;
+    const MAX_NODES = 240;
+    const MAX_DEPTH = 3;
+
+    while (queue.length > 0 && inspectedNodes < MAX_NODES) {
+      const { value, depth } = queue.shift()!;
+      if (value == null) continue;
+
+      if (typeof value === 'string') {
+        const normalizedValue = normalizeImageSourceCandidate(value);
+        if (normalizedValue) {
+          return normalizedValue;
+        }
+        continue;
+      }
+
+      if (typeof value !== 'object') continue;
+      if (visited.has(value)) continue;
+      visited.add(value);
+      inspectedNodes++;
+
+      if (depth >= MAX_DEPTH) continue;
+
+      let keys: string[] = [];
+      try {
+        keys = Object.keys(value);
+      } catch (_error) {
+        keys = [];
+      }
+
+      for (const key of keys) {
+        const child = safeRead(() => (value as any)[key]);
+        if (typeof child === 'string') {
+          const normalizedChild = normalizeImageSourceCandidate(child);
+          if (normalizedChild) {
+            return normalizedChild;
+          }
+          continue;
+        }
+        if (child && typeof child === 'object') {
+          queue.push({ value: child, depth: depth + 1 });
+        }
+      }
+    }
+
+    return undefined;
+  };
+
+  const buildChatIdVariants = (value: string): string[] => {
+    const normalized = sanitizeScopedChatId(value);
+    const canonicalWithDomain = normalizeChatIdWithDomain(value);
+    const identity = getCanonicalChatIdentity(value);
+    const variants = new Set<string>();
+
+    if (normalized) variants.add(normalized);
+    if (canonicalWithDomain) variants.add(canonicalWithDomain);
+    if (identity) {
+      variants.add(identity);
+      if (identity !== 'status') {
+        variants.add(`${identity}@c.us`);
+        variants.add(`${identity}@s.whatsapp.net`);
+        variants.add(`${identity}@lid`);
+      }
+    }
+
+    return Array.from(variants).filter(Boolean);
+  };
+
+  const extractSerializedChatId = (entity: any): string => {
+    if (!entity) return '';
+    const idValue = safeRead(() => entity.id) ?? entity;
+    if (typeof idValue === 'string') return sanitizeScopedChatId(idValue);
+    const serialized = safeRead(() => idValue?._serialized);
+    if (serialized) return sanitizeScopedChatId(String(serialized));
+    const toStringFn = safeRead(() => idValue?.toString);
+    if (typeof toStringFn === 'function') {
+      const value = safeRead(() => String(idValue.toString()));
+      if (value && value !== '[object Object]') return sanitizeScopedChatId(value);
+    }
+    return '';
+  };
+
+  const areSameChatIdentity = (left: any, right: any): boolean => {
+    const normalizedLeft = normalizeChatIdWithDomain(left);
+    const normalizedRight = normalizeChatIdWithDomain(right);
+    if (normalizedLeft && normalizedRight && normalizedLeft === normalizedRight) {
+      return true;
+    }
+
+    const leftIdentity = getCanonicalChatIdentity(left);
+    const rightIdentity = getCanonicalChatIdentity(right);
+    return !!leftIdentity && !!rightIdentity && leftIdentity === rightIdentity;
+  };
+
+  const resolveLidToPhoneVariant = (chatId: string): string => {
+    const normalized = sanitizeScopedChatId(chatId);
+    if (!normalized || !normalized.includes('@lid')) return '';
+
+    try {
+      const WPP = safeRead(() => (window as any).WPP);
+      const Store = safeRead(() => (window as any).Store);
+      const widFactory = safeRead(() => WPP?.whatsapp?.WidFactory) || safeRead(() => Store?.WidFactory);
+      const lidPnCache = safeRead(() => WPP?.whatsapp?.lidPnCache);
+      if (widFactory?.createWid && lidPnCache?.getPhoneNumber) {
+        const lidWid = widFactory.createWid(normalized);
+        const phoneWid = lidPnCache.getPhoneNumber(lidWid);
+        const serialized = sanitizeScopedChatId(
+          typeof phoneWid === 'string'
+            ? phoneWid
+            : (phoneWid?._serialized || (typeof phoneWid?.toString === 'function' ? String(phoneWid.toString()) : ''))
+        );
+
+        if (serialized && serialized !== '[object Object]') {
+          return serialized;
+        }
+      }
+
+      // Fallback: some WA builds already have a mapped chat/contact entry even when lidPnCache is absent.
+      const mappedChat = Store?.Chat?.get?.(normalized);
+      const mappedId =
+        extractSerializedChatId(mappedChat?.contact?.id)
+        || extractSerializedChatId(mappedChat?.contact)
+        || extractSerializedChatId(mappedChat);
+
+      if (mappedId && mappedId !== normalized) {
+        return mappedId;
+      }
+
+      return '';
+    } catch (_error) {
+      return '';
+    }
+  };
+
+  const buildChatIdLookupVariants = (value: string): string[] => {
+    const variants = new Set(buildChatIdVariants(value));
+    const queue = Array.from(variants);
+
+    while (queue.length > 0) {
+      const variant = queue.shift();
+      if (!variant) continue;
+
+      const resolvedPhoneWid = resolveLidToPhoneVariant(variant);
+      if (!resolvedPhoneWid) continue;
+
+      for (const phoneVariant of buildChatIdVariants(resolvedPhoneWid)) {
+        if (variants.has(phoneVariant)) continue;
+        variants.add(phoneVariant);
+        queue.push(phoneVariant);
+      }
+    }
+
+    return Array.from(variants).filter(Boolean);
+  };
+
+  const collectChatLookupIds = (...sources: any[]): string[] => {
+    const ids = new Set<string>();
+
+    const add = (value: any) => {
+      if (!value) return;
+
+      if (typeof value === 'string') {
+        const normalized = sanitizeScopedChatId(value);
+        if (!normalized) return;
+        for (const variant of buildChatIdLookupVariants(normalized)) {
+          ids.add(variant);
+        }
+        return;
+      }
+
+      const serialized = extractSerializedChatId(value);
+      if (serialized) {
+        for (const variant of buildChatIdLookupVariants(serialized)) {
+          ids.add(variant);
+        }
+      }
+    };
+
+    for (const source of sources) {
+      if (!source) continue;
+      add(source);
+      add(safeRead(() => source?.id));
+      add(safeRead(() => source?.wid));
+      add(safeRead(() => source?.chatId));
+      add(safeRead(() => source?.from));
+      add(safeRead(() => source?.to));
+      add(safeRead(() => source?.senderObj));
+      add(safeRead(() => source?.authorObj));
+      add(safeRead(() => source?.chat));
+      add(safeRead(() => source?.chat?.id));
+      add(safeRead(() => source?.contact));
+      add(safeRead(() => source?.contact?.id));
+      add(safeRead(() => source?.contact?.wid));
+      add(safeRead(() => source?.__x_contact));
+      add(safeRead(() => source?.__x_contact?.id));
+      add(safeRead(() => source?.__x_contact?.wid));
+    }
+
+    return Array.from(ids).filter(Boolean);
+  };
+
+  const fetchWppProfilePhotoByIds = async (candidateIds: string[]): Promise<string | undefined> => {
+    const WPP = safeRead(() => (window as any).WPP);
+    // WPP.contact.getProfilePictureUrl is permanently broken (Cannot read properties of undefined reading 'm')
+    // Skip it entirely to avoid spamming errors. Only use model extraction fallbacks.
+    if (!WPP?.contact?.get && !WPP?.chat?.get) return undefined;
+
+    const seen = new Set<string>();
+
+    for (const raw of candidateIds) {
+      const normalized = sanitizeScopedChatId(raw);
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+
+      if (WPP?.contact?.get) {
+        try {
+          const contactModel = await WPP.contact.get(normalized);
+          const contactPhoto = extractPhotoUrl(contactModel);
+          if (contactPhoto) return contactPhoto;
+        } catch (_error) {
+          // continue trying
+        }
+      }
+
+      if (WPP?.chat?.get) {
+        try {
+          const chatModel = await WPP.chat.get(normalized);
+          const chatPhoto = extractPhotoUrl(chatModel) || extractPhotoUrl(chatModel?.contact);
+          if (chatPhoto) return chatPhoto;
+        } catch (_error) {
+          // continue trying
+        }
+      }
+    }
+
+    return undefined;
+  };
+
+  const extractMessageChatId = (msg: any): string => {
+    const candidates = [
+      safeRead(() => msg?.id?.remote?._serialized),
+      safeRead(() => msg?.id?.remote?.toString?.()),
+      safeRead(() => msg?.from?._serialized),
+      safeRead(() => msg?.from?.toString?.()),
+      safeRead(() => msg?.chatId),
+      safeRead(() => msg?.id?.participant?._serialized),
+      safeRead(() => msg?.id?.participant?.toString?.()),
+    ];
+
+    for (const candidate of candidates) {
+      const normalized = normalizeChatIdWithDomain(candidate) || sanitizeScopedChatId(candidate);
+      if (normalized) return normalized;
+    }
+
+    return '';
+  };
+
+  const normalizeImageSourceCandidate = (value: any): string | undefined => {
+    if (typeof value !== 'string') return undefined;
+    const src = value.trim();
+    if (!src || src === 'data:' || src === 'about:blank') return undefined;
+
+    if (src.startsWith('http') || src.startsWith('blob:')) {
+      if (src.startsWith('http') && isLikelyPlaceholderPhotoUrl(src)) return undefined;
+      return src;
+    }
+    if (src.startsWith('data:image/')) {
+      if (src.startsWith('data:image/svg')) return undefined;
+      return src;
+    }
+    if (src.startsWith('//')) {
+      const normalized = `https:${src}`;
+      if (isLikelyPlaceholderPhotoUrl(normalized)) return undefined;
+      return normalized;
+    }
+    if (src.startsWith('/')) {
+      try {
+        const normalized = new URL(src, window.location.origin).href;
+        if (isLikelyPlaceholderPhotoUrl(normalized)) return undefined;
+        return normalized;
+      } catch (_error) {
+        return undefined;
+      }
+    }
+
+    // Some WA builds expose base64 payload without data URI prefix.
+    const looksLikeBase64 = /^[A-Za-z0-9+/]+=*$/.test(src) && src.length > 256;
+    if (looksLikeBase64) {
+      return `data:image/jpeg;base64,${src}`;
+    }
+
+    return undefined;
+  };
+
+  type ChatPhotoStability = 'stable' | 'volatile';
+  type ChatPhotoCandidate = { url: string; source: string };
+  type ResolvedChatPhotoMeta = {
+    chatPhoto?: string;
+    chatPhotoSource?: string;
+    chatPhotoValidated: boolean;
+    chatPhotoStability?: ChatPhotoStability;
+    chatPhotoCheckedAt: number;
+  };
+
+  const PHOTO_PROBE_TIMEOUT_MS = 1500;
+  const PHOTO_PROBE_SUCCESS_TTL_MS = 30 * 60 * 1000;
+  const PHOTO_PROBE_FAILURE_TTL_MS = 5 * 60 * 1000;
+  const PHOTO_PROBE_MAX_CONCURRENCY = 3;
+  const PHOTO_LOG_DEDUPE_TTL_MS = 8000;
+
+  const photoProbeCache = new Map<string, { ok: boolean; checkedAt: number; expiresAt: number }>();
+  const inFlightPhotoProbes = new Map<string, Promise<{ ok: boolean; checkedAt: number }>>();
+  const photoProbeWaitQueue: Array<() => void> = [];
+  const photoLogDedupeCache = new Map<string, number>();
+  let activePhotoProbeCount = 0;
+
+  const normalizePhotoSourceLabel = (value: any): string => {
+    if (typeof value !== 'string') return 'unknown';
+    const normalized = value.trim();
+    return normalized || 'unknown';
+  };
+
+  const classifyChatPhotoStability = (value: string): ChatPhotoStability => {
+    const src = String(value || '').trim();
+    if (!src) return 'volatile';
+
+    if (src.startsWith('blob:') || /^data:image\//i.test(src)) {
+      return 'stable';
+    }
+
+    let parsed: URL | null = null;
+    try {
+      parsed = new URL(src.startsWith('//') ? `https:${src}` : src, window.location.origin);
+    } catch (_error) {
+      return 'volatile';
+    }
+
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    const full = `${path}${parsed.search.toLowerCase()}`;
+
+    if (host.includes('pps.whatsapp.net')) {
+      return 'stable';
+    }
+
+    if (host.includes('media-for') && host.includes('cdn.whatsapp.net')) {
+      return 'volatile';
+    }
+
+    if (host.includes('cdn.whatsapp.net')) {
+      return 'volatile';
+    }
+
+    if (host.includes('mmg.whatsapp.net')) {
+      return 'volatile';
+    }
+
+    if (full.includes('/o1/v/t24') || full.includes('__wa-mms') || full.includes('/dl2') || full.includes('/dl3')) {
+      return 'volatile';
+    }
+
+    return 'volatile';
+  };
+
+  const logPhotoDecisionDedup = (entry: {
+    phase: string;
+    chatId: string;
+    url: string;
+    source: string;
+    stability: ChatPhotoStability;
+    validated: boolean;
+    accepted: boolean;
+    reason: string;
+  }): void => {
+    const key = `${entry.chatId}::${entry.phase}::${entry.url}::${entry.reason}`;
+    const now = Date.now();
+    const lastLogAt = photoLogDedupeCache.get(key) || 0;
+    if (now - lastLogAt < PHOTO_LOG_DEDUPE_TTL_MS) {
+      return;
+    }
+    photoLogDedupeCache.set(key, now);
+    console.log('[PrinChat Page] 📸 Photo decision', {
+      chatId: entry.chatId,
+      phase: entry.phase,
+      source: entry.source,
+      stability: entry.stability,
+      validated: entry.validated,
+      accepted: entry.accepted,
+      reason: entry.reason,
+    });
+  };
+
+  const acquirePhotoProbeSlot = async (): Promise<void> => {
+    if (activePhotoProbeCount < PHOTO_PROBE_MAX_CONCURRENCY) {
+      activePhotoProbeCount += 1;
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      photoProbeWaitQueue.push(() => {
+        activePhotoProbeCount += 1;
+        resolve();
+      });
+    });
+  };
+
+  const releasePhotoProbeSlot = (): void => {
+    activePhotoProbeCount = Math.max(0, activePhotoProbeCount - 1);
+    const next = photoProbeWaitQueue.shift();
+    if (next) next();
+  };
+
+  const probeChatPhotoUrl = async (url: string): Promise<{ ok: boolean; checkedAt: number }> => {
+    const normalized = normalizeImageSourceCandidate(url);
+    const checkedAtNow = Date.now();
+    if (!normalized) {
+      return { ok: false, checkedAt: checkedAtNow };
+    }
+
+    if (normalized.startsWith('blob:') || /^data:image\//i.test(normalized)) {
+      return { ok: true, checkedAt: checkedAtNow };
+    }
+
+    const cached = photoProbeCache.get(normalized);
+    if (cached && cached.expiresAt > checkedAtNow) {
+      return { ok: cached.ok, checkedAt: cached.checkedAt };
+    }
+
+    const inFlight = inFlightPhotoProbes.get(normalized);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const task = (async (): Promise<{ ok: boolean; checkedAt: number }> => {
+      await acquirePhotoProbeSlot();
+      try {
+        const ok = await new Promise<boolean>((resolve) => {
+          let settled = false;
+          const img = new Image();
+          let timeoutHandle: number | null = null;
+
+          const finalize = (result: boolean) => {
+            if (settled) return;
+            settled = true;
+            if (timeoutHandle !== null) {
+              window.clearTimeout(timeoutHandle);
+            }
+            img.onload = null;
+            img.onerror = null;
+            resolve(result);
+          };
+
+          img.onload = () => finalize(true);
+          img.onerror = () => finalize(false);
+          timeoutHandle = window.setTimeout(() => finalize(false), PHOTO_PROBE_TIMEOUT_MS);
+
+          try {
+            img.src = normalized;
+          } catch (_error) {
+            finalize(false);
+          }
+        });
+
+        const checkedAt = Date.now();
+        photoProbeCache.set(normalized, {
+          ok,
+          checkedAt,
+          expiresAt: checkedAt + (ok ? PHOTO_PROBE_SUCCESS_TTL_MS : PHOTO_PROBE_FAILURE_TTL_MS),
+        });
+        return { ok, checkedAt };
+      } finally {
+        inFlightPhotoProbes.delete(normalized);
+        releasePhotoProbeSlot();
+      }
+    })();
+
+    inFlightPhotoProbes.set(normalized, task);
+    return task;
+  };
+
+  const pushChatPhotoCandidate = (
+    list: ChatPhotoCandidate[],
+    seenUrls: Set<string>,
+    url: any,
+    source: string
+  ): void => {
+    const normalizedUrl = normalizeImageSourceCandidate(url);
+    if (!normalizedUrl) return;
+
+    if (seenUrls.has(normalizedUrl)) return;
+    seenUrls.add(normalizedUrl);
+    list.push({
+      url: normalizedUrl,
+      source: normalizePhotoSourceLabel(source),
+    });
+  };
+
+  const resolveBestChatPhotoCandidate = async (
+    candidates: ChatPhotoCandidate[],
+    options: { chatId: string; phase: string }
+  ): Promise<ResolvedChatPhotoMeta> => {
+    const chatId = normalizeChatIdWithDomain(options.chatId) || sanitizeScopedChatId(options.chatId) || options.chatId;
+    const prepared = candidates
+      .map((candidate) => ({
+        url: normalizeImageSourceCandidate(candidate.url) || '',
+        source: normalizePhotoSourceLabel(candidate.source),
+      }))
+      .filter((candidate) => !!candidate.url);
+
+    const checkedAtNow = Date.now();
+    if (prepared.length === 0) {
+      return {
+        chatPhotoValidated: false,
+        chatPhotoCheckedAt: checkedAtNow,
+      };
+    }
+
+    // First pass: stable URLs are preferred and accepted without probe.
+    for (const candidate of prepared) {
+      const stability = classifyChatPhotoStability(candidate.url);
+      if (stability !== 'stable') continue;
+
+      const cached = photoProbeCache.get(candidate.url);
+      const hasFreshNegativeCache = !!(cached && cached.expiresAt > checkedAtNow && !cached.ok);
+      if (hasFreshNegativeCache) {
+        logPhotoDecisionDedup({
+          phase: options.phase,
+          chatId,
+          url: candidate.url,
+          source: candidate.source,
+          stability,
+          validated: false,
+          accepted: false,
+          reason: 'stable_cached_fail',
+        });
+        continue;
+      }
+
+      const validated = !!(cached && cached.expiresAt > checkedAtNow && cached.ok);
+      const checkedAt = cached?.checkedAt || checkedAtNow;
+      logPhotoDecisionDedup({
+        phase: options.phase,
+        chatId,
+        url: candidate.url,
+        source: candidate.source,
+        stability,
+        validated,
+        accepted: true,
+        reason: 'stable_preferred',
+      });
+      return {
+        chatPhoto: candidate.url,
+        chatPhotoSource: candidate.source,
+        chatPhotoValidated: validated,
+        chatPhotoStability: stability,
+        chatPhotoCheckedAt: checkedAt,
+      };
+    }
+
+    // Second pass: volatile URLs are accepted only after successful probe.
+    for (const candidate of prepared) {
+      const stability = classifyChatPhotoStability(candidate.url);
+      if (stability !== 'volatile') continue;
+
+      const probe = await probeChatPhotoUrl(candidate.url);
+      const accepted = probe.ok;
+      logPhotoDecisionDedup({
+        phase: options.phase,
+        chatId,
+        url: candidate.url,
+        source: candidate.source,
+        stability,
+        validated: probe.ok,
+        accepted,
+        reason: accepted ? 'volatile_probe_success' : 'volatile_probe_fail',
+      });
+      if (!accepted) continue;
+
+      return {
+        chatPhoto: candidate.url,
+        chatPhotoSource: candidate.source,
+        chatPhotoValidated: true,
+        chatPhotoStability: stability,
+        chatPhotoCheckedAt: probe.checkedAt,
+      };
+    }
+
+    return {
+      chatPhotoValidated: false,
+      chatPhotoCheckedAt: Date.now(),
+    };
+  };
+
+  const resolveChatPhotoWithMetadata = async (options: {
+    phase: string;
+    chatId: string;
+    canonicalChatId?: string;
+    chatName?: string;
+    contact?: any;
+    chat?: any;
+    preferredPhoto?: string;
+    preferredPhotoSource?: string;
+    phoneNumber?: string;
+    phoneFallbackProvider?: (phone: string) => Promise<string | undefined>;
+  }): Promise<ResolvedChatPhotoMeta> => {
+    const baseChatId = options.canonicalChatId || options.chatId;
+    const normalizedBaseChatId = normalizeChatIdWithDomain(baseChatId) || sanitizeScopedChatId(baseChatId);
+    const normalizedChatId = normalizedBaseChatId || sanitizeScopedChatId(options.chatId);
+    const candidateChatId = normalizedChatId || sanitizeScopedChatId(options.chatId);
+    if (!candidateChatId) {
+      return {
+        chatPhotoValidated: false,
+        chatPhotoCheckedAt: Date.now(),
+      };
+    }
+
+    const candidates: ChatPhotoCandidate[] = [];
+    const seenUrls = new Set<string>();
+
+    pushChatPhotoCandidate(candidates, seenUrls, options.preferredPhoto, options.preferredPhotoSource || 'chatInfo.local');
+    pushChatPhotoCandidate(candidates, seenUrls, extractPhotoUrl(options.contact), 'chatInfo.local');
+    pushChatPhotoCandidate(candidates, seenUrls, extractPhotoUrl(options.chat), 'chatInfo.local');
+    pushChatPhotoCandidate(candidates, seenUrls, extractPhotoUrl(options.chat?.contact), 'chatInfo.local');
+
+    const sidebarPhoto =
+      findSidebarPhotoByChat(candidateChatId, options.chatName)
+      || findSidebarPhotoByChat(options.chatId, options.chatName);
+    pushChatPhotoCandidate(candidates, seenUrls, sidebarPhoto, 'chatInfo.sidebar');
+
+    let resolved = await resolveBestChatPhotoCandidate(candidates, {
+      chatId: candidateChatId,
+      phase: options.phase,
+    });
+    if (resolved.chatPhoto) {
+      return resolved;
+    }
+
+    const lookupIds = collectChatLookupIds(
+      candidateChatId,
+      options.chat,
+      options.contact,
+      ...buildChatIdLookupVariants(candidateChatId)
+    );
+    if (lookupIds.length > 0) {
+      const wppPhoto = await fetchWppProfilePhotoByIds(lookupIds);
+      pushChatPhotoCandidate(candidates, seenUrls, wppPhoto, 'chatInfo.wpp');
+    }
+
+    if (options.phoneFallbackProvider && options.phoneNumber) {
+      const phonePhoto = await options.phoneFallbackProvider(options.phoneNumber);
+      pushChatPhotoCandidate(candidates, seenUrls, phonePhoto, 'chatInfo.phone_fallback');
+    }
+
+    resolved = await resolveBestChatPhotoCandidate(candidates, {
+      chatId: candidateChatId,
+      phase: options.phase,
+    });
+    return resolved;
+  };
+
+  const findImageInElement = (element: Element | null): string | undefined => {
+    if (!element) return undefined;
+
+    const extractImgSource = (img: HTMLImageElement): string | undefined => {
+      const srcset = img.getAttribute('srcset') || '';
+      const srcsetFirst = srcset
+        .split(',')
+        .map((entry) => entry.trim().split(/\s+/)[0])
+        .find(Boolean);
+      const candidates = [
+        img.currentSrc,
+        img.src,
+        img.getAttribute('src') || '',
+        srcsetFirst || '',
+      ];
+
+      for (const candidate of candidates) {
+        if (!candidate) continue;
+        const normalizedCandidate = normalizeImageSourceCandidate(candidate);
+        if (normalizedCandidate) {
+          return normalizedCandidate;
+        }
+      }
+
+      return undefined;
+    };
+
+    const images = Array.from(element.querySelectorAll('img')) as HTMLImageElement[];
+    for (const img of images) {
+      const source = extractImgSource(img);
+      if (source) {
+        return source;
+      }
+    }
+
+    const svgImages = Array.from(element.querySelectorAll('image')) as any[];
+    for (const svgImage of svgImages) {
+      const href =
+        String(svgImage?.getAttribute?.('href') || '')
+        || String(svgImage?.getAttributeNS?.('http://www.w3.org/1999/xlink', 'href') || '')
+        || String(svgImage?.href?.baseVal || '');
+      if (!href) continue;
+      const normalizedHref = normalizeImageSourceCandidate(href);
+      if (normalizedHref) {
+        return normalizedHref;
+      }
+    }
+
+    const extractCssImageUrl = (cssValue: string): string | undefined => {
+      if (!cssValue || cssValue === 'none' || !cssValue.includes('url(')) return undefined;
+      const matches = Array.from(cssValue.matchAll(/url\(["']?(.*?)["']?\)/gi));
+      for (const match of matches) {
+        const raw = match?.[1];
+        if (!raw) continue;
+        const normalizedRaw = normalizeImageSourceCandidate(raw);
+        if (normalizedRaw) {
+          return normalizedRaw;
+        }
+      }
+      return undefined;
+    };
+
+    const nodes = Array.from(element.querySelectorAll('*')) as HTMLElement[];
+    for (const node of nodes) {
+      const computedStyle = window.getComputedStyle(node);
+      const cssCandidates = [
+        computedStyle.backgroundImage,
+        computedStyle.maskImage,
+        window.getComputedStyle(node, '::before').backgroundImage,
+        window.getComputedStyle(node, '::before').maskImage,
+        window.getComputedStyle(node, '::after').backgroundImage,
+        window.getComputedStyle(node, '::after').maskImage,
+      ];
+
+      for (const cssCandidate of cssCandidates) {
+        const cssUrl = extractCssImageUrl(cssCandidate || '');
+        if (cssUrl) {
+          return cssUrl;
+        }
+      }
+    }
+
+    return undefined;
+  };
+
+  const findSidebarPhotoByChat = (chatId: string, chatName?: string): string | undefined => {
+    const normalizedChatId = sanitizeScopedChatId(chatId);
+    if (!normalizedChatId) return undefined;
+
+    // Extract phone digits from chatId (e.g., "553397048517@c.us" → "553397048517")
+    const chatIdDigits = normalizedChatId.replace(/@.*$/, '').replace(/\D/g, '');
+    const hasChatDigits = chatIdDigits.length >= 8;
+    const chatIdentityToken = getCanonicalChatIdentity(normalizedChatId).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const canUseIdentityToken = chatIdentityToken.length >= 5;
+    void chatName;
+
+    const variants = buildChatIdLookupVariants(normalizedChatId).map((v) => v.toLowerCase());
+    const roots = Array.from(document.querySelectorAll('#pane-side, #side'));
+    const searchRoots = roots.length > 0 ? roots : [document.body];
+
+    for (const root of searchRoots) {
+      if (!root) continue;
+
+      // Strategy 1: Find rows by role="row" and match via span[title] phone digits
+      const rows = Array.from(root.querySelectorAll('[role="row"]')) as HTMLElement[];
+      for (const row of rows) {
+        const titleSpans = Array.from(row.querySelectorAll('span[title]')) as HTMLElement[];
+        for (const span of titleSpans) {
+          const title = span.getAttribute('title') || span.textContent || '';
+          if (!title) continue;
+
+          // Match by phone digits: strip all non-digits from title and compare
+          const titleDigits = title.replace(/\D/g, '');
+          const isPhoneMatch = hasChatDigits && titleDigits.length >= 8 && (
+            chatIdDigits.endsWith(titleDigits) || titleDigits.endsWith(chatIdDigits) ||
+            chatIdDigits.includes(titleDigits) || titleDigits.includes(chatIdDigits)
+          );
+
+          const normalizedTitle = normalizeComparableText(title);
+          const titleToken = normalizedTitle.replace(/[^a-z0-9]/g, '');
+          const isIdentityMatch = canUseIdentityToken && titleToken.length >= 5 && (
+            titleToken.includes(chatIdentityToken) || chatIdentityToken.includes(titleToken)
+          );
+          if (isPhoneMatch || isIdentityMatch) {
+            const photo = findImageInElement(row);
+            if (photo) return photo;
+          }
+        }
+      }
+
+      // Strategy 2: Legacy [data-id] matching (for older WA builds)
+      const dataIdRows = Array.from(root.querySelectorAll('[data-id]')) as HTMLElement[];
+      for (const row of dataIdRows) {
+        const dataId = String(row.getAttribute('data-id') || '').toLowerCase();
+        if (!dataId) continue;
+        if (!variants.some((variant) => dataId.includes(variant))) continue;
+
+        const container = row.closest('[role="row"]') || row.closest('[role="listitem"]') || row;
+        const photo = findImageInElement(container);
+        if (photo) return photo;
+      }
+
+      // Strategy 3 (safe fallback): unique exact title match by chat name.
+      // This avoids broad text/name heuristics that can leak a photo from another row.
+      if (chatName) {
+        const normalizedName = normalizeComparableText(chatName);
+        if (normalizedName.length >= 3) {
+          const candidateRows: HTMLElement[] = [];
+          const seenRows = new Set<HTMLElement>();
+
+          for (const row of rows) {
+            const titleNodes = Array.from(row.querySelectorAll('span[title], div[title]')) as HTMLElement[];
+            for (const node of titleNodes) {
+              const normalizedTitle = normalizeComparableText(node.getAttribute('title') || node.textContent || '');
+              if (!normalizedTitle) continue;
+              if (normalizedTitle !== normalizedName) continue;
+              if (!seenRows.has(row)) {
+                seenRows.add(row);
+                candidateRows.push(row);
+              }
+              break;
+            }
+          }
+
+          if (candidateRows.length === 1) {
+            const photo = findImageInElement(candidateRows[0]);
+            if (photo) return photo;
+          }
+        }
+      }
+
+    }
+
+    return undefined;
+  };
+
+  const findSidebarPhotoByMessageHint = (options: {
+    chatId: string;
+    chatName?: string;
+    messageText?: string;
+  }): string | undefined => {
+    const normalizedChatId = sanitizeScopedChatId(options?.chatId);
+    if (!normalizedChatId) return undefined;
+
+    const chatIdDigits = normalizedChatId.replace(/@.*$/, '').replace(/\D/g, '');
+    const hasChatDigits = chatIdDigits.length >= 8;
+    const variants = buildChatIdLookupVariants(normalizedChatId).map((v) => v.toLowerCase());
+    const identityToken = getCanonicalChatIdentity(normalizedChatId).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const canUseIdentityToken = identityToken.length >= 5;
+    const normalizedChatName = normalizeComparableText(options?.chatName);
+    const canUseNameMatch = normalizedChatName.length >= 3;
+    const normalizedMessageText = normalizeComparableText(options?.messageText || '');
+    const messageHint = normalizedMessageText.length >= 2
+      ? normalizedMessageText.slice(0, Math.min(normalizedMessageText.length, 80))
+      : '';
+
+    const roots = Array.from(document.querySelectorAll('#pane-side, #side'));
+    const searchRoots = roots.length > 0 ? roots : [document.body];
+
+    let bestPhoto: string | undefined;
+    let bestScore = 0;
+
+    for (const root of searchRoots) {
+      if (!root) continue;
+
+      const rows = Array.from(root.querySelectorAll('[role="row"]')) as HTMLElement[];
+      for (let index = 0; index < rows.length; index++) {
+        const row = rows[index];
+        const rowText = normalizeComparableText(row.textContent || '');
+        if (!rowText) continue;
+
+        let score = 0;
+
+        if (messageHint && rowText.includes(messageHint)) {
+          score += messageHint.length >= 4 ? 6 : 2;
+        }
+
+        const rowDataIds = new Set<string>();
+        const rowDataId = row.getAttribute('data-id');
+        if (rowDataId) rowDataIds.add(rowDataId.toLowerCase());
+        const nestedDataIds = Array.from(row.querySelectorAll('[data-id]')) as HTMLElement[];
+        for (const node of nestedDataIds) {
+          const value = (node.getAttribute('data-id') || '').toLowerCase();
+          if (value) rowDataIds.add(value);
+        }
+        for (const dataId of rowDataIds) {
+          if (variants.some((variant) => dataId.includes(variant))) {
+            score += 8;
+            break;
+          }
+        }
+
+        const rowToken = rowText.replace(/[^a-z0-9]/g, '');
+        if (canUseIdentityToken && rowToken && (
+          rowToken.includes(identityToken) || identityToken.includes(rowToken)
+        )) {
+          score += 5;
+        }
+
+        const titleSpans = Array.from(row.querySelectorAll('span[title], div[title]')) as HTMLElement[];
+        for (const span of titleSpans) {
+          const title = span.getAttribute('title') || span.textContent || '';
+          const normalizedTitle = normalizeComparableText(title);
+          if (!normalizedTitle) continue;
+
+          const titleDigits = title.replace(/\D/g, '');
+          if (hasChatDigits && titleDigits.length >= 8 && (
+            chatIdDigits.includes(titleDigits) || titleDigits.includes(chatIdDigits)
+          )) {
+            score += 5;
+          }
+
+          if (canUseNameMatch && (
+            normalizedTitle === normalizedChatName
+            || normalizedTitle.includes(normalizedChatName)
+            || normalizedChatName.includes(normalizedTitle)
+          )) {
+            score += 4;
+          }
+
+          const titleToken = normalizedTitle.replace(/[^a-z0-9]/g, '');
+          if (canUseIdentityToken && titleToken && (
+            titleToken.includes(identityToken) || identityToken.includes(titleToken)
+          )) {
+            score += 3;
+          }
+        }
+
+        if (index < 5) {
+          score += 1;
+        }
+
+        if (score < 3) continue;
+        const photo = findImageInElement(row);
+        if (!photo) continue;
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestPhoto = photo;
+          if (score >= 10) {
+            return photo;
+          }
+        }
+      }
+    }
+
+    return bestPhoto;
+  };
+
+  const findStoreChatByVariants = async (variants: string[]): Promise<any | null> => {
+    const Store = (window as any).Store;
+    if (!Store?.Chat) return null;
+
+    if (Store.Chat.find) {
+      for (const variant of variants) {
+        try {
+          const chat = await Store.Chat.find(variant);
+          if (chat) return chat;
+        } catch (_error) {
+          // continue trying
+        }
+      }
+    }
+
+    if (Store.Chat.get) {
+      for (const variant of variants) {
+        try {
+          const chat = Store.Chat.get(variant);
+          if (chat) return chat;
+        } catch (_error) {
+          // continue trying
+        }
+      }
+    }
+
+    const targetIdentities = new Set(
+      variants
+        .map((variant) => getCanonicalChatIdentity(variant))
+        .filter(Boolean)
+    );
+    if (targetIdentities.size === 0) return null;
+
+    const chatModels = Array.isArray(Store.Chat.models)
+      ? Store.Chat.models
+      : (Array.isArray(Store.Chat._models) ? Store.Chat._models : []);
+
+    for (const candidate of chatModels) {
+      const candidateId = extractSerializedChatId(candidate);
+      if (!candidateId) continue;
+      const identity = getCanonicalChatIdentity(candidateId);
+      if (identity && targetIdentities.has(identity)) {
+        return candidate;
+      }
+    }
+
+    return null;
   };
 
   // Wait for Store to be ready
@@ -1118,6 +2301,95 @@
     // Initialize detector after page loads
     setTimeout(detectOutgoingMessages, 2000);
 
+    const serializeWid = (wid: any): string => {
+      if (!wid) return '';
+      if (typeof wid === 'string') return wid;
+      if (wid._serialized) return String(wid._serialized);
+      if (wid.user && wid.server) return `${wid.user}@${wid.server}`;
+      if (wid.id?._serialized) return String(wid.id._serialized);
+      if (wid.id?.user && wid.id?.server) return `${wid.id.user}@${wid.id.server}`;
+      if (typeof wid.toString === 'function') {
+        const value = String(wid.toString());
+        if (value && value !== '[object Object]') return value;
+      }
+      return '';
+    };
+
+    const resolveCurrentInstance = async (): Promise<{ instanceId: string; rawWid: string; phoneNumber: string } | null> => {
+      let me: any = Store?.Me;
+
+      if (!me && Store?.UserPrefs?.getMaybeMePnUser) {
+        try {
+          me = Store.UserPrefs.getMaybeMePnUser();
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      const rawWid = serializeWid(me?.id) || serializeWid(me?.wid) || serializeWid(me);
+      const widUser = rawWid ? rawWid.split('@')[0] : '';
+
+      const phoneCandidate = me?.phoneNumber || me?.pn || me?.user || me?.wid?.user || widUser;
+      const phoneNumber = String(phoneCandidate || '').replace(/\D/g, '');
+      const widDigits = String(widUser || '').replace(/\D/g, '');
+
+      // Keep scope deterministic across runtime states.
+      // Prefer Wid digits when available because they are stable even if me.phoneNumber isn't hydrated yet.
+      if (widDigits) {
+        return {
+          instanceId: `wa:${widDigits}`,
+          rawWid,
+          phoneNumber: widDigits
+        };
+      }
+
+      if (phoneNumber) {
+        return {
+          instanceId: `wa:${phoneNumber}`,
+          rawWid,
+          phoneNumber
+        };
+      }
+
+      if (rawWid) {
+        return {
+          instanceId: `waid:${rawWid}`,
+          rawWid,
+          phoneNumber: ''
+        };
+      }
+
+      return null;
+    };
+
+    // Listen for current WhatsApp instance requests
+    document.addEventListener('PrinChatGetCurrentInstance', async (event: any) => {
+      const requestId = event.detail?.requestId;
+      try {
+        const currentInstance = await resolveCurrentInstance();
+
+        if (!currentInstance) {
+          throw new Error('Could not resolve current WhatsApp instance');
+        }
+
+        document.dispatchEvent(new CustomEvent('PrinChatCurrentInstanceResult', {
+          detail: {
+            success: true,
+            requestId,
+            ...currentInstance
+          }
+        }));
+      } catch (error: any) {
+        document.dispatchEvent(new CustomEvent('PrinChatCurrentInstanceResult', {
+          detail: {
+            success: false,
+            requestId,
+            error: error?.message || 'Failed to resolve instance'
+          }
+        }));
+      }
+    });
+
     // Listen for active chat info requests
     document.addEventListener('PrinChatGetActiveChat', async (event: any) => {
       try {
@@ -1154,7 +2426,11 @@
             }
           }
         } catch (wppError) {
-          console.warn('[PrinChat Page] ⚠️ WPP strategy failed, falling back to Store:', wppError);
+          if (isKnownWppInteropError(wppError)) {
+            console.debug('[PrinChat Page] WPP strategy unavailable on this WA build, using Store fallback.');
+          } else {
+            console.warn('[PrinChat Page] ⚠️ WPP strategy failed, falling back to Store:', wppError);
+          }
         }
 
         // Fallback Strategy: Store (Legacy)
@@ -1256,7 +2532,7 @@
         } else {
           // Chat doesn't exist - use WhatsApp Web URL (best practice)
           console.log('[PrinChat Page] Chat not found, using WhatsApp Web send URL');
-          const phoneNumber = chatId.replace('@c.us', '');
+          const phoneNumber = getCanonicalChatIdentity(chatId);
           window.location.href = `https://web.whatsapp.com/send?phone=${phoneNumber}`;
         }
       } catch (error: any) {
@@ -1270,7 +2546,9 @@
     // Listen for get chat info by ID requests (for triggers)
     document.addEventListener('PrinChatGetChatInfo', async (event: any) => {
       try {
-        const { chatId, requestId } = event.detail;
+        const requestId = event.detail?.requestId;
+        const rawRequestedChatId = event.detail?.chatId;
+        let chatId = sanitizeScopedChatId(rawRequestedChatId);
 
         if (!chatId) {
           document.dispatchEvent(new CustomEvent('PrinChatChatInfoResult', {
@@ -1286,22 +2564,109 @@
         const hasLabels = Store?.Label?.models?.length > 0 || Store?.Label?._models?.length > 0;
         const isStandardWhatsApp = !hasLabels;
         let chat, contact;
+        let resolvedChatId = chatId;
 
         console.log('[PrinChat Page] Detection: isStandard=', isStandardWhatsApp, 'Store.Label exists=', !!Store?.Label, 'hasLabels=', hasLabels);
 
         // ID variants to try (including @lid format used in Standard WhatsApp!)
-        const idsToTry = [chatId];
-        if (chatId.indexOf('@') === -1) {
-          idsToTry.push(`${chatId}@c.us`);
-          idsToTry.push(`${chatId}@s.whatsapp.net`);
-          idsToTry.push(`${chatId}@lid`);
-        } else {
-          // Add cross-format attempts
-          const baseId = chatId.split('@')[0];
-          if (!idsToTry.includes(`${baseId}@c.us`)) idsToTry.push(`${baseId}@c.us`);
-          if (!idsToTry.includes(`${baseId}@s.whatsapp.net`)) idsToTry.push(`${baseId}@s.whatsapp.net`);
-          if (!idsToTry.includes(`${baseId}@lid`)) idsToTry.push(`${baseId}@lid`);
-        }
+        const idsToTry = buildChatIdLookupVariants(chatId);
+
+        const resolvePhoneNumberForLookup = (contactModel: any, chatModel: any, requestedChatId: string): string => {
+          let phoneValue =
+            safeRead(() => contactModel?.number)
+            || safeRead(() => contactModel?.userid)
+            || safeRead(() => contactModel?.pn)
+            || safeRead(() => contactModel?.phoneNumber)
+            || safeRead(() => chatModel?.contact?.number)
+            || safeRead(() => chatModel?.contact?.userid)
+            || safeRead(() => chatModel?.contact?.pn)
+            || safeRead(() => chatModel?.contact?.phoneNumber);
+
+          const normalizedRequested = sanitizeScopedChatId(requestedChatId);
+          if (!phoneValue && normalizedRequested.includes('@lid')) {
+            try {
+              const WPP = (window as any).WPP;
+              const widFactory = safeRead(() => WPP?.whatsapp?.WidFactory) || safeRead(() => Store?.WidFactory);
+              if (WPP?.whatsapp?.lidPnCache?.getPhoneNumber && widFactory?.createWid) {
+                const wid = widFactory.createWid(normalizedRequested);
+                const phoneWid = WPP.whatsapp.lidPnCache.getPhoneNumber(wid);
+                if (phoneWid) {
+                  phoneValue =
+                    phoneWid._serialized
+                    || (typeof phoneWid?.toString === 'function' ? phoneWid.toString() : '');
+                }
+              }
+            } catch (_lidError) {
+              // ignore fallback conversion failure
+            }
+          }
+
+          if (!phoneValue) {
+            phoneValue =
+              getCanonicalChatIdentity(extractSerializedChatId(chatModel))
+              || getCanonicalChatIdentity(normalizedRequested)
+              || normalizedRequested;
+          }
+
+          return String(phoneValue || '');
+        };
+
+        const tryPhoneBasedPhotoFallback = async (phoneValue: string): Promise<string | undefined> => {
+          const phoneIdentity = getCanonicalChatIdentity(phoneValue);
+          if (!phoneIdentity || phoneIdentity.length < 8) return undefined;
+
+          const phoneChatId = `${phoneIdentity}@c.us`;
+          const phoneVariants = buildChatIdLookupVariants(phoneChatId);
+          const resolveWidCandidate = (idValue: string): any => {
+            const normalized = sanitizeScopedChatId(idValue);
+            if (Store?.WidFactory?.createWid) {
+              try {
+                return Store.WidFactory.createWid(normalized);
+              } catch (_err) {
+                // ignore and fallback to raw string
+              }
+            }
+            return normalized;
+          };
+
+          if ((window as any).Store?.ProfilePicThumb?.find) {
+            const widCandidates: any[] = phoneVariants.map((variant) => resolveWidCandidate(variant));
+            for (const wid of widCandidates) {
+              try {
+                const profilePic = await (window as any).Store.ProfilePicThumb.find(wid);
+                const foundPhoto = extractPhotoUrl(profilePic);
+                if (foundPhoto) {
+                  return foundPhoto;
+                }
+                // Force server fetch if model exists but has no photo
+                if (profilePic && !foundPhoto) {
+                  if (typeof profilePic.genUrl === 'function') {
+                    try {
+                      await profilePic.genUrl();
+                      const genPhoto = extractPhotoUrl(profilePic);
+                      if (genPhoto) return genPhoto;
+                    } catch (_e) { /* continue */ }
+                  }
+                  if (typeof profilePic.getUrl === 'function') {
+                    try {
+                      const url = await profilePic.getUrl();
+                      const normalized = normalizeImageSourceCandidate(url);
+                      if (normalized) return normalized;
+                    } catch (_e) { /* continue */ }
+                  }
+                }
+              } catch (_err) {
+                // continue trying
+              }
+            }
+          }
+
+          const lookupIds = collectChatLookupIds(phoneChatId, phoneIdentity, ...phoneVariants);
+          const wppPhoto = await fetchWppProfilePhotoByIds(lookupIds);
+          if (wppPhoto) return wppPhoto;
+
+          return undefined;
+        };
 
         console.log('[PrinChat Page] IDs to try:', idsToTry);
 
@@ -1313,7 +2678,19 @@
           if (Store?.Chat?.get) {
             for (const id of idsToTry) {
               if (chat) break;
-              try { chat = Store.Chat.get(id); } catch (e) { }
+              try {
+                chat = Store.Chat.get(id);
+                if (chat) {
+                  resolvedChatId = extractSerializedChatId(chat) || id;
+                }
+              } catch (e) { }
+            }
+          }
+
+          if (!chat) {
+            chat = await findStoreChatByVariants(idsToTry);
+            if (chat) {
+              resolvedChatId = extractSerializedChatId(chat) || resolvedChatId;
             }
           }
 
@@ -1332,9 +2709,12 @@
 
           // WPP as primary fallback for Standard (fast and reliable)
           if (!contact && (window as any).WPP?.contact?.get) {
-            try {
-              contact = await (window as any).WPP.contact.get(chatId);
-            } catch (e) { }
+            for (const id of idsToTry) {
+              if (contact) break;
+              try {
+                contact = await (window as any).WPP.contact.get(id);
+              } catch (e) { }
+            }
           }
 
         } else {
@@ -1365,6 +2745,16 @@
             for (const id of idsToTry) {
               if (chat) break;
               chat = await findInStore(Store.Chat, id);
+              if (chat) {
+                resolvedChatId = extractSerializedChatId(chat) || id;
+              }
+            }
+          }
+
+          if (!chat) {
+            chat = await findStoreChatByVariants(idsToTry);
+            if (chat) {
+              resolvedChatId = extractSerializedChatId(chat) || resolvedChatId;
             }
           }
 
@@ -1375,19 +2765,152 @@
 
           // WPP Fallback
           if (!contact && (window as any).WPP?.contact?.get) {
-            try { contact = await (window as any).WPP.contact.get(chatId); } catch (e) { }
+            for (const id of idsToTry) {
+              if (contact) break;
+              try { contact = await (window as any).WPP.contact.get(id); } catch (e) { }
+            }
           }
         }
 
         if (!chat && !contact) {
           console.log('[PrinChat Page] ⚠️ Chat/Contact object not found via any API. Returning minimal info fallback.');
+          const fallbackPhoneNumber = resolvePhoneNumberForLookup(null, null, resolvedChatId || chatId);
+          let fallbackPhoto = '';
+          let fallbackPhotoSource = 'not_found';
+
+          // Attempt 1: Store.ProfilePicThumb.find + genUrl (force server fetch)
+          const StoreRef = (window as any).Store;
+          if (!fallbackPhoto && StoreRef?.ProfilePicThumb?.find) {
+            const chatIdVariants = buildChatIdLookupVariants(chatId);
+            const resolveWid = (idValue: string): any => {
+              const normalized = sanitizeScopedChatId(idValue);
+              if (StoreRef?.WidFactory?.createWid) {
+                try { return StoreRef.WidFactory.createWid(normalized); } catch (_e) { /* ignore */ }
+              }
+              return normalized;
+            };
+            const widCandidates = chatIdVariants.map(v => resolveWid(v));
+            // One-time diagnostic: list available methods
+            const pptMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(StoreRef.ProfilePicThumb) || {}).filter((k: string) => typeof StoreRef.ProfilePicThumb[k] === 'function').slice(0, 20);
+            console.log('[PrinChat Page] 🔬 [fallback] Store.ProfilePicThumb methods:', pptMethods.join(', '));
+
+            for (const wid of widCandidates) {
+              try {
+                const profilePic = await StoreRef.ProfilePicThumb.find(wid);
+                const widStr = typeof wid === 'string' ? wid : (wid?._serialized || wid?.toString?.() || '?');
+                console.log('[PrinChat Page] 🔬 [fallback] ProfilePicThumb.find(' + widStr + '):', profilePic ? 'model found' : '(null)', 'eurl:', profilePic?.eurl ? 'yes' : 'no', 'img:', profilePic?.img ? 'yes' : 'no');
+                let photo = extractPhotoUrl(profilePic);
+                if (!photo && profilePic) {
+                  // Try genUrl() to force server fetch
+                  if (typeof profilePic.genUrl === 'function') {
+                    try {
+                      await profilePic.genUrl();
+                      photo = extractPhotoUrl(profilePic);
+                      if (photo) console.log('[PrinChat Page] ✅ [fallback] Photo from genUrl()');
+                    } catch (_e) {
+                      console.log('[PrinChat Page] 🔬 [fallback] genUrl() error:', (_e as any)?.message || _e);
+                    }
+                  }
+                  // Try getUrl()
+                  if (!photo && typeof profilePic.getUrl === 'function') {
+                    try {
+                      const url = await profilePic.getUrl();
+                      photo = normalizeImageSourceCandidate(url);
+                      if (photo) console.log('[PrinChat Page] ✅ [fallback] Photo from getUrl()');
+                    } catch (_e) {
+                      console.log('[PrinChat Page] 🔬 [fallback] getUrl() error:', (_e as any)?.message || _e);
+                    }
+                  }
+                  // Log all model methods and properties for discovery
+                  if (!photo && profilePic) {
+                    const modelMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(profilePic) || {}).filter((k: string) => typeof profilePic[k] === 'function').slice(0, 15);
+                    const modelProps = Object.keys(profilePic).slice(0, 15);
+                    console.log('[PrinChat Page] 🔬 [fallback] Model methods:', modelMethods.join(', '), 'props:', modelProps.join(', '));
+                  }
+                }
+                if (photo) {
+                  fallbackPhoto = photo;
+                  fallbackPhotoSource = 'chatInfo.profilePicThumb.fallback';
+                  console.log('[PrinChat Page] ✅ [fallback] Got photo from Store.ProfilePicThumb.find');
+                  break;
+                }
+              } catch (_err) {
+                // continue trying
+              }
+            }
+
+            // Also try .get() if .find() didn't work
+            if (!fallbackPhoto && StoreRef.ProfilePicThumb.get) {
+              for (const wid of widCandidates) {
+                try {
+                  const profilePicModel = await StoreRef.ProfilePicThumb.get(wid);
+                  let photo = extractPhotoUrl(profilePicModel);
+                  if (!photo && profilePicModel && typeof profilePicModel.genUrl === 'function') {
+                    try {
+                      await profilePicModel.genUrl();
+                      photo = extractPhotoUrl(profilePicModel);
+                    } catch (_e) { /* continue */ }
+                  }
+                  if (photo) {
+                    fallbackPhoto = photo;
+                    fallbackPhotoSource = 'chatInfo.profilePicThumb.get.fallback';
+                    console.log('[PrinChat Page] ✅ [fallback] Got photo from Store.ProfilePicThumb.get');
+                    break;
+                  }
+                } catch (_err) {
+                  // continue trying
+                }
+              }
+            }
+          }
+
+          // Attempt 2: Sidebar DOM lookup (with chatName extracted from chatId)
+          if (!fallbackPhoto) {
+            const sidebarFallbackPhoto =
+              findSidebarPhotoByChat(chatId)
+              || findSidebarPhotoByChat(normalizeChatIdWithDomain(chatId) || chatId);
+            if (sidebarFallbackPhoto) {
+              fallbackPhoto = sidebarFallbackPhoto;
+              fallbackPhotoSource = 'chatInfo.sidebar.fallback';
+            }
+          }
+
+          // Attempt 3: Phone-based fallback (Store.ProfilePicThumb.find with phone variants)
+          if (!fallbackPhoto && fallbackPhoneNumber) {
+            const phoneFallbackPhoto = await tryPhoneBasedPhotoFallback(fallbackPhoneNumber);
+            if (phoneFallbackPhoto) {
+              fallbackPhoto = phoneFallbackPhoto;
+              fallbackPhotoSource = 'chatInfo.phone_fallback';
+            }
+          }
+
+          const fallbackPhotoResolution = await resolveChatPhotoWithMetadata({
+            phase: 'fallback',
+            chatId,
+            canonicalChatId: resolvedChatId || chatId,
+            preferredPhoto: fallbackPhoto,
+            preferredPhotoSource: fallbackPhotoSource,
+            phoneNumber: fallbackPhoneNumber,
+            phoneFallbackProvider: tryPhoneBasedPhotoFallback,
+          });
+          fallbackPhoto = fallbackPhotoResolution.chatPhoto || '';
+          fallbackPhotoSource = fallbackPhoto
+            ? (fallbackPhotoResolution.chatPhotoSource || fallbackPhotoSource || 'unknown')
+            : 'not_found';
+
           // Retorna sucesso parcial para não quebrar a UI
           document.dispatchEvent(new CustomEvent('PrinChatChatInfoResult', {
             detail: {
               success: true,
-              chatName: chatId.replace('@c.us', '').replace('@s.whatsapp.net', ''),
-              chatId,
-              chatPhoto: undefined,
+              chatName: getCanonicalChatIdentity(chatId) || chatId,
+              chatId: normalizeChatIdWithDomain(resolvedChatId || chatId) || (resolvedChatId || chatId),
+              chatPhoto: fallbackPhoto || undefined,
+              chatPhotoSource: fallbackPhoto ? fallbackPhotoSource : undefined,
+              chatPhotoValidated: fallbackPhotoResolution.chatPhotoValidated === true,
+              chatPhotoStability: fallbackPhotoResolution.chatPhotoStability,
+              chatPhotoCheckedAt: fallbackPhotoResolution.chatPhotoCheckedAt,
+              photoSource: fallbackPhotoSource,
+              phoneNumber: fallbackPhoneNumber || getCanonicalChatIdentity(chatId) || chatId,
               isFallback: true,
               requestId
             }
@@ -1432,8 +2955,10 @@
 
         // Final fallback to ID
         if (!chatName) {
-          chatName = chatId.replace('@c.us', '');
+          chatName = getCanonicalChatIdentity(chatId) || chatId;
         }
+
+        const resolvedPhoneNumberForLookup = resolvePhoneNumberForLookup(contact, chat, resolvedChatId || chatId);
 
         // WPP Name Fallback (If Standard WA fails Store lookups)
         if ((!chatName || chatName.includes('@')) && (window as any).WPP?.chat?.get) {
@@ -1449,80 +2974,251 @@
 
         // Get profile picture URL
         let chatPhoto: string | undefined = undefined;
+        let photoSource: string = '';
+        let chatPhotoValidated = false;
+        let chatPhotoStability: ChatPhotoStability | undefined;
+        let chatPhotoCheckedAt = Date.now();
         try {
-          console.log('[PrinChat Page] Checking for chat photo...');
 
-          // Strategy 1: Try contact.profilePicThumb (Memory - Fast)
-          if (!chatPhoto && contact?.profilePicThumb) {
-            // console.log('[PrinChat Page] Trying contact.profilePicThumb...');
-            chatPhoto = contact.profilePicThumb.eurl || contact.profilePicThumb.imgFull || contact.profilePicThumb.img;
-            if (chatPhoto) console.log('[PrinChat Page] ✅ Got photo from contact.profilePicThumb');
-          }
 
-          // Strategy 2: Try chat.profilePicThumb (Memory - Fast)
-          if (!chatPhoto && chat?.profilePicThumb) {
-            // console.log('[PrinChat Page] Trying chat.profilePicThumb...');
-            chatPhoto = chat.profilePicThumb.eurl || chat.profilePicThumb.imgFull || chat.profilePicThumb.img;
-            if (chatPhoto) console.log('[PrinChat Page] ✅ Got photo from chat.profilePicThumb');
-          }
-
-          // Strategy 3: Try contact.img field directly (Memory - Fast)
-          if (!chatPhoto && contact?.img) {
-            // console.log('[PrinChat Page] Trying contact.img...');
-            chatPhoto = contact.img;
-            if (chatPhoto) console.log('[PrinChat Page] ✅ Got photo from contact.img');
-          }
-
-          // Strategy 4: Try Store.ProfilePicThumb.find() (DB - Medium)
-          if (!chatPhoto && (window as any).Store?.ProfilePicThumb) {
-            // console.log('[PrinChat Page] Trying Store.ProfilePicThumb.find()...');
-            try {
-              const profilePic = await (window as any).Store.ProfilePicThumb.find(chat.id);
-              if (profilePic) {
-                // console.log('[PrinChat Page] ProfilePicThumb object:', profilePic);
-                chatPhoto = profilePic.eurl || profilePic.imgFull || profilePic.img;
-                if (chatPhoto) console.log('[PrinChat Page] ✅ Got photo from Store.ProfilePicThumb');
+          const chatIdVariants = buildChatIdLookupVariants(chatId);
+          const resolveWidCandidate = (idValue: string): any => {
+            const normalized = sanitizeScopedChatId(idValue);
+            const StoreAny = (window as any).Store;
+            if (StoreAny?.WidFactory?.createWid) {
+              try {
+                return StoreAny.WidFactory.createWid(normalized);
+              } catch (_err) {
+                // ignore and fallback to raw string
               }
-            } catch (storeError) {
-              console.log('[PrinChat Page] Store.ProfilePicThumb.find() failed:', storeError);
+            }
+            return normalized;
+          };
+
+          // Strategy 1: Fast local model fields (works for Standard + Business)
+          if (!chatPhoto) {
+            chatPhoto = extractPhotoUrl(contact) || extractPhotoUrl(chat) || extractPhotoUrl(chat?.contact);
+            if (chatPhoto) {
+              photoSource = 'chatInfo.local';
+              console.log('[PrinChat Page] ✅ Got photo from local model fields');
             }
           }
 
-          // Strategy 5: Try WPPConnect API (Network/Full - Slow/Reliable)
-          if (!chatPhoto && (window as any).WPP?.contact?.getProfilePictureUrl) {
-            console.log('[PrinChat Page] Trying WPP.contact.getProfilePictureUrl...');
-            try {
-              const pictureUrl = await (window as any).WPP.contact.getProfilePictureUrl(chatId);
-              if (pictureUrl) {
-                console.log('[PrinChat Page] ✅ Got photo from WPP:', pictureUrl);
-                chatPhoto = pictureUrl;
+          // Strategy 1.5: Force-fetch via contact/chat model methods + WPP.whatsapp
+          if (!chatPhoto) {
+
+
+            // Try 1: Call getProfilePicThumb() or similar on contact model
+            const modelTargets = [contact, chat, chat?.contact].filter(Boolean);
+            for (const model of modelTargets) {
+              if (chatPhoto) break;
+              const methodNames = ['getProfilePicThumb', 'getProfilePicFull', 'getProfilePicThumbObj', 'fetchProfilePicThumb'];
+              for (const methodName of methodNames) {
+                if (chatPhoto) break;
+                if (typeof model[methodName] === 'function') {
+                  try {
+                    const result = await model[methodName]();
+                    const photo = extractPhotoUrl(result);
+                    if (photo) {
+                      chatPhoto = photo;
+                      photoSource = 'chatInfo.model.' + methodName;
+                      console.log('[PrinChat Page] ✅ Got photo from contact.' + methodName + '()');
+                    }
+                  } catch (_e) { /* continue */ }
+                }
               }
-            } catch (wppError) {
-              console.log('[PrinChat Page] WPP.contact.getProfilePictureUrl failed:', wppError);
+            }
+
+            // Try 2: WPP.whatsapp.ProfilePicThumbStore.find() directly
+            if (!chatPhoto) {
+              try {
+                const pptStore = (window as any).WPP?.whatsapp?.ProfilePicThumbStore;
+                if (pptStore?.find) {
+                  const chatIdVariantsForPic = buildChatIdLookupVariants(chatId);
+                  for (const variant of chatIdVariantsForPic) {
+                    if (chatPhoto) break;
+                    try {
+                      const profilePic = await pptStore.find(variant);
+                      if (profilePic) {
+                        let photo = extractPhotoUrl(profilePic);
+                        if (!photo && typeof profilePic.genUrl === 'function') {
+                          await profilePic.genUrl();
+                          photo = extractPhotoUrl(profilePic);
+                        }
+                        if (photo) {
+                          chatPhoto = photo;
+                          photoSource = 'chatInfo.wpp_whatsapp_pptStore';
+                          console.log('[PrinChat Page] ✅ Got photo from WPP.whatsapp.ProfilePicThumbStore.find()');
+                        }
+                      }
+                    } catch (_e) { /* continue */ }
+                  }
+                }
+              } catch (_e) { /* ignore */ }
+            }
+
+            // Try 3: WPP.whatsapp.profilePicFind() directly
+            if (!chatPhoto) {
+              try {
+                const picFind = (window as any).WPP?.whatsapp?.profilePicFind;
+                if (typeof picFind === 'function') {
+                  const result = await picFind(chatId);
+                  const photo = extractPhotoUrl(result);
+                  if (photo) {
+                    chatPhoto = photo;
+                    photoSource = 'chatInfo.wpp_whatsapp_profilePicFind';
+                    console.log('[PrinChart Page] ✅ Got photo from WPP.whatsapp.profilePicFind()');
+                  }
+                }
+              } catch (_e) { /* ignore */ }
             }
           }
 
-          // Strategy 6: Try forcing a refresh via Store.ProfilePicThumb (Network - Slowest)
-          if (!chatPhoto && (window as any).Store?.ProfilePicThumb) {
-            console.log('[PrinChat Page] Trying to force refresh ProfilePicThumb...');
-            try {
-              // Try to get or create ProfilePicThumb
-              const profilePicModel = await (window as any).Store.ProfilePicThumb.get(chat.id);
-              if (profilePicModel) {
-                console.log('[PrinChat Page] ProfilePicThumb via get():', profilePicModel);
-                chatPhoto = profilePicModel.eurl || profilePicModel.imgFull || profilePicModel.img;
-                if (chatPhoto) console.log('[PrinChat Page] ✅ Got photo from Store.ProfilePicThumb.get()');
+          // Strategy 2: Store.ProfilePicThumb lookup by multiple WID variants
+          if (!chatPhoto && (window as any).Store?.ProfilePicThumb?.find) {
+            // One-time diagnostic: list available methods on ProfilePicThumb collection
+            const pptStore = (window as any).Store.ProfilePicThumb;
+            const pptMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(pptStore) || {}).filter(k => typeof pptStore[k] === 'function').slice(0, 20);
+            console.log('[PrinChat Page] 🔬 Store.ProfilePicThumb available methods:', pptMethods.join(', '));
+
+            const widCandidates: any[] = [];
+            if (chat?.id) widCandidates.push(chat.id);
+            if (contact?.id) widCandidates.push(contact.id);
+            chatIdVariants.forEach((variant) => widCandidates.push(resolveWidCandidate(variant)));
+
+            for (const wid of widCandidates) {
+              try {
+                const profilePic = await (window as any).Store.ProfilePicThumb.find(wid);
+                const widStr = typeof wid === 'string' ? wid : (wid?._serialized || wid?.toString?.() || '?');
+                console.log('[PrinChat Page] 🔬 Strategy2 ProfilePicThumb.find(' + widStr + '):', profilePic ? 'model found' : '(null)', 'keys:', profilePic ? Object.keys(profilePic).slice(0, 10).join(',') : 'N/A', 'eurl:', profilePic?.eurl ? profilePic.eurl.substring(0, 50) + '...' : '(empty)', 'img:', profilePic?.img ? 'yes' : 'no');
+                chatPhoto = extractPhotoUrl(profilePic);
+                if (chatPhoto) {
+                  photoSource = 'chatInfo.profilePicThumb.find';
+                  console.log('[PrinChat Page] ✅ Got photo from Store.ProfilePicThumb.find()');
+                  break;
+                }
+                // If model exists but no photo URL, try genUrl() to force server fetch
+                if (profilePic && !chatPhoto) {
+                  if (typeof profilePic.genUrl === 'function') {
+                    try {
+                      await profilePic.genUrl();
+                      chatPhoto = extractPhotoUrl(profilePic);
+                      if (chatPhoto) {
+                        photoSource = 'chatInfo.profilePicThumb.find.genUrl';
+                        console.log('[PrinChat Page] ✅ Got photo from ProfilePicThumb.find().genUrl()');
+                        break;
+                      }
+                    } catch (_genErr) {
+                      console.log('[PrinChat Page] 🔬 genUrl() error:', (_genErr as any)?.message || _genErr);
+                    }
+                  }
+                  if (typeof profilePic.getUrl === 'function' && !chatPhoto) {
+                    try {
+                      const url = await profilePic.getUrl();
+                      const normalized = normalizeImageSourceCandidate(url);
+                      if (normalized) {
+                        chatPhoto = normalized;
+                        photoSource = 'chatInfo.profilePicThumb.find.getUrl';
+                        console.log('[PrinChat Page] ✅ Got photo from ProfilePicThumb.find().getUrl()');
+                        break;
+                      }
+                    } catch (_getUrlErr) {
+                      console.log('[PrinChat Page] 🔬 getUrl() error:', (_getUrlErr as any)?.message || _getUrlErr);
+                    }
+                  }
+                }
+              } catch (_storeError) {
+                // continue trying other variants
               }
-            } catch (getError) {
-              console.log('[PrinChat Page] Store.ProfilePicThumb.get() failed:', getError);
+            }
+          }
+
+          // Strategy 3: WPP API — DISABLED (getProfilePictureUrl is permanently broken)
+          // if (!chatPhoto && (window as any).WPP?.contact?.getProfilePictureUrl) { ... }
+
+          // Strategy 4: Force refresh via Store.ProfilePicThumb.get
+          if (!chatPhoto && (window as any).Store?.ProfilePicThumb?.get) {
+            const widCandidates: any[] = [];
+            if (chat?.id) widCandidates.push(chat.id);
+            if (contact?.id) widCandidates.push(contact.id);
+            chatIdVariants.forEach((variant) => widCandidates.push(resolveWidCandidate(variant)));
+
+            for (const wid of widCandidates) {
+              try {
+                const profilePicModel = await (window as any).Store.ProfilePicThumb.get(wid);
+                const widStr = typeof wid === 'string' ? wid : (wid?._serialized || wid?.toString?.() || '?');
+                console.log('[PrinChat Page] 🔬 Strategy4 ProfilePicThumb.get(' + widStr + '):', profilePicModel ? 'model found' : '(null)', 'eurl:', profilePicModel?.eurl ? profilePicModel.eurl.substring(0, 50) + '...' : '(empty)', 'img:', profilePicModel?.img ? 'yes' : 'no');
+                chatPhoto = extractPhotoUrl(profilePicModel);
+                if (chatPhoto) {
+                  photoSource = 'chatInfo.profilePicThumb.get';
+                  console.log('[PrinChat Page] ✅ Got photo from Store.ProfilePicThumb.get()');
+                  break;
+                }
+                // Try genUrl/getUrl if model exists but photo is empty
+                if (profilePicModel && !chatPhoto) {
+                  if (typeof profilePicModel.genUrl === 'function') {
+                    try {
+                      await profilePicModel.genUrl();
+                      chatPhoto = extractPhotoUrl(profilePicModel);
+                      if (chatPhoto) {
+                        photoSource = 'chatInfo.profilePicThumb.get.genUrl';
+                        console.log('[PrinChat Page] ✅ Got photo from ProfilePicThumb.get().genUrl()');
+                        break;
+                      }
+                    } catch (_genErr) {
+                      console.log('[PrinChat Page] 🔬 Strategy4 genUrl() error:', (_genErr as any)?.message || _genErr);
+                    }
+                  }
+                  if (typeof profilePicModel.getUrl === 'function' && !chatPhoto) {
+                    try {
+                      const url = await profilePicModel.getUrl();
+                      const normalized = normalizeImageSourceCandidate(url);
+                      if (normalized) {
+                        chatPhoto = normalized;
+                        photoSource = 'chatInfo.profilePicThumb.get.getUrl';
+                        console.log('[PrinChat Page] ✅ Got photo from ProfilePicThumb.get().getUrl()');
+                        break;
+                      }
+                    } catch (_getUrlErr) {
+                      console.log('[PrinChat Page] 🔬 Strategy4 getUrl() error:', (_getUrlErr as any)?.message || _getUrlErr);
+                    }
+                  }
+                }
+              } catch (_getError) {
+                // continue trying other variants
+              }
+            }
+          }
+
+          // Strategy 5: Sidebar DOM lookup (works well on WhatsApp normal)
+          if (!chatPhoto) {
+            chatPhoto =
+              findSidebarPhotoByChat(resolvedChatId || chatId, chatName)
+              || findSidebarPhotoByChat(chatId, chatName);
+            if (chatPhoto) {
+              photoSource = 'chatInfo.sidebar';
+              console.log('[PrinChat Page] ✅ Got photo from sidebar DOM');
+            }
+          }
+
+          // Strategy 6: Phone-based fallback (critical for @lid contacts not resolved by chatId/name)
+          if (!chatPhoto && resolvedPhoneNumberForLookup) {
+            const phoneFallbackPhoto = await tryPhoneBasedPhotoFallback(resolvedPhoneNumberForLookup);
+            if (phoneFallbackPhoto) {
+              chatPhoto = phoneFallbackPhoto;
+              photoSource = 'chatInfo.phone_fallback';
+              console.log('[PrinChat Page] ✅ Got photo from phone fallback');
             }
           }
 
           // Strategy 7: DOM Scraping (Final Fallback - Visual)
           // CRITICAL FIX: Only scrape DOM if the requested chat is actually the one OPEN on screen.
           // Otherwise, background hydration for other chats will scrape the WRONG photo (the active one).
-          const activeChatId = (window as any).Store?.Chat?.active?.()?.id?._serialized;
-          const isActiveChat = activeChatId === chatId;
+          const activeChatModel =
+            (window as any).Store?.Chat?.active?.()
+            || (window as any).Store?.Chat?.getActive?.();
+          const activeChatId = extractSerializedChatId(activeChatModel);
+          const isActiveChat = areSameChatIdentity(activeChatId, resolvedChatId || chatId);
 
           if (!chatPhoto && isActiveChat) {
             console.log('[PrinChat Page] Strategies 1-6 failed. Trying DOM scraping from header...');
@@ -1546,6 +3242,7 @@
                     (src.startsWith('blob:') || src.startsWith('http'))) {
 
                     chatPhoto = src;
+                    photoSource = 'chatInfo.dom.header';
                     console.log('[PrinChat Page] ✅ Got photo from DOM Scraping (Iterator):', chatPhoto);
                     break;
                   }
@@ -1561,6 +3258,7 @@
                       const url = bgImage.slice(5, -2); // Remove url("...")
                       if (url.startsWith('blob:') || url.startsWith('http')) {
                         chatPhoto = url;
+                        photoSource = 'chatInfo.dom.background';
                         console.log('[PrinChat Page] ✅ Got photo from DOM Scraping (Background):', chatPhoto);
                         break;
                       }
@@ -1574,15 +3272,48 @@
           }
 
           console.log('[PrinChat Page] Final chatPhoto result:', chatPhoto ? 'Found' : 'Not found');
+          console.log('[PrinChat Page] Photo lookup summary', {
+            phase: 'rehydrate',
+            rawChatId: rawRequestedChatId || chatId,
+            canonicalChatId: normalizeChatIdWithDomain(resolvedChatId || chatId) || (resolvedChatId || chatId),
+            photoSource: chatPhoto ? photoSource || 'unknown' : 'not_found'
+          });
         } catch (e: any) {
           const errorMessage = e?.message || String(e);
-          console.error('[PrinChat Page] Error getting chat photo:', errorMessage, e);
+          if (isKnownWppInteropError(e)) {
+            console.debug('[PrinChat Page] Chat photo strategy hit known WPP interop issue. Continuing with fallback flow.');
+          } else {
+            console.error('[PrinChat Page] Error getting chat photo:', errorMessage, e);
+          }
         }
+
+        const resolvedPhotoMeta = await resolveChatPhotoWithMetadata({
+          phase: 'rehydrate',
+          chatId,
+          canonicalChatId: resolvedChatId || chatId,
+          chatName,
+          contact,
+          chat,
+          preferredPhoto: chatPhoto,
+          preferredPhotoSource: photoSource || 'chatInfo.local',
+          phoneNumber: resolvedPhoneNumberForLookup,
+          phoneFallbackProvider: tryPhoneBasedPhotoFallback,
+        });
+        chatPhoto = resolvedPhotoMeta.chatPhoto;
+        photoSource = chatPhoto
+          ? (resolvedPhotoMeta.chatPhotoSource || photoSource || 'unknown')
+          : 'not_found';
+        chatPhotoValidated = resolvedPhotoMeta.chatPhotoValidated === true;
+        chatPhotoStability = resolvedPhotoMeta.chatPhotoStability;
+        chatPhotoCheckedAt = resolvedPhotoMeta.chatPhotoCheckedAt;
 
         // Final Name Fallback: DOM Scraping
         // Only if we are on the active chat (same reason as photo)
-        const activeChatIdName = (window as any).Store?.Chat?.active?.()?.id?._serialized;
-        const isActiveChatName = activeChatIdName === chatId;
+        const activeChatModelName =
+          (window as any).Store?.Chat?.active?.()
+          || (window as any).Store?.Chat?.getActive?.();
+        const activeChatIdName = extractSerializedChatId(activeChatModelName);
+        const isActiveChatName = areSameChatIdentity(activeChatIdName, resolvedChatId || chatId);
 
         if ((!chatName || chatName === 'Chat' || chatName.includes('@')) && !contact && !chat && isActiveChatName) {
           try {
@@ -1648,19 +3379,37 @@
             if (!chatLabels.find(l => l.id === id)) {
               let finalColor: string | undefined = undefined;
 
+              // Same palette as GET_ALL_LABELS
+              const CHAT_INFO_PALETTE = [
+                '#FF9E9E', '#5AB5E5', '#FDD835', '#C594D7', '#90A4AE',
+                '#26C6DA', '#F48FB1', '#FFB300', '#7986CB', '#D4E157',
+                '#00ACC1', '#FFAB91', '#81C784', '#E57373', '#42A5F5',
+                '#9CCC65', '#FF9800', '#64B5F6', '#BA68C8', '#9575CD'
+              ];
+
               // PRIORITY 1: Cached DOM Color (Visual Truth)
               // This MUST take precedence during hydration to match what user sees
               if (name && cachedColors[name]) {
                 finalColor = cachedColors[name];
               }
-              // PRIORITY 2: Direct/Raw Color
-              else if (rawColor) {
+              // PRIORITY 2: Direct hex string color
+              else if (rawColor && typeof rawColor === 'string' && rawColor.startsWith('#')) {
                 finalColor = rawColor;
               }
-              // PRIORITY 3: Extract from Model
+              // PRIORITY 3: colorIndex palette (most common for WhatsApp Business labels)
+              else if (model && typeof model.colorIndex === 'number' && model.colorIndex >= 0 && model.colorIndex < CHAT_INFO_PALETTE.length) {
+                finalColor = CHAT_INFO_PALETTE[model.colorIndex];
+              }
+              // PRIORITY 4: Extract from Model (hexColor, string color, numeric color)
               else if (model) {
                 finalColor = extractColor(model);
               }
+              // PRIORITY 5: Raw color if it's a valid hex string
+              else if (rawColor && typeof rawColor === 'string') {
+                finalColor = rawColor;
+              }
+
+              if (!finalColor) finalColor = '#2196f3'; // fallback blue
 
               chatLabels.push({ id, name, color: finalColor });
               chatTags.push(name);
@@ -1708,7 +3457,11 @@
                 if (labels && Array.isArray(labels)) {
                   labels.forEach((l: any) => addLabel(l.id, l.name, l.color, l));
                 }
-              } catch (e) { console.error('WPP.label.getLabels failed', e); }
+              } catch (e) {
+                if (!isKnownWppInteropError(e)) {
+                  console.warn('[PrinChat Page] WPP.label.getLabels failed', e);
+                }
+              }
             }
 
             // Strategy 3: WPP.chat.get inspection (Final Fallback) - Only run if likely Business
@@ -1720,23 +3473,27 @@
                   // Suppress warning for purely numeric IDs (likely raw phone numbers not yet normalized)
                   if (typeof chatId === 'string' && /^\d+$/.test(chatId)) {
                     console.debug('[PrinChat Page] Skipping WPP.chat.get for raw number:', chatId);
-                    return;
+                  } else {
+                    console.debug('[PrinChat Page] Skipping WPP.chat.get for unsupported chatId format:', chatId);
                   }
-                  // Throwing here will be caught by the catch block below
-                  throw new Error(`Invalid chatId format for WPP.chat.get: ${chatId}`);
-                }
-                const wppChat = await WPP.chat.get(chatId);
-                if (wppChat && wppChat.labels && Array.isArray(wppChat.labels)) {
-                  wppChat.labels.forEach((l: any) => {
-                    if (typeof l === 'object' && l.id && l.name) {
-                      addLabel(l.id, l.name, l.color, l);
-                    } else if (typeof l === 'string') {
-                      addLabel(l, `Tag ${l}`, undefined);
-                    }
-                  });
+                } else {
+                  const wppChat = await WPP.chat.get(chatId);
+                  if (wppChat && wppChat.labels && Array.isArray(wppChat.labels)) {
+                    wppChat.labels.forEach((l: any) => {
+                      if (typeof l === 'object' && l.id && l.name) {
+                        addLabel(l.id, l.name, l.color, l);
+                      } else if (typeof l === 'string') {
+                        addLabel(l, `Tag ${l}`, undefined);
+                      }
+                    });
+                  }
                 }
               } catch (e: any) {
-                console.warn('[PrinChat Page] ℹ️ Strategy 3 (WPP.chat.get) warning:', e?.message || 'unknown');
+                if (isExpectedWppChatGetFormatError(e)) {
+                  console.debug('[PrinChat Page] Strategy 3 skipped due to chatId format:', e?.message || 'unknown');
+                } else if (!isKnownWppInteropError(e)) {
+                  console.warn('[PrinChat Page] ℹ️ Strategy 3 (WPP.chat.get) warning:', e?.message || 'unknown');
+                }
               }
             } // Close Strategy 3 if
           } // Close Store.Label if
@@ -1751,12 +3508,20 @@
           console.error('[PrinChat Page] Error fetching tags:', tagError);
         }
 
+        const phoneNumber = resolvedPhoneNumberForLookup || getCanonicalChatIdentity(resolvedChatId || chatId) || chatId;
+
         document.dispatchEvent(new CustomEvent('PrinChatChatInfoResult', {
           detail: {
             success: true,
             chatName,
-            chatId,
+            chatId: normalizeChatIdWithDomain(resolvedChatId || chatId) || (resolvedChatId || chatId),
             chatPhoto,
+            chatPhotoSource: chatPhoto ? photoSource || 'unknown' : undefined,
+            chatPhotoValidated: chatPhotoValidated === true,
+            chatPhotoStability,
+            chatPhotoCheckedAt,
+            photoSource: chatPhoto ? photoSource || 'unknown' : 'not_found',
+            phoneNumber,
             requestId,
             tags: chatTags, // Array of strings ['VIP', 'New']
             labels: chatLabels // Array of objects [{id, name, color}]
@@ -1998,83 +3763,530 @@
           // Relaxed check to include media types
           if (msg && (msg.type === 'chat' || msg.type === 'image' || msg.type === 'video' || msg.type === 'audio' || msg.type === 'ptt' || msg.type === 'document' || msg.type === 'sticker' || msg.type === 'location' || msg.type === 'vcard')) {
             (async () => {
-              // STRICT VALIDATION: Ignore if no timestamp (don't default to now)
-              if (!msg.t) {
-                return;
-              }
-
-              // STRICT VALIDATION: Ignore if not a new message (prevents history sync from triggering)
-              if (msg.isNewMsg === false) {
-                return;
-              }
-
-              const now = Date.now();
-              const msgTimestamp = msg.t * 1000;
-              const messageAge = now - msgTimestamp;
-
-              // Skip if message is older than MAX_MESSAGE_AGE (e.g. 60 seconds)
-              // This is a safety net for "new" messages that are actually from a long sync
-              if (messageAge > MAX_MESSAGE_AGE && messageAge > 60000) {
-                console.log('[PrinChat] Skipping old message detected as new:', {
-                  body: msg.body ? msg.body.substring(0, 30) : 'media',
-                  age: messageAge,
-                  msgTime: new Date(msgTimestamp).toLocaleTimeString()
-                });
-                return;
-              }
-
-              // Create unique message ID
-              const messageId = `${msg.id.id}_${msg.from}_${msg.t}`;
-
-              // Skip if already processed
-              if (processedMessages.has(messageId)) {
-                return;
-              }
-
-              // Mark as processed
-              processedMessages.add(messageId);
-
-              // Clean up old processed messages periodically
-              if (processedMessages.size > 100) {
-                const oldMessages = Array.from(processedMessages).slice(0, 50);
-                oldMessages.forEach(id => processedMessages.delete(id));
-              }
-
-              // Determine Message Preview Text
-              let messageText = msg.body || '';
-
-              if (msg.type === 'image') {
-                messageText = msg.caption ? `📷 ${msg.caption}` : '📷 Foto';
-              } else if (msg.type === 'video') {
-                messageText = msg.caption ? `📹 ${msg.caption}` : '📹 Vídeo';
-              } else if (msg.type === 'audio' || msg.type === 'ptt') {
-                messageText = '🎵 Áudio';
-              } else if (msg.type === 'document') {
-                messageText = msg.caption ? `📄 ${msg.caption}` : (msg.fileName ? `📄 ${msg.fileName}` : '📄 Arquivo');
-              } else if (msg.type === 'sticker') {
-                messageText = '💟 Figurinha';
-              } else if (msg.type === 'location') {
-                messageText = '📍 Localização';
-              } else if (msg.type === 'vcard') {
-                messageText = '👤 Contato';
-              }
-
-              console.log('[PrinChat] New message received:', messageText, `(age: ${messageAge}ms)`);
-
-              // Get chatId from message (can be LID, getChatInfo will handle it)
-              const chatId = msg.id?.remote?.toString() || msg.from?.toString() || '';
-              console.log('[PrinChat] Chat ID from message:', chatId);
-
-              // Notify content script about new message
-              // getChatInfo in the injector will fetch name/photo
-              document.dispatchEvent(new CustomEvent('PrinChatIncomingMessage', {
-                detail: {
-                  messageText: messageText, // Use formatted text
-                  chatId: chatId,
-                  timestamp: msgTimestamp,
-                  fromMe: msg.id.fromMe || msg.fromMe || false // Add fromMe flag
+              try {
+                // STRICT VALIDATION: Ignore if no timestamp (don't default to now)
+                if (!msg.t) {
+                  return;
                 }
-              }));
+
+                // STRICT VALIDATION: Ignore if not a new message (prevents history sync from triggering)
+                if (msg.isNewMsg === false) {
+                  return;
+                }
+
+                const now = Date.now();
+                const msgTimestamp = msg.t * 1000;
+                const messageAge = now - msgTimestamp;
+
+                // Skip if message is older than MAX_MESSAGE_AGE (e.g. 60 seconds)
+                // This is a safety net for "new" messages that are actually from a long sync
+                if (messageAge > MAX_MESSAGE_AGE && messageAge > 60000) {
+                  console.log('[PrinChat] Skipping old message detected as new:', {
+                    body: msg.body ? msg.body.substring(0, 30) : 'media',
+                    age: messageAge,
+                    msgTime: new Date(msgTimestamp).toLocaleTimeString()
+                  });
+                  return;
+                }
+
+                // Create unique message ID
+                const messageId = `${msg.id.id}_${msg.from}_${msg.t}`;
+
+                // Skip if already processed
+                if (processedMessages.has(messageId)) {
+                  return;
+                }
+
+                // Mark as processed
+                processedMessages.add(messageId);
+
+                // Clean up old processed messages periodically
+                if (processedMessages.size > 100) {
+                  const oldMessages = Array.from(processedMessages).slice(0, 50);
+                  oldMessages.forEach(id => processedMessages.delete(id));
+                }
+
+                // Determine Message Preview Text
+                let messageText = msg.body || '';
+
+                if (msg.type === 'image') {
+                  messageText = msg.caption ? `📷 ${msg.caption}` : '📷 Foto';
+                } else if (msg.type === 'video') {
+                  messageText = msg.caption ? `📹 ${msg.caption}` : '📹 Vídeo';
+                } else if (msg.type === 'audio' || msg.type === 'ptt') {
+                  messageText = '🎵 Áudio';
+                } else if (msg.type === 'document') {
+                  messageText = msg.caption ? `📄 ${msg.caption}` : (msg.fileName ? `📄 ${msg.fileName}` : '📄 Arquivo');
+                } else if (msg.type === 'sticker') {
+                  messageText = '💟 Figurinha';
+                } else if (msg.type === 'location') {
+                  messageText = '📍 Localização';
+                } else if (msg.type === 'vcard') {
+                  messageText = '👤 Contato';
+                }
+
+                console.log('[PrinChat] New message received:', messageText, `(age: ${messageAge}ms)`);
+
+                // Get chatId from message (can be LID, getChatInfo will handle it)
+                const rawChatId = safeRead(() => msg?.id?.remote?.toString?.()) || safeRead(() => msg?.from?.toString?.()) || '';
+                const chatId = extractMessageChatId(msg);
+                if (!chatId) {
+                  console.warn('[PrinChat] Skipping message without resolvable chatId');
+                  return;
+                }
+                const chatIdVariants = buildChatIdLookupVariants(chatId);
+                console.log('[PrinChat] Chat ID from message:', { rawChatId, chatId });
+
+                // Extract contact name EARLY so we can use it for sidebar photo matching
+                let earlyContactName = '';
+                let earlyPhoneNumberHint = '';
+                try {
+                  let earlyChatModel = safeRead(() => msg?.chat) || (() => {
+                    if (Store?.Chat?.get) {
+                      for (const variant of chatIdVariants) {
+                        const c = Store.Chat.get(variant);
+                        if (c) return c;
+                      }
+                    }
+                    return null;
+                  })();
+                  if (!earlyChatModel && Store?.Chat?.find) {
+                    for (const variant of chatIdVariants) {
+                      try {
+                        const c = await Store.Chat.find(variant);
+                        if (c) {
+                          earlyChatModel = c;
+                          break;
+                        }
+                      } catch (_err) {
+                        // ignore and continue
+                      }
+                    }
+                  }
+                  const earlyContactObj = safeRead(() => earlyChatModel?.contact);
+                  earlyContactName = safeRead(() => earlyContactObj?.pushname)
+                    || safeRead(() => earlyContactObj?.name)
+                    || safeRead(() => earlyContactObj?.verifiedName)
+                    || safeRead(() => earlyChatModel?.formattedTitle)
+                    || safeRead(() => earlyChatModel?.name)
+                    || safeRead(() => msg?.notifyName)
+                    || safeRead(() => msg?.senderObj?.pushname)
+                    || safeRead(() => msg?.senderObj?.name)
+                    || '';
+
+                  earlyPhoneNumberHint = String(
+                    safeRead(() => earlyContactObj?.number)
+                    || safeRead(() => earlyContactObj?.userid)
+                    || safeRead(() => earlyContactObj?.pn)
+                    || safeRead(() => earlyContactObj?.phoneNumber)
+                    || safeRead(() => earlyChatModel?.contact?.number)
+                    || safeRead(() => earlyChatModel?.contact?.userid)
+                    || safeRead(() => earlyChatModel?.contact?.pn)
+                    || safeRead(() => earlyChatModel?.contact?.phoneNumber)
+                    || ''
+                  );
+                } catch (_e) { /* ignore */ }
+
+                // Best-effort chat photo extraction at message-time.
+                // IMPORTANT: only trust sources resolved by the remote chatId.
+                // Some WA builds can expose the active/self context in message objects.
+                let messageChatPhoto = '';
+                let messagePhotoSource = '';
+
+                try {
+                  // DIAGNOSTIC: Dump all available photo sources for debugging
+                  const photoDiag: Record<string, any> = {};
+                  const earlyPhoneIdentity =
+                    getCanonicalChatIdentity(earlyPhoneNumberHint)
+                    || getCanonicalChatIdentity(resolveLidToPhoneVariant(chatId))
+                    || '';
+                  const sidebarLookupIdSet = new Set<string>([chatId, ...chatIdVariants]);
+                  if (earlyPhoneIdentity && earlyPhoneIdentity.length >= 8) {
+                    sidebarLookupIdSet.add(earlyPhoneIdentity);
+                    sidebarLookupIdSet.add(`${earlyPhoneIdentity}@c.us`);
+                    sidebarLookupIdSet.add(`${earlyPhoneIdentity}@s.whatsapp.net`);
+                    sidebarLookupIdSet.add(`${earlyPhoneIdentity}@lid`);
+                  }
+                  const sidebarLookupIds = Array.from(sidebarLookupIdSet).filter(Boolean);
+                  photoDiag.sidebar_lookup_ids = sidebarLookupIds.slice(0, 6);
+                  // Check msg model properties
+                  photoDiag.msgChat_contact_profilePicThumb = safeRead(() => !!msg?.chat?.contact?.profilePicThumbObj?.eurl);
+                  photoDiag.msgChat_profilePicThumb = safeRead(() => !!msg?.chat?.profilePicThumbObj?.eurl);
+                  photoDiag.msgSenderObj_profilePicThumb = safeRead(() => !!msg?.senderObj?.profilePicThumbObj?.eurl);
+
+                  // API AVAILABILITY DIAGNOSTIC: What methods actually exist?
+                  const apiDiag: Record<string, any> = {};
+                  try {
+                    apiDiag.Store_ProfilePicThumb_exists = !!Store?.ProfilePicThumb;
+                    if (Store?.ProfilePicThumb) {
+                      apiDiag.Store_ProfilePicThumb_methods = Object.getOwnPropertyNames(Object.getPrototypeOf(Store.ProfilePicThumb) || {}).filter(m => typeof Store.ProfilePicThumb[m] === 'function').slice(0, 20);
+                      apiDiag.Store_ProfilePicThumb_find = typeof Store.ProfilePicThumb.find;
+                      apiDiag.Store_ProfilePicThumb_get = typeof Store.ProfilePicThumb.get;
+                      apiDiag.Store_ProfilePicThumb_getOrFetch = typeof Store.ProfilePicThumb.getOrFetch;
+                      apiDiag.Store_ProfilePicThumb_query = typeof Store.ProfilePicThumb.query;
+                      apiDiag.Store_ProfilePicThumb_fetchProfilePicThumb = typeof Store.ProfilePicThumb.fetchProfilePicThumb;
+                    }
+                    apiDiag.WPP_contact_exists = !!(window as any).WPP?.contact;
+                    if ((window as any).WPP?.contact) {
+                      apiDiag.WPP_contact_getProfilePictureUrl = typeof (window as any).WPP.contact.getProfilePictureUrl;
+                      apiDiag.WPP_contact_methods = Object.keys((window as any).WPP.contact).filter(k => typeof (window as any).WPP.contact[k] === 'function').slice(0, 20);
+                    }
+                    apiDiag.WPP_profilePic_exists = !!(window as any).WPP?.profilePic;
+                    if ((window as any).WPP?.profilePic) {
+                      apiDiag.WPP_profilePic_methods = Object.keys((window as any).WPP.profilePic).filter(k => typeof (window as any).WPP.profilePic[k] === 'function').slice(0, 20);
+                    }
+                    apiDiag.WPP_chat_exists = !!(window as any).WPP?.chat;
+                    if ((window as any).WPP?.chat) {
+                      apiDiag.WPP_chat_getProfilePictureUrl = typeof ((window as any).WPP.chat.getProfilePictureUrl);
+                    }
+                  } catch (_apiDiagErr) {
+                    apiDiag.error = String(_apiDiagErr).substring(0, 100);
+                  }
+                  console.log('[PrinChat Page] 📸 API AVAILABILITY:', JSON.stringify(apiDiag));
+
+                  // IMPORTANT: only use photo fields from the message chat/contact model.
+                  // senderObj/authorObj can reference active/self context in some WA builds,
+                  // leaking wrong photos into unrelated Kanban cards.
+                  messageChatPhoto =
+                    extractPhotoUrl(safeRead(() => msg?.chat?.contact))
+                    || extractPhotoUrl(safeRead(() => msg?.chat))
+                    || '';
+                  if (messageChatPhoto) {
+                    messagePhotoSource = 'message_model';
+                  }
+
+                  // Strategy: Store.Chat.get (sync cache)
+                  if (!messageChatPhoto && Store?.Chat?.get) {
+                    for (const variant of chatIdVariants) {
+                      if (messageChatPhoto) break;
+                      try {
+                        const storeChat = Store.Chat.get(variant);
+                        photoDiag[`storeChat_${variant}_exists`] = !!storeChat;
+                        photoDiag[`storeChat_${variant}_contact_photo`] = safeRead(() => !!storeChat?.contact?.profilePicThumbObj?.eurl);
+                        messageChatPhoto = extractPhotoUrl(storeChat?.contact) || extractPhotoUrl(storeChat) || '';
+                        if (messageChatPhoto) messagePhotoSource = 'store_chat';
+                      } catch (_err) {
+                        // ignore
+                      }
+                    }
+                  }
+
+                  // Strategy: Store.Chat.find (async)
+                  if (!messageChatPhoto && Store?.Chat?.find) {
+                    for (const variant of chatIdVariants) {
+                      if (messageChatPhoto) break;
+                      try {
+                        const storeChat = await Store.Chat.find(variant);
+                        photoDiag[`storeChatFind_${variant}_exists`] = !!storeChat;
+                        photoDiag[`storeChatFind_${variant}_contact_photo`] = safeRead(() => !!storeChat?.contact?.profilePicThumbObj?.eurl);
+                        messageChatPhoto = extractPhotoUrl(storeChat?.contact) || extractPhotoUrl(storeChat) || '';
+                        if (messageChatPhoto) messagePhotoSource = 'store_chat_find';
+                      } catch (_err) {
+                        // ignore
+                      }
+                    }
+                  }
+
+                  // Strategy: Store.Contact.get
+                  if (!messageChatPhoto && Store?.Contact?.get) {
+                    for (const variant of chatIdVariants) {
+                      if (messageChatPhoto) break;
+                      try {
+                        const storeContact = Store.Contact.get(variant);
+                        photoDiag[`storeContact_${variant}_exists`] = !!storeContact;
+                        photoDiag[`storeContact_${variant}_photo`] = safeRead(() => !!storeContact?.profilePicThumbObj?.eurl);
+                        messageChatPhoto = extractPhotoUrl(storeContact) || '';
+                        if (messageChatPhoto) messagePhotoSource = 'store_contact';
+                      } catch (_err) {
+                        // ignore
+                      }
+                    }
+                  }
+
+                  // Strategy: WPP profile picture lookup with robust variant fallback.
+                  // This is non-blocking: known interop failures are handled by
+                  // fetchWppProfilePhotoByIds and we continue the pipeline.
+                  if (!messageChatPhoto && (window as any).WPP?.contact?.getProfilePictureUrl) {
+                    const lookupIds = collectChatLookupIds(
+                      chatId,
+                      rawChatId,
+                      msg,
+                      safeRead(() => msg?.chat),
+                      safeRead(() => msg?.chat?.contact),
+                      ...chatIdVariants
+                    );
+                    photoDiag.wpp_lookup_count = lookupIds.length;
+                    const wppPhoto = await fetchWppProfilePhotoByIds(lookupIds);
+                    if (wppPhoto) {
+                      messageChatPhoto = wppPhoto;
+                      messagePhotoSource = 'wpp';
+                    }
+                  }
+
+                  // Strategy: Sidebar DOM scraping (with focused diagnostic)
+                  if (!messageChatPhoto) {
+                    const paneSide = document.querySelector('#pane-side');
+                    const sidePanel = document.querySelector('#side');
+                    const searchRoot = paneSide || sidePanel || document.body;
+
+                    // Probe sidebar DOM structure (minimal diagnostic)
+                    const rows = Array.from(searchRoot.querySelectorAll('[role="row"]'));
+                    const spanTitles = Array.from(searchRoot.querySelectorAll('span[title]'));
+                    const allImages = Array.from(searchRoot.querySelectorAll('img')) as HTMLImageElement[];
+                    const renderableImages = allImages.filter(img => img.src && (img.src.startsWith('http') || img.src.startsWith('blob:') || img.src.startsWith('data:')));
+
+                    const chatIdDigitsForDiag = chatId.replace(/@.*$/, '').replace(/\D/g, '');
+
+                    // Find which sidebar titles contain our phone digits or name
+                    const matchingTitles = spanTitles.filter(s => {
+                      const t = s.getAttribute('title') || s.textContent || '';
+                      const tDigits = t.replace(/\D/g, '');
+                      const phoneMatch = tDigits.length >= 8 && chatIdDigitsForDiag.length >= 8 && (
+                        chatIdDigitsForDiag.includes(tDigits) || tDigits.includes(chatIdDigitsForDiag)
+                      );
+                      const nameMatch = earlyContactName && t.trim().toLowerCase() === earlyContactName.trim().toLowerCase();
+                      return phoneMatch || nameMatch;
+                    }).map(s => s.getAttribute('title')?.substring(0, 30));
+
+                    console.log('[PrinChat Page] 📷 SIDEBAR DEEP DIAG:', JSON.stringify({
+                      paneSide: !!paneSide, side: !!sidePanel,
+                      rows: rows.length, spanTitles: spanTitles.length,
+                      renderable: renderableImages.length,
+                      chatId, chatIdDigits: chatIdDigitsForDiag,
+                      earlyContactName: earlyContactName || '(empty)',
+                      matchingTitles,
+                      sampleTitles: spanTitles.slice(0, 8).map(s => s.getAttribute('title')?.substring(0, 30) || s.textContent?.substring(0, 30)),
+                    }));
+
+                    // Still try the existing scraper
+                    for (const lookupId of sidebarLookupIds) {
+                      messageChatPhoto = findSidebarPhotoByChat(lookupId, earlyContactName) || '';
+                      if (messageChatPhoto) break;
+                    }
+                    if (messageChatPhoto) messagePhotoSource = 'sidebar';
+                    photoDiag.sidebar_result = !!messageChatPhoto;
+
+                    if (!messageChatPhoto) {
+                      let hintedPhoto = '';
+                      for (const lookupId of sidebarLookupIds) {
+                        hintedPhoto = findSidebarPhotoByMessageHint({
+                          chatId: lookupId,
+                          chatName: earlyContactName,
+                          messageText,
+                        }) || '';
+                        if (hintedPhoto) break;
+                      }
+                      if (hintedPhoto) {
+                        messageChatPhoto = hintedPhoto;
+                        messagePhotoSource = 'sidebar.message_hint';
+                        photoDiag.sidebar_message_hint_result = true;
+                      }
+                    }
+
+                    // If sidebar scrape failed, schedule a delayed retry with sidebar scroll.
+                    // WhatsApp virtualizes the sidebar — the chat may not be rendered.
+                    // Since the overlay covers the sidebar, the virtual list may not update.
+                    // SOLUTION: Force-scroll the sidebar to the top, wait for re-render, then scrape.
+                    if (!messageChatPhoto) {
+                      const retryChatId = chatId;
+                      const retryContactName = earlyContactName;
+                      const retryMessageText = messageText;
+
+                      const forceScrollAndScrape = (attempt: number): void => {
+                        // Find the sidebar scroll container
+                        const paneContent = document.querySelector('#pane-side');
+                        if (paneContent) {
+                          // The scrollable element is usually a child div with role="list" or the direct child
+                          const scrollable = paneContent.querySelector('[role="grid"]')
+                            || paneContent.querySelector('[role="list"]')
+                            || paneContent.querySelector('[data-testid="chat-list"]')
+                            || paneContent.firstElementChild;
+
+                          if (scrollable) {
+                            // Force scroll to top — WhatsApp puts new-message chats at the top
+                            scrollable.scrollTop = 0;
+                            console.log(`[PrinChat Page] 📷 Sidebar scroll forced to top (attempt ${attempt})`);
+                          }
+                        }
+
+                        // Wait for WhatsApp virtual list to re-render after scroll
+                        setTimeout(() => {
+                          let retryPhoto = '';
+                          for (const lookupId of sidebarLookupIds) {
+                            retryPhoto =
+                              findSidebarPhotoByChat(lookupId, retryContactName)
+                              || findSidebarPhotoByMessageHint({
+                                chatId: lookupId,
+                                chatName: retryContactName,
+                                messageText: retryMessageText
+                              })
+                              || '';
+                            if (retryPhoto) break;
+                          }
+                          if (retryPhoto) {
+                            console.log(`[PrinChat Page] 📷 Sidebar retry #${attempt} found photo for`, retryChatId);
+                            document.dispatchEvent(new CustomEvent('PrinChatPhotoUpdate', {
+                              detail: { chatId: retryChatId, chatPhoto: retryPhoto }
+                            }));
+                          } else {
+                            console.log(`[PrinChat Page] 📷 Sidebar retry #${attempt} NO photo for`, retryChatId, retryContactName || '(no name)');
+                            // Try again if we have more attempts
+                            if (attempt < 3) {
+                              setTimeout(() => forceScrollAndScrape(attempt + 1), 2000);
+                            }
+                          }
+                        }, 500); // Give virtual list 500ms to re-render after scroll
+                      };
+
+                      // Start first retry after 1.5s (give WhatsApp time to process the message)
+                      setTimeout(() => forceScrollAndScrape(1), 1500);
+                    }
+                  }
+
+                  // FINAL DIAGNOSTIC OUTPUT
+                  console.log('[PrinChat Page] 📸 PHOTO DIAG for incoming message:', JSON.stringify(photoDiag));
+                } catch (photoError: any) {
+                  console.warn('[PrinChat Page] Message photo lookup failed (continuing without photo):', photoError?.message || photoError);
+                  messageChatPhoto = '';
+                }
+
+                if (messageChatPhoto) {
+                  console.log('[PrinChat Page] Photo resolved', {
+                    phase: 'create',
+                    rawChatId,
+                    canonicalChatId: chatId,
+                    photoSource: messagePhotoSource
+                  });
+                }
+
+                // Notify content script about new message
+                // getChatInfo in the injector will fetch name/photo
+                const fromMe = !!(
+                  safeRead(() => msg?.id?.fromMe)
+                  ?? safeRead(() => msg?.fromMe)
+                );
+
+                // Extract chat labels and name right here so the injector doesn't
+                // have to call getContactInfo back to us (which often returns empty labels
+                // because WhatsApp loads labels lazily during message processing)
+                let messageChatLabels: { id: string; name: string; color?: string }[] = [];
+                let messageChatTags: string[] = [];
+                let messageChatName = '';
+
+                // Same palette as GET_ALL_LABELS for color consistency
+                const MSG_LABEL_PALETTE = [
+                  '#FF9E9E', '#5AB5E5', '#FDD835', '#C594D7', '#90A4AE',
+                  '#26C6DA', '#F48FB1', '#FFB300', '#7986CB', '#D4E157',
+                  '#00ACC1', '#FFAB91', '#81C784', '#E57373', '#42A5F5',
+                  '#9CCC65', '#FF9800', '#64B5F6', '#BA68C8', '#9575CD'
+                ];
+
+                try {
+                  // Try to get labels from the chat model
+                  const chatModel = safeRead(() => msg?.chat) || (() => {
+                    if (Store?.Chat?.get) {
+                      for (const variant of chatIdVariants) {
+                        const c = Store.Chat.get(variant);
+                        if (c) return c;
+                      }
+                    }
+                    return null;
+                  })();
+
+                  // Extract contact name
+                  const contactObj = safeRead(() => chatModel?.contact);
+                  messageChatName = safeRead(() => contactObj?.pushname)
+                    || safeRead(() => contactObj?.name)
+                    || safeRead(() => contactObj?.verifiedName)
+                    || safeRead(() => chatModel?.formattedTitle)
+                    || safeRead(() => chatModel?.name)
+                    || '';
+
+                  // Extract labels from chat model
+                  const chatLabelIds = safeRead(() => chatModel?.labels) || [];
+                  if (Array.isArray(chatLabelIds) && chatLabelIds.length > 0 && Store?.Label) {
+                    // Load cached colors for consistency
+                    let cachedLabelColors: Record<string, string> = {};
+                    try {
+                      const cache = JSON.parse(localStorage.getItem('princhat_label_cache') || '{}');
+                      cachedLabelColors = cache.byName || {};
+                    } catch (_e) { }
+
+                    const allLabelModels = Store.Label.models || Store.Label._models || [];
+                    chatLabelIds.forEach((labelId: any) => {
+                      const id = typeof labelId === 'object' ? labelId?.id : String(labelId);
+                      let labelModel = Store.Label.get?.(id);
+                      if (!labelModel && allLabelModels.length > 0) {
+                        labelModel = allLabelModels.find((m: any) => m.id === id || m.id?._serialized === id);
+                      }
+                      if (labelModel) {
+                        // Resolve color using the same priority as GET_ALL_LABELS
+                        let labelColor: string | undefined;
+                        if (labelModel.hexColor) {
+                          labelColor = labelModel.hexColor;
+                        } else if (typeof labelModel.color === 'string' && labelModel.color.startsWith('#')) {
+                          labelColor = labelModel.color;
+                        } else if (labelModel.name && cachedLabelColors[labelModel.name]) {
+                          labelColor = cachedLabelColors[labelModel.name];
+                        } else if (typeof labelModel.colorIndex === 'number' && labelModel.colorIndex >= 0 && labelModel.colorIndex < MSG_LABEL_PALETTE.length) {
+                          labelColor = MSG_LABEL_PALETTE[labelModel.colorIndex];
+                        } else {
+                          labelColor = '#2196f3'; // fallback blue
+                        }
+
+                        messageChatLabels.push({
+                          id: labelModel.id,
+                          name: labelModel.name,
+                          color: labelColor
+                        });
+                        messageChatTags.push(labelModel.id);
+                      } else {
+                        messageChatTags.push(id);
+                      }
+                    });
+                    console.log('[PrinChat Page] 🏷️ Labels found on incoming message chat:', messageChatTags, 'with colors:', messageChatLabels.map((l: any) => `${l.name}=${l.color}`));
+                  }
+
+                  // PHOTO ENHANCEMENT: Try async Store.ProfilePicThumb.find() which fetches from server
+                  // This works even when the sync .get() cache doesn't have the photo
+                  if (!messageChatPhoto && Store?.ProfilePicThumb?.find) {
+                    try {
+                      for (const variant of chatIdVariants) {
+                        if (messageChatPhoto) break;
+                        const widCandidate = Store?.WidFactory?.createWid?.(sanitizeScopedChatId(variant));
+                        const idToFind = widCandidate || variant;
+                        const profilePicModel = await Store.ProfilePicThumb.find(idToFind);
+                        const foundPhoto = extractPhotoUrl(profilePicModel);
+                        if (foundPhoto) {
+                          messageChatPhoto = foundPhoto;
+                          messagePhotoSource = 'store_profilepic_find_msg';
+                          console.log('[PrinChat Page] 📷 Got photo from async Store.ProfilePicThumb.find() during message');
+                        }
+                      }
+                    } catch (_findErr) {
+                      // ignore, best-effort
+                    }
+                  }
+                } catch (labelExtractionError) {
+                  console.warn('[PrinChat Page] Label extraction on incoming message failed:', labelExtractionError);
+                }
+
+                document.dispatchEvent(new CustomEvent('PrinChatIncomingMessage', {
+                  detail: {
+                    messageText: messageText, // Use formatted text
+                    chatId: chatId,
+                    timestamp: msgTimestamp,
+                    fromMe,
+                    chatPhoto: messageChatPhoto,
+                    chatPhotoSource: messagePhotoSource || undefined,
+                    chatName: messageChatName,
+                    chatLabels: messageChatLabels,
+                    chatTags: messageChatTags
+                  }
+                }));
+              } catch (messageProcessingError: any) {
+                console.error('[PrinChat] Error processing incoming message hook:', messageProcessingError?.message || messageProcessingError);
+              }
             })();
           }
         });
@@ -2134,18 +4346,64 @@
           console.log('[PrinChat DEBUG] 1. Store.Chat change:labels fired! ID:', chatModel?.id?._serialized);
           console.log('[PrinChat DEBUG] 1. RAW Labels:', JSON.stringify(chatModel?.labels));
 
-          // Sanitize tags: Ensure we send a list of string IDs
+          // Same palette as GET_ALL_LABELS and PrinChatGetChatInfo
+          const LABEL_CHANGE_PALETTE = [
+            '#FF9E9E', '#5AB5E5', '#FDD835', '#C594D7', '#90A4AE',
+            '#26C6DA', '#F48FB1', '#FFB300', '#7986CB', '#D4E157',
+            '#00ACC1', '#FFAB91', '#81C784', '#E57373', '#42A5F5',
+            '#9CCC65', '#FF9800', '#64B5F6', '#BA68C8', '#9575CD'
+          ];
+
+          // Load cached colors from localStorage
+          let cachedLabelColors: Record<string, string> = {};
+          try {
+            const cache = JSON.parse(localStorage.getItem('princhat_label_cache') || '{}');
+            cachedLabelColors = cache.byName || {};
+          } catch (e) { }
+
+          // Sanitize tags and resolve full label info
           let rawLabels = chatModel?.labels || [];
           let cleanTags: string[] = [];
+          let resolvedLabels: { id: string; name: string; color: string }[] = [];
 
           if (Array.isArray(rawLabels)) {
             try {
-              cleanTags = rawLabels.map((l: any) => {
-                // If it's an object with ID, use ID. If strictly string, use string.
-                if (typeof l === 'object' && l?.id) return l.id;
-                if (typeof l === 'string') return l;
-                return String(l); // Fallback
-              }).filter(Boolean); // Remove null/undefined
+              const allLabelModels = Store.Label?.models || Store.Label?._models || [];
+              rawLabels.forEach((l: any) => {
+                const id = (typeof l === 'object' && l?.id) ? l.id : String(l);
+                if (!id) return;
+                cleanTags.push(id);
+
+                // Resolve label name and color from Store.Label
+                let labelModel = Store.Label?.get?.(id);
+                if (!labelModel && allLabelModels.length > 0) {
+                  labelModel = allLabelModels.find((m: any) => m.id === id || m.id?._serialized === id);
+                }
+
+                let labelName = labelModel?.name || `Tag ${id}`;
+                let labelColor = '#2196f3'; // fallback blue
+
+                if (labelModel) {
+                  // Priority 1: cached DOM color
+                  if (labelModel.name && cachedLabelColors[labelModel.name]) {
+                    labelColor = cachedLabelColors[labelModel.name];
+                  }
+                  // Priority 2: hexColor
+                  else if (labelModel.hexColor) {
+                    labelColor = labelModel.hexColor;
+                  }
+                  // Priority 3: string color starting with #
+                  else if (typeof labelModel.color === 'string' && labelModel.color.startsWith('#')) {
+                    labelColor = labelModel.color;
+                  }
+                  // Priority 4: colorIndex palette
+                  else if (typeof labelModel.colorIndex === 'number' && labelModel.colorIndex >= 0 && labelModel.colorIndex < LABEL_CHANGE_PALETTE.length) {
+                    labelColor = LABEL_CHANGE_PALETTE[labelModel.colorIndex];
+                  }
+                }
+
+                resolvedLabels.push({ id, name: labelName, color: labelColor });
+              });
             } catch (err) {
               console.error('[PrinChat DEBUG] 🛑 Error cleaning tags:', err);
             }
@@ -2157,7 +4415,7 @@
           const profilePic = contact?.profilePicThumb?.eurl || contact?.profilePicThumb?.img || '';
           const isGroup = chatModel?.isGroup || false;
 
-          console.log('[PrinChat DEBUG] 2. Sanitized Tags:', cleanTags);
+          console.log('[PrinChat DEBUG] 2. Resolved Tags:', cleanTags, 'Labels:', resolvedLabels.map(l => `${l.name}=${l.color}`));
 
           // Use document.dispatchEvent to ensure content scripts (injector) can assume it
           document.dispatchEvent(new CustomEvent('PrinChatLabelsChanged', {
@@ -2166,6 +4424,7 @@
               reason: 'chat_labels_change',
               chatId: chatModel?.id?._serialized,
               tags: cleanTags,
+              labels: resolvedLabels,
               // Extra data for creating lead if it doesn't exist
               name: name,
               photo: profilePic,
@@ -2207,6 +4466,65 @@
           throw new Error('Store not ready');
         }
 
+        const resolveChatPhoneNumber = (chatModel: any, requestedChatId: string): string => {
+          const normalizedRequestedChatId = sanitizeScopedChatId(requestedChatId);
+          let phoneNumber =
+            chatModel?.contact?.number
+            || chatModel?.contact?.userid
+            || chatModel?.contact?.pn
+            || chatModel?.contact?.phoneNumber;
+
+          if (!phoneNumber && normalizedRequestedChatId.includes('@lid')) {
+            try {
+              const WPP = (window as any).WPP;
+              const widFactory = WPP?.whatsapp?.WidFactory || Store?.WidFactory;
+              if (WPP?.whatsapp?.lidPnCache?.getPhoneNumber && widFactory?.createWid) {
+                const wid = widFactory.createWid(normalizedRequestedChatId);
+                const phoneWid = WPP.whatsapp.lidPnCache.getPhoneNumber(wid);
+                if (phoneWid) {
+                  phoneNumber = phoneWid._serialized || phoneWid.toString();
+                }
+              }
+            } catch (_lidError) {
+              // ignore fallback conversion failure
+            }
+          }
+
+          if (!phoneNumber && chatModel?.id) {
+            const chatModelId = extractSerializedChatId(chatModel) || String(chatModel.id);
+            phoneNumber = getCanonicalChatIdentity(chatModelId);
+          }
+
+          if (!phoneNumber) {
+            phoneNumber = getCanonicalChatIdentity(normalizedRequestedChatId) || normalizedRequestedChatId;
+          }
+
+          return String(phoneNumber || '');
+        };
+
+        const tryPhonePhotoFallback = async (phoneValue: string): Promise<string> => {
+          const phoneIdentity = getCanonicalChatIdentity(phoneValue);
+          if (!phoneIdentity || phoneIdentity.length < 8) return '';
+
+          const phoneChatId = `${phoneIdentity}@c.us`;
+          let phonePhoto = '';
+
+          if (!phonePhoto) {
+            const phoneVariants = buildChatIdLookupVariants(phoneChatId);
+            const lookupIds = collectChatLookupIds(phoneChatId, phoneIdentity, ...phoneVariants);
+            const fetchedByPhone = await fetchWppProfilePhotoByIds(lookupIds);
+            if (fetchedByPhone) {
+              phonePhoto = fetchedByPhone;
+            }
+          }
+
+          if (!phonePhoto) {
+            phonePhoto = findSidebarPhotoByChat(phoneChatId) || '';
+          }
+
+          return phonePhoto || '';
+        };
+
         if (message.type === 'GET_ACTIVE_CHAT') {
           const chat = Store.Chat.getActive();
           if (chat) {
@@ -2242,38 +4560,103 @@
             response = { success: false, error: 'No active chat' };
           }
         } else if (message.type === 'GET_CHAT_PHOTO') {
-          const chatId = message.payload.chatId;
-          const chat = await Store.Chat.find(chatId);
+          const chatId = sanitizeScopedChatId(message.payload?.chatId);
+          if (!chatId) {
+            response = { success: false, error: 'Chat not found' };
+            document.dispatchEvent(new CustomEvent('PrinChatUIResponse', {
+              detail: { requestId, response }
+            }));
+            return;
+          }
+          let chat = null;
+          const lookupVariants = buildChatIdLookupVariants(chatId);
+          chat = await findStoreChatByVariants(lookupVariants);
           if (chat) {
+            const displayName = chat.contact?.pushname || chat.name || chat.formattedTitle || '';
+            const phoneNumber = resolveChatPhoneNumber(chat, chatId);
+            const preferredPhoto = extractPhotoUrl(chat?.contact) || extractPhotoUrl(chat) || '';
+            const photoMeta = await resolveChatPhotoWithMetadata({
+              phase: 'ui_get_chat_photo',
+              chatId,
+              canonicalChatId: extractSerializedChatId(chat) || chatId,
+              chatName: displayName,
+              contact: chat?.contact,
+              chat,
+              preferredPhoto,
+              preferredPhotoSource: preferredPhoto ? 'chatInfo.store' : 'not_found',
+              phoneNumber,
+              phoneFallbackProvider: tryPhonePhotoFallback,
+            });
             response = {
               success: true,
               data: {
-                chatPhoto: chat.contact?.profilePicThumbObj?.eurl
+                chatPhoto: photoMeta.chatPhoto || undefined,
+                chatPhotoSource: photoMeta.chatPhoto ? (photoMeta.chatPhotoSource || 'unknown') : undefined,
+                chatPhotoValidated: photoMeta.chatPhotoValidated === true,
+                chatPhotoStability: photoMeta.chatPhotoStability,
+                chatPhotoCheckedAt: photoMeta.chatPhotoCheckedAt,
+                photoSource: photoMeta.chatPhoto ? (photoMeta.chatPhotoSource || 'unknown') : 'not_found',
               }
             };
           } else {
-            response = { success: false, error: 'Chat not found' };
+            const phoneNumber = getCanonicalChatIdentity(chatId) || chatId;
+            const photoMeta = await resolveChatPhotoWithMetadata({
+              phase: 'ui_get_chat_photo',
+              chatId,
+              canonicalChatId: chatId,
+              preferredPhoto: findSidebarPhotoByChat(chatId),
+              preferredPhotoSource: 'chatInfo.sidebar',
+              phoneNumber,
+              phoneFallbackProvider: tryPhonePhotoFallback,
+            });
+            if (photoMeta.chatPhoto) {
+              response = {
+                success: true,
+                data: {
+                  chatPhoto: photoMeta.chatPhoto,
+                  chatPhotoSource: photoMeta.chatPhotoSource || 'unknown',
+                  chatPhotoValidated: photoMeta.chatPhotoValidated === true,
+                  chatPhotoStability: photoMeta.chatPhotoStability,
+                  chatPhotoCheckedAt: photoMeta.chatPhotoCheckedAt,
+                  photoSource: photoMeta.chatPhotoSource || 'unknown',
+                }
+              };
+            } else {
+              response = { success: false, error: 'Chat not found' };
+            }
           }
         } else if (message.type === 'GET_CHAT_INFO') {
-          const chatId = message.payload.chatId;
-          const chat = await Store.Chat.find(chatId);
+          const chatId = sanitizeScopedChatId(message.payload?.chatId);
+          if (!chatId) {
+            response = { success: false, error: 'Chat not found' };
+            document.dispatchEvent(new CustomEvent('PrinChatUIResponse', {
+              detail: { requestId, response }
+            }));
+            return;
+          }
+          let chat = null;
+          const lookupVariants = buildChatIdLookupVariants(chatId);
+          chat = await findStoreChatByVariants(lookupVariants);
           if (chat) {
             // Use pushname for unsaved contacts (same as GET_ACTIVE_CHAT)
             const displayName = chat.contact?.pushname || chat.name || chat.formattedTitle;
+            const phoneNumber = resolveChatPhoneNumber(chat, chatId);
 
-            // Try multiple sources for photo
-            let chatPhoto = chat.contact?.profilePicThumbObj?.eurl
-              || chat.contact?.profilePicThumb?.eurl
-              || chat.profilePicThumbObj?.eurl;
-
-            // If Store doesn't have photo, try WPP API
-            if (!chatPhoto && (window as any).WPP?.contact?.getProfilePictureUrl) {
-              try {
-                chatPhoto = await (window as any).WPP.contact.getProfilePictureUrl(chatId);
-              } catch (e) {
-                // Photo not available
-              }
-            }
+            const preferredPhoto = extractPhotoUrl(chat?.contact) || extractPhotoUrl(chat) || '';
+            const photoMeta = await resolveChatPhotoWithMetadata({
+              phase: 'ui_get_chat_info',
+              chatId,
+              canonicalChatId: extractSerializedChatId(chat) || chatId,
+              chatName: displayName,
+              contact: chat?.contact,
+              chat,
+              preferredPhoto,
+              preferredPhotoSource: preferredPhoto ? 'chatInfo.local' : 'not_found',
+              phoneNumber,
+              phoneFallbackProvider: tryPhonePhotoFallback,
+            });
+            const chatPhoto = photoMeta.chatPhoto;
+            const chatPhotoSource = chatPhoto ? (photoMeta.chatPhotoSource || 'unknown') : 'not_found';
 
             // Fetch labels with full details (id, name, color)
             let chatLabels: { id: string, name: string, color?: string }[] = [];
@@ -2299,47 +4682,53 @@
               console.error('[PrinChat Page] Error fetching labels for GET_CHAT_INFO:', e);
             }
 
-            // Try to get the real phone number (not Instagram/Facebook ID)
-            // For Instagram contacts, the chatId is an internal ID, not the phone
-            let phoneNumber = chat.contact?.number
-              || chat.contact?.userid
-              || chat.contact?.pn;
-
-            // If no phone number from contact fields, try to convert LID to phone
-            // Using WPP.whatsapp.lidPnCache.getPhoneNumber if available
-            if (!phoneNumber && chatId.includes('@lid')) {
-              try {
-                const WPP = (window as any).WPP;
-                if (WPP?.whatsapp?.lidPnCache?.getPhoneNumber) {
-                  const wid = WPP.whatsapp.WidFactory.createWid(chatId);
-                  const phoneWid = WPP.whatsapp.lidPnCache.getPhoneNumber(wid);
-                  if (phoneWid) {
-                    phoneNumber = phoneWid._serialized || phoneWid.toString();
-                    console.log('[PrinChat Page] ✅ Converted LID to phone:', chatId, '->', phoneNumber);
-                  }
-                }
-              } catch (lidError) {
-                console.warn('[PrinChat Page] Failed to convert LID to phone:', lidError);
-              }
-            }
-
-            // Fallback to chatId if still no phone number
-            if (!phoneNumber) {
-              phoneNumber = chatId.split('@')[0];
-            }
-
             response = {
               success: true,
               data: {
                 chatName: displayName,
                 chatPhoto: chatPhoto,
+                chatPhotoSource: chatPhoto ? chatPhotoSource : undefined,
+                chatPhotoValidated: photoMeta.chatPhotoValidated === true,
+                chatPhotoStability: photoMeta.chatPhotoStability,
+                chatPhotoCheckedAt: photoMeta.chatPhotoCheckedAt,
+                photoSource: chatPhoto ? chatPhotoSource : 'not_found',
+                chatId: normalizeChatIdWithDomain(chat.id?._serialized || chat.id || chatId) || chatId,
                 isGroup: chat.isGroup,
                 labels: chatLabels,
                 phoneNumber: phoneNumber
               }
             };
           } else {
-            response = { success: false, error: 'Chat not found' };
+            const phoneNumber = getCanonicalChatIdentity(chatId) || chatId;
+            const photoMeta = await resolveChatPhotoWithMetadata({
+              phase: 'ui_get_chat_info',
+              chatId,
+              canonicalChatId: chatId,
+              preferredPhoto: findSidebarPhotoByChat(chatId),
+              preferredPhotoSource: 'chatInfo.sidebar',
+              phoneNumber,
+              phoneFallbackProvider: tryPhonePhotoFallback,
+            });
+            const chatPhoto = photoMeta.chatPhoto || undefined;
+            const photoSource = chatPhoto
+              ? (photoMeta.chatPhotoSource || 'unknown')
+              : 'not_found';
+            response = {
+              success: true,
+              data: {
+                chatName: getCanonicalChatIdentity(chatId) || chatId,
+                chatPhoto,
+                chatPhotoSource: chatPhoto ? (photoMeta.chatPhotoSource || 'unknown') : undefined,
+                chatPhotoValidated: photoMeta.chatPhotoValidated === true,
+                chatPhotoStability: photoMeta.chatPhotoStability,
+                chatPhotoCheckedAt: photoMeta.chatPhotoCheckedAt,
+                photoSource,
+                chatId: normalizeChatIdWithDomain(chatId) || chatId,
+                isGroup: false,
+                labels: [],
+                phoneNumber: getCanonicalChatIdentity(chatId) || chatId
+              }
+            };
           }
         }
 

@@ -9,6 +9,7 @@
  */
 export interface KanbanColumn {
     id: string;              // Unique identifier
+    instanceId: string;      // WhatsApp instance identifier (wa:<number>)
     name: string;            // Display name (e.g., "Recentes", "Em Andamento")
     color: string;           // Column header color (hex)
     description?: string;    // Optional column description
@@ -26,6 +27,7 @@ export interface KanbanColumn {
  */
 export interface LeadContact {
     id: string;              // WhatsApp Chat ID (Main ID)
+    instanceId: string;      // WhatsApp instance identifier (wa:<number>)
     chatId: string;          // Explicit Chat ID (for compatibility)
     name: string;            // Contact name
     phone: string;           // Phone number
@@ -47,7 +49,7 @@ export interface LeadContact {
 /**
  * Default Kanban Columns
  */
-export const DEFAULT_KANBAN_COLUMNS: Omit<KanbanColumn, 'id' | 'createdAt' | 'updatedAt'>[] = [
+export const DEFAULT_KANBAN_COLUMNS: Omit<KanbanColumn, 'id' | 'instanceId' | 'createdAt' | 'updatedAt'>[] = [
     {
         name: 'Recentes',
         color: '#4caf50',      // Green (same as INBOX tag)
