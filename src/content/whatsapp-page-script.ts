@@ -173,6 +173,16 @@
     return message.includes("reading 'm'") || message.includes('reading "m"');
   };
 
+  const isExpectedWppChatGetFormatError = (error: any): boolean => {
+    const message = String(error?.message || error || '').toLowerCase();
+    return (
+      message.includes('invalid chatid format')
+      || message.includes('invalid chat id format')
+      || (message.includes('invalid') && message.includes('chatid'))
+      || (message.includes('invalid') && message.includes('wid'))
+    );
+  };
+
   const extractPhotoUrl = (source: any): string | undefined => {
     if (!source) return undefined;
 
@@ -3464,8 +3474,7 @@
                   if (typeof chatId === 'string' && /^\d+$/.test(chatId)) {
                     console.debug('[PrinChat Page] Skipping WPP.chat.get for raw number:', chatId);
                   } else {
-                    // Throwing here will be caught by the catch block below
-                    throw new Error(`Invalid chatId format for WPP.chat.get: ${chatId}`);
+                    console.debug('[PrinChat Page] Skipping WPP.chat.get for unsupported chatId format:', chatId);
                   }
                 } else {
                   const wppChat = await WPP.chat.get(chatId);
@@ -3480,7 +3489,9 @@
                   }
                 }
               } catch (e: any) {
-                if (!isKnownWppInteropError(e)) {
+                if (isExpectedWppChatGetFormatError(e)) {
+                  console.debug('[PrinChat Page] Strategy 3 skipped due to chatId format:', e?.message || 'unknown');
+                } else if (!isKnownWppInteropError(e)) {
                   console.warn('[PrinChat Page] ℹ️ Strategy 3 (WPP.chat.get) warning:', e?.message || 'unknown');
                 }
               }

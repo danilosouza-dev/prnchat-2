@@ -93,6 +93,11 @@ class BackgroundService {
     return instanceId;
   }
 
+  private isLeadNotFoundError(error: any): boolean {
+    const message = String(error?.message || error || '');
+    return message.includes('Lead with id') && message.includes('not found');
+  }
+
   /**
    * Handle messages from other parts of the extension
    */
@@ -607,10 +612,17 @@ class BackgroundService {
               }
             }
           } catch (error: any) {
-            console.error('[Background] Error updating Kanban lead:',
-              error?.name,
-              error?.message
-            );
+            if (this.isLeadNotFoundError(error)) {
+              console.debug(
+                '[Background] UPDATE_KANBAN_LEAD stale state (lead not found):',
+                error?.message || String(error)
+              );
+            } else {
+              console.error('[Background] Error updating Kanban lead:',
+                error?.name,
+                error?.message
+              );
+            }
             sendResponse({ success: false, error: error.message });
           }
         })();

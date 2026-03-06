@@ -29,6 +29,44 @@ class SessionService {
     return msg.includes(this.tableName) && (msg.includes('relation') || msg.includes('does not exist'));
   }
 
+  private normalizeErrorForLog(error: any): { message: string; metadata?: Record<string, unknown> } {
+    if (typeof error === 'string') {
+      return { message: error };
+    }
+
+    const message = typeof error?.message === 'string' && error.message.trim().length > 0
+      ? error.message
+      : '';
+
+    const metadata: Record<string, unknown> = {};
+    if (error?.code !== undefined) metadata.code = error.code;
+    if (error?.status !== undefined) metadata.status = error.status;
+    if (error?.details !== undefined) metadata.details = error.details;
+    if (error?.hint !== undefined) metadata.hint = error.hint;
+
+    if (!message) {
+      try {
+        metadata.serialized = JSON.stringify(error);
+      } catch {
+        metadata.serialized = String(error);
+      }
+    }
+
+    return {
+      message: message || 'Unknown error',
+      metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+    };
+  }
+
+  private logSessionError(prefix: string, error: any): void {
+    const normalized = this.normalizeErrorForLog(error);
+    if (normalized.metadata) {
+      console.error(prefix, normalized.message, normalized.metadata);
+      return;
+    }
+    console.error(prefix, normalized.message);
+  }
+
   private async getOrCreateDeviceId(): Promise<string> {
     const result = await chrome.storage.local.get([this.deviceStorageKey]);
     const existing = result[this.deviceStorageKey];
@@ -73,7 +111,7 @@ class SessionService {
 
       this.startHeartbeat();
     } catch (error) {
-      console.error('[PrinChat Session] Failed to start session guard:', error);
+      this.logSessionError('[PrinChat Session] Failed to start session guard:', error);
     }
   }
 
@@ -95,7 +133,7 @@ class SessionService {
 
     this.heartbeatTimer = setInterval(() => {
       this.verifyAndHeartbeat().catch((error) => {
-        console.error('[PrinChat Session] Heartbeat error:', error);
+        this.logSessionError('[PrinChat Session] Heartbeat error:', error);
       });
     }, this.heartbeatMs);
   }
@@ -198,7 +236,12 @@ class SessionService {
         }
       }));
     } catch (error) {
-      console.warn('[PrinChat Session] Failed to notify tabs about session conflict:', error);
+      const normalized = this.normalizeErrorForLog(error);
+      if (normalized.metadata) {
+        console.warn('[PrinChat Session] Failed to notify tabs about session conflict:', normalized.message, normalized.metadata);
+      } else {
+        console.warn('[PrinChat Session] Failed to notify tabs about session conflict:', normalized.message);
+      }
     }
   }
 
